@@ -67,6 +67,7 @@ class CoopLauncherLayoutTest {
             assertNotNull(find(frame, "installPathField"), "Game path field must be visible");
             assertTrue(find(frame, "installPathField").getHeight() > 0, "Game path field must be laid out");
             assertNotNull(find(frame, "updateActionButton"), "Update button must be visible");
+            assertNotNull(find(frame, "reinstallButton"), "Reinstall button must be visible");
             assertNotNull(find(frame, "launchButton"), "Launch button must be visible");
             assertNotNull(find(frame, "installWingmanBox"), "Optional Wingman checkbox must be present");
             assertNull(find(frame, "hostSegment"), "Host tab must not clutter the minimal external launcher");
@@ -121,6 +122,38 @@ class CoopLauncherLayoutTest {
                     "0.2.5", false);
             assertFalse(banner.isVisible(), "Update banner must hide once up to date");
             assertEquals("Up to date", field("updateChip", JButton.class).getText());
+        });
+    }
+
+    @Test
+    void updateButtonDisablesWhenModInstalledAndUpToDateWhileReinstallStaysAvailable() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            File tempModRoot = new File("build/layout-test-installed/mods/coop");
+            File tempModDir = new File(tempModRoot, "jars");
+            tempModDir.mkdirs();
+            try {
+                new File(tempModRoot, "mod_info.json").createNewFile();
+                new File(tempModDir, "coop.jar").createNewFile();
+                new File(tempModDir, "coop-forks.jar").createNewFile();
+            } catch (java.io.IOException ex) {
+                throw new AssertionError(ex);
+            }
+            setField("layout", CoopInstallLayout.ofInstallRoot(new File("build/layout-test-installed")));
+            app.applyUpdateOutcome(
+                    new CoopUpdateCheck.Outcome(CoopUpdateCheck.Kind.UP_TO_DATE, "0.2.5",
+                            "https://github.com/openmans/starsector-coop/releases/tag/v0.2.5", ""),
+                    "0.2.5", false);
+            assertFalse(field("updateActionButton", JButton.class).isEnabled(),
+                    "Update must be greyed out when already up to date");
+            assertTrue(field("reinstallButton", JButton.class).isEnabled(),
+                    "Reinstall must stay available when mod is installed");
+
+            app.applyUpdateOutcome(
+                    new CoopUpdateCheck.Outcome(CoopUpdateCheck.Kind.UPDATE_AVAILABLE, "0.2.6",
+                            "https://github.com/openmans/starsector-coop/releases/tag/v0.2.6", ""),
+                    "0.2.5", false);
+            assertTrue(field("updateActionButton", JButton.class).isEnabled(),
+                    "Update must re-enable when a newer version is available");
         });
     }
 

@@ -140,6 +140,7 @@ public final class CoopLauncherApp {
     private JButton updateChip;
     private JButton langToggle;
     private JButton openFolderButton;
+    private JButton reinstallButton;
     private JButton updateActionButton;
     private CoopLauncherI18n.Lang lang = CoopLauncherI18n.Lang.EN;
     private JPanel updateBanner;
@@ -504,9 +505,9 @@ public final class CoopLauncherApp {
         java.awt.Rectangle screen = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
                 .getMaximumWindowBounds();
         frame.setMinimumSize(new Dimension(
-                Math.min(com.formdev.flatlaf.util.UIScale.scale(580), screen.width - 24),
+                Math.min(com.formdev.flatlaf.util.UIScale.scale(640), screen.width - 24),
                 Math.min(com.formdev.flatlaf.util.UIScale.scale(440), screen.height - 24)));
-        frame.setSize(Math.min(com.formdev.flatlaf.util.UIScale.scale(680), screen.width - 24),
+        frame.setSize(Math.min(com.formdev.flatlaf.util.UIScale.scale(720), screen.width - 24),
                 Math.min(com.formdev.flatlaf.util.UIScale.scale(540), screen.height - 24));
         frame.setLocationRelativeTo(null);
     }
@@ -651,6 +652,7 @@ public final class CoopLauncherApp {
         installWingmanBox.setToolTipText("Downloads the latest Wingman release from"
                 + " NEOysod/TheWingmanProject into mods\\Wingman and enables wingman_project in"
                 + " enabled_mods.json. Optional — tactical map co-op battles work without it.");
+        installWingmanBox.addActionListener(event -> updateLaunchGate());
         form.raw(installWingmanBox);
 
         installModeFixButton = CoopTheme.secondary("Fix vmparams & mods");
@@ -1043,6 +1045,18 @@ public final class CoopLauncherApp {
         footerHint.setFont(footerHint.getFont().deriveFont(footerHint.getFont().getSize() - 1f));
         JPanel status = CoopLauncherUi.statusBlock(install, footerHint, 2);
         status.setName("launchStatus");
+        reinstallButton = CoopTheme.ghost("Reinstall");
+        reinstallButton.setName("reinstallButton");
+        reinstallButton.setMargin(new Insets(4, 10, 4, 10));
+        reinstallButton.setFont(reinstallButton.getFont().deriveFont(reinstallButton.getFont().getSize() - 1f));
+        reinstallButton.setToolTipText("Re-download and reinstall the current release (or repair files).");
+        reinstallButton.addActionListener(event -> {
+            if (layout == null) {
+                chooseInstallFolder();
+            } else {
+                runOneClickInstall();
+            }
+        });
         updateActionButton = CoopTheme.secondary("Update");
         updateActionButton.setName("updateActionButton");
         CoopIcons.apply(updateActionButton, CoopIcons.Symbol.CHECK);
@@ -1067,8 +1081,9 @@ public final class CoopLauncherApp {
                 launchSimple();
             }
         });
-        JPanel footerActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        JPanel footerActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         footerActions.setOpaque(false);
+        footerActions.add(reinstallButton);
         footerActions.add(updateActionButton);
         footerActions.add(launchButton);
         footer.add(status, BorderLayout.CENTER);
@@ -1670,15 +1685,30 @@ public final class CoopLauncherApp {
         boolean installing = modInstallRunning.get();
         boolean modPresent = layout != null && layout.isModInstalled();
         boolean blocked = layout != null && CoopInstallCheck.blocked(installRows);
+        boolean wantsNewWingman = layout != null && installWingmanBox != null
+                && installWingmanBox.isSelected() && !layout.isWingmanInstalled();
+        boolean updateNeeded = !modPresent || updateAvailable || wantsNewWingman;
 
         if (openFolderButton != null) {
             openFolderButton.setEnabled(layout != null);
         }
+        if (reinstallButton != null) {
+            reinstallButton.setEnabled(layout != null && modPresent && !installing && !gameRunning);
+            reinstallButton.setText(t("Reinstall"));
+            reinstallButton.setToolTipText(tr(
+                    "Re-download and reinstall the current release (or repair files).",
+                    "Переустановить текущую версию с GitHub (или починить файлы)."));
+        }
         if (updateActionButton != null) {
-            updateActionButton.setEnabled(!installing && !gameRunning);
+            updateActionButton.setEnabled(layout != null && !installing && !gameRunning && updateNeeded);
             CoopIcons.apply(updateActionButton, installing ? CoopIcons.Symbol.BUSY : CoopIcons.Symbol.CHECK);
             updateActionButton.setText(installing ? t("Installing...")
-                    : modPresent ? t("Update") : t("Install"));
+                    : (!modPresent || wantsNewWingman) && !updateAvailable ? t("Install") : t("Update"));
+            updateActionButton.setToolTipText(updateNeeded
+                    ? tr("Download and install the latest release from GitHub.",
+                            "Скачать и установить актуальную версию с GitHub.")
+                    : tr("Already on the latest version. Use Reinstall to re-download.",
+                            "Уже установлена актуальная версия. Для переустановки нажмите «Переустановить»."));
         }
 
         CoopIcons.apply(launchButton, CoopIcons.Symbol.PLAY);

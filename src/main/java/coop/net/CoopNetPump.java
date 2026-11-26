@@ -2954,6 +2954,20 @@ public class CoopNetPump implements EveryFrameScript {
         maybeSendSessionStats(now, true);
         closeLobbyUi();
         resetLobbyState();
+        // Solo host chose "Start anyway" with no guest connected yet: release our pause hold now so
+        // the host can unpause and fly freely while waiting for guests to join later.
+        if (service.role() == CoopConnectionRole.HOST && !isGameplaySessionActive() && coopHoldPaused) {
+            coopHoldPaused = false;
+            try {
+                SectorAPI sector = Global.getSector();
+                if (sector != null) {
+                    sector.setPaused(false);
+                }
+            } catch (RuntimeException | LinkageError ignored) {
+            }
+            CoopLog.info(CoopNetPump.class,
+                    "Coop HOST released solo pause hold after lobby Start anyway");
+        }
     }
 
     private void requestLobbyDialog() {
@@ -6867,7 +6881,9 @@ public class CoopNetPump implements EveryFrameScript {
         // still for it. Everything else - state streams, BASE_SET, fleet mirrors, TIME_SNAPSHOT -
         // keeps its old predicate on purpose: that traffic is how the guest reaches the phase where
         // it is allowed to press Ready at all.
-        if (role == CoopConnectionRole.NONE || isSessionPlayable()) {
+        if (role == CoopConnectionRole.NONE || isSessionPlayable()
+                || (role == CoopConnectionRole.HOST && sessionState.lobbyReleased()
+                        && !pauseCoordinator.reconnectHold())) {
             return;
         }
         try {
