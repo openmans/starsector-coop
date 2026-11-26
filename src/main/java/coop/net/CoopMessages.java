@@ -388,7 +388,11 @@ public final class CoopMessages {
         /** Fighting player &rarr; nearby partner within {@code coop.allyJoinRange}: prompt to join battle. */
         ALLY_JOIN_OFFER,
         /** Partner &rarr; fighting player: chosen participation mode (tactical / Wingman / AI / decline). */
-        ALLY_JOIN_REPLY
+        ALLY_JOIN_REPLY,
+        /** Speaking player (Host or Guest) &rarr; partner(s): live BG3-style dialog mirror & cursor snapshot. */
+        DIALOG_SYNC,
+        /** Spectating partner &rarr; speaking player: BG3-style option vote recommendation. */
+        DIALOG_VOTE
     }
 
     /**
@@ -470,6 +474,7 @@ public final class CoopMessages {
                   ABILITY_ACTIVATE, DIALOG_BEGIN,
                   BATTLE_BEGIN, BATTLE_STATUS, BATTLE_END, BATTLE_RESULT,
                   BATTLE_ORDER, BATTLE_ORDER_ACK, ENGAGE_GUEST, ALLY_JOIN_OFFER, ALLY_JOIN_REPLY,
+                  DIALOG_SYNC, DIALOG_VOTE,
                   SAVE_CHECKPOINT, SAVE_CHECKPOINT_RESULT, RESPAWN_PLAYER, STALL_NOTICE,
                   SESSION_LEAVE,
                   OPTIONS_SNAPSHOT, OPTIONS_APPLIED, SESSION_STATS, LINK_STATUS,
@@ -2950,5 +2955,13 @@ public final class CoopMessages {
 
     public static Message allyJoinReply(String sessionId, long seq, long sentAtMillis, String body) {
         return bodyMessage(Type.ALLY_JOIN_REPLY, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message dialogSync(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.DIALOG_SYNC, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message dialogVote(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.DIALOG_VOTE, sessionId, seq, sentAtMillis, body);
     }
 }

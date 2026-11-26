@@ -69,6 +69,7 @@ public final class CoopLinkHud implements CampaignUIRenderingListener {
      * it appears next to a line that is amber when the world is paused.
      */
     private static final Color NOTICE_COLOR = new Color(150, 200, 255);
+    private static final Color VOTE_BANNER_COLOR = new Color(120, 255, 175);
 
     private final CoopNetPump pump;
     /**
@@ -97,6 +98,8 @@ public final class CoopLinkHud implements CampaignUIRenderingListener {
     private String cachedNetFaultLine = "";
     /** The transient notice, or {@code ""}; read on the refresh tick like everything else here. */
     private String cachedNoticeLine = "";
+    /** Live BG3-style partner dialog vote banner shown top-center over the speaker's open dialog. */
+    private String cachedVoteBanner = "";
 
     private CoopLinkHud(CoopNetPump pump, CoopHudCorner corner) {
         this.pump = pump;
@@ -186,14 +189,28 @@ public final class CoopLinkHud implements CampaignUIRenderingListener {
         }
 
         refreshIfDue(sector);
+        float screenWidth = Global.getSettings().getScreenWidth();
+        float screenHeight = Global.getSettings().getScreenHeight();
+        float lineHeight = font.lineHeight();
+
+        // Speaker-side BG3 option vote pill renders top-center even over an open interaction dialog.
+        if (!cachedVoteBanner.isEmpty()) {
+            float textW = font.width(cachedVoteBanner);
+            float padX = 16f;
+            float padY = 6f;
+            float boxW = textW + padX * 2f;
+            float boxH = lineHeight + padY * 2f;
+            float bx = (screenWidth - boxW) * 0.5f;
+            float by = screenHeight - boxH - 18f;
+            CoopTitleScreenOverlay.drawRect(bx, by, boxW, boxH, 0.05f, 0.20f, 0.13f, 0.92f);
+            CoopTitleScreenOverlay.drawBorder(bx, by, boxW, boxH, 0.38f, 0.95f, 0.60f, 0.95f);
+            font.draw(cachedVoteBanner, bx + padX, by + boxH - padY, VOTE_BANNER_COLOR);
+        }
+
         if (hiddenByOption
                 || (cachedLine.isEmpty() && cachedNetFaultLine.isEmpty() && cachedNoticeLine.isEmpty())) {
             return;
         }
-
-        float screenWidth = Global.getSettings().getScreenWidth();
-        float screenHeight = Global.getSettings().getScreenHeight();
-        float lineHeight = font.lineHeight();
         if (!cachedLine.isEmpty()) {
             float badgeWidth = font.width(cachedBadge);
             float totalWidth = font.width(cachedLine);
@@ -296,6 +313,7 @@ public final class CoopLinkHud implements CampaignUIRenderingListener {
         cachedNetFaultLine = CoopHudState.formatNetFaultLine(state);
         // The notice expires on its own clock; the tick only decides how often the HUD asks.
         cachedNoticeLine = CoopHudNotice.current(now);
+        cachedVoteBanner = pump.dialogVoteBanner(now);
     }
 
     /**

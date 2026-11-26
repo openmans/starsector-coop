@@ -582,6 +582,18 @@ public class CoopNetPump implements EveryFrameScript {
             new coop.ui.CoopDialogController("chat", this::nowMillis);
     private final coop.ui.CoopDialogController tradeDialogs =
             new coop.ui.CoopDialogController("trade", this::nowMillis);
+    /** Baldur's Gate 3-style live dialog spectator window (auto-pulls partner into Host/Guest dialogs). */
+    private final coop.ui.CoopDialogController dialogSpectatorDialogs =
+            new coop.ui.CoopDialogController("dialogSpectator", this::nowMillis);
+    private final coop.ui.CoopDialogSpectatorState dialogSpectatorState =
+            new coop.ui.CoopDialogSpectatorState();
+    private Object localSpectatedDialogRef;
+    private String localSpectatedDialogId = "";
+    private long localSpectatedDialogSeq;
+    private String lastDialogSyncStructuralKey = "";
+    private String lastDialogSyncWireKey = "";
+    private long nextDialogSyncAtMillis;
+    private long nextDialogHeartbeatAtMillis;
     private final coop.combat.CoopAllyReinforceCoordinator allyReinforce =
             new coop.combat.CoopAllyReinforceCoordinator();
     private com.fs.starfarer.api.campaign.BattleAPI lastOfferedBattle;
@@ -1329,7 +1341,8 @@ public class CoopNetPump implements EveryFrameScript {
      */
     public java.util.List<coop.ui.CoopDialogController> coopDialogsForBridge() {
         return java.util.List.of(reconnectDialogs, desyncDialogs, lobbyDialogs, connectingDialogs,
-                markDialogs, allyJoinDialogs, tacticalMapDialogs, chatDialogs, tradeDialogs);
+                markDialogs, allyJoinDialogs, tacticalMapDialogs, chatDialogs, tradeDialogs,
+                dialogSpectatorDialogs);
     }
 
     /** Bridge-only: the same predicate the pump gates gameplay replication on. */
@@ -3645,6 +3658,7 @@ public class CoopNetPump implements EveryFrameScript {
         tickAllyReinforce();
         tickTacticalMapDialog();
         tickCommsDialogs();
+        tickDialogSpectator();
         t = profiler.split(SECTION_LOBBY, t);
         // Phase 21: after the lobby, so the release that starts the session is already visible and
         // isSessionPlayable() is true on the very frame the first sample is taken.
@@ -4092,6 +4106,7 @@ public class CoopNetPump implements EveryFrameScript {
         lobbyHelloSent = false;
         handshakeManifestSent = false;
         seedLockRequestSent = false;
+        resetDialogSpectator();
     }
 
     /**
@@ -4241,6 +4256,7 @@ public class CoopNetPump implements EveryFrameScript {
         lobbyHelloSent = false;
         handshakeManifestSent = false;
         seedLockRequestSent = false;
+        resetDialogSpectator();
     }
 
     private void maybeStartFromMemoryFlags() {
@@ -5021,7 +5037,7 @@ public class CoopNetPump implements EveryFrameScript {
                  RELIABLE_ACK -> true;
             // Scoped to the connection the drop edge just tore down, or to state it just reset.
             case STORM_CONTROL, AMBIENT_CALL, COLONY_CONSENT_REQ, COLONY_CONSENT_RES, TRADE_SYNC,
-                 ALLY_JOIN_OFFER, ALLY_JOIN_REPLY,
+                 ALLY_JOIN_OFFER, ALLY_JOIN_REPLY, DIALOG_SYNC, DIALOG_VOTE,
                  INTERACTION_CLAIM, INTERACTION_ACCEPT, INTERACTION_REJECT, INTERACTION_RELEASE,
                  DIALOG_BEGIN, BATTLE_ORDER, BATTLE_ORDER_ACK,
                  LOBBY_HELLO, LOBBY_CHALLENGE, LOBBY_ACCEPT, LOBBY_REJECT, LOBBY_STATUS,
@@ -5798,6 +5814,8 @@ public class CoopNetPump implements EveryFrameScript {
             case NEX_EVENT -> handleNexEvent(message);
             case ALLY_JOIN_OFFER -> handleAllyJoinOffer(message);
             case ALLY_JOIN_REPLY -> handleAllyJoinReply(message);
+            case DIALOG_SYNC -> handleDialogSync(message);
+            case DIALOG_VOTE -> handleDialogVote(message);
             case GUEST_SNAPSHOT -> handleGuestSnapshot(message);
             case SAVE_CHECKPOINT -> handleSaveCheckpoint(message);
             case SAVE_CHECKPOINT_RESULT -> handleSaveCheckpointResult(message);
@@ -11013,6 +11031,264 @@ public class CoopNetPump implements EveryFrameScript {
         tradeDialogs.tick();
     }
 
+    /** Speaker-side BG3 option vote banner for {@link coop.ui.CoopLinkHud}. */
+    public String dialogVoteBanner(long nowMillis) {
+        return dialogSpectatorState.speakerVoteBanner(nowMillis);
+    }
+
+    private void resetDialogSpectator() {
+        localSpectatedDialogRef = null;
+        localSpectatedDialogId = "";
+        lastDialogSyncStructuralKey = "";
+        lastDialogSyncWireKey = "";
+        nextDialogSyncAtMillis = 0L;
+        nextDialogHeartbeatAtMillis = 0L;
+        dialogSpectatorState.reset();
+        if (dialogSpectatorDialogs.isRequested()) {
+            dialogSpectatorDialogs.close();
+        }
+    }
+
+    private boolean dialogSpectatorMayRequest() {
+        return coop.ui.CoopDialogArbiter.mayRequest(coop.ui.CoopDialogArbiter.DIALOG_SPECTATOR,
+                reconnectDialogs.isRequested() ? coop.ui.CoopDialogArbiter.RECONNECT : null,
+                desyncDialogs.isRequested() ? coop.ui.CoopDialogArbiter.DESYNC : null,
+                lobbyDialogs.isRequested() ? coop.ui.CoopDialogArbiter.LOBBY : null,
+                connectingDialogs.isRequested() ? coop.ui.CoopDialogArbiter.CONNECTING : null,
+                markDialogs.isRequested() ? coop.ui.CoopDialogArbiter.MARK : null,
+                allyJoinDialogs.isRequested() ? coop.ui.CoopDialogArbiter.ALLY_JOIN : null,
+                tacticalMapDialogs.isRequested() ? coop.ui.CoopDialogArbiter.TACTICAL_MAP : null,
+                chatDialogs.isRequested() ? coop.ui.CoopDialogArbiter.CHAT : null,
+                tradeDialogs.isRequested() ? coop.ui.CoopDialogArbiter.TRADE : null);
+    }
+
+    /**
+     * Symmetric Baldur's Gate 3-style live dialog spectating (Host &lt;-&gt; Guest):
+     * broadcasts any open gameplay {@code InteractionDialog} (text, options, hover, live mouse
+     * cursor) to partner(s) and automatically opens {@link coop.ui.CoopDialogSpectatorPlugin}
+     * when a partner is speaking.
+     */
+    private void tickDialogSpectator() {
+        if (!isGameplaySessionActive() || !service.isConnected() || reconnect.active()) {
+            if (localSpectatedDialogRef != null || dialogSpectatorDialogs.isRequested()
+                    || dialogSpectatorState.activeRemoteDialog() != null) {
+                resetDialogSpectator();
+            }
+            return;
+        }
+        try {
+            SectorAPI sector = Global.getSector();
+            CampaignUIAPI ui = sector == null ? null : sector.getCampaignUI();
+            if (ui == null) {
+                return;
+            }
+            long now = clockMillis.getAsLong();
+            com.fs.starfarer.api.campaign.InteractionDialogAPI current = ui.getCurrentInteractionDialog();
+            boolean spectatable = current != null
+                    && coop.ui.CoopDialogSpectatorState.isSpectatablePlugin(current.getPlugin());
+
+            // 1. Speaker broadcast (works identically whether Host or Guest opened the dialog).
+            if (spectatable) {
+                if (current != localSpectatedDialogRef) {
+                    localSpectatedDialogRef = current;
+                    localSpectatedDialogId = sessionState.localPlayerId() + "-dlg-" + (++localSpectatedDialogSeq);
+                    lastDialogSyncStructuralKey = "";
+                    lastDialogSyncWireKey = "";
+                    nextDialogSyncAtMillis = 0L;
+                    nextDialogHeartbeatAtMillis = 0L;
+                    dialogSpectatorState.clearIncomingVote();
+                }
+                coop.ambient.CoopDialogSpectatorBridge.CapturedDialog cap =
+                        coop.ambient.CoopDialogSpectatorBridge.capture(current);
+                if (cap != null) {
+                    java.util.List<coop.ui.CoopDialogSpectatorState.OptionView> opts =
+                            new java.util.ArrayList<>(cap.options().size());
+                    for (coop.ambient.CoopDialogSpectatorBridge.CapturedOption co : cap.options()) {
+                        opts.add(new coop.ui.CoopDialogSpectatorState.OptionView(co.text(), co.enabled()));
+                    }
+                    coop.ui.CoopDialogSpectatorState.SyncPayload payload =
+                            new coop.ui.CoopDialogSpectatorState.SyncPayload(
+                                    localSpectatedDialogId,
+                                    sessionState.localPlayerId(),
+                                    sessionState.localName(),
+                                    true,
+                                    cap.targetName(),
+                                    cap.paragraphs(),
+                                    opts,
+                                    cap.hoveredOptionIndex(),
+                                    cap.cursorNormX(),
+                                    cap.cursorNormY(),
+                                    dialogSpectatorState.incomingVotedIndexFor(localSpectatedDialogId),
+                                    dialogSpectatorState.incomingVoterNameFor(localSpectatedDialogId));
+                    String structural = payload.structuralKey();
+                    String wireKey = structural + "|" + Math.round(payload.cursorNormX() * 50f)
+                            + "," + Math.round(payload.cursorNormY() * 50f);
+                    boolean structuralChanged = !structural.equals(lastDialogSyncStructuralKey);
+                    boolean cursorDue = now >= nextDialogSyncAtMillis && !wireKey.equals(lastDialogSyncWireKey);
+                    boolean heartbeatDue = now >= nextDialogHeartbeatAtMillis;
+                    if (structuralChanged || cursorDue || heartbeatDue) {
+                        lastDialogSyncStructuralKey = structural;
+                        lastDialogSyncWireKey = wireKey;
+                        nextDialogSyncAtMillis = now + 125L;
+                        nextDialogHeartbeatAtMillis = now + 1_500L;
+                        service.send(CoopMessages.dialogSync(
+                                sessionState.sessionId(), service.nextSeq(), now,
+                                coop.ui.CoopDialogSpectatorState.encodeSync(payload)));
+                    }
+                }
+            } else if (localSpectatedDialogRef != null) {
+                coop.ui.CoopDialogSpectatorState.SyncPayload closed =
+                        new coop.ui.CoopDialogSpectatorState.SyncPayload(
+                                localSpectatedDialogId,
+                                sessionState.localPlayerId(),
+                                sessionState.localName(),
+                                false,
+                                "",
+                                java.util.List.of(),
+                                java.util.List.of(),
+                                -1, 0.5f, 0.5f, -1, "");
+                service.send(CoopMessages.dialogSync(
+                        sessionState.sessionId(), service.nextSeq(), now,
+                        coop.ui.CoopDialogSpectatorState.encodeSync(closed)));
+                localSpectatedDialogRef = null;
+                localSpectatedDialogId = "";
+                lastDialogSyncStructuralKey = "";
+                lastDialogSyncWireKey = "";
+                nextDialogSyncAtMillis = 0L;
+                nextDialogHeartbeatAtMillis = 0L;
+                dialogSpectatorState.clearIncomingVote();
+            }
+
+            // 2. Spectator auto-pull (symmetric: pulls Guest into Host dialog OR Host into Guest dialog).
+            if (dialogSpectatorDialogs.isRequested()) {
+                if (!dialogSpectatorMayRequest() || !dialogSpectatorState.shouldAutoOpenSpectator()) {
+                    dialogSpectatorDialogs.close();
+                } else {
+                    dialogSpectatorDialogs.tick();
+                }
+            } else if (!spectatable && dialogSpectatorState.shouldAutoOpenSpectator()
+                    && dialogSpectatorMayRequest()
+                    && current == null && !ui.isShowingDialog() && !ui.isShowingMenu()) {
+                coop.ui.CoopDialogSpectatorPlugin plugin = new coop.ui.CoopDialogSpectatorPlugin(
+                        dialogSpectatorState,
+                        this::sendDialogSpectatorVote,
+                        dialogSpectatorDialogs::close);
+                dialogSpectatorDialogs.request(plugin);
+                dialogSpectatorDialogs.tick();
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Coop dialog spectator tick failed", ex);
+        }
+    }
+
+    private void sendDialogSpectatorVote(int optionIndex, String optionText) {
+        if (!isGameplaySessionActive() || !service.isConnected()) {
+            return;
+        }
+        coop.ui.CoopDialogSpectatorState.SyncPayload remote = dialogSpectatorState.activeRemoteDialog();
+        if (remote == null || !remote.open()) {
+            return;
+        }
+        long now = clockMillis.getAsLong();
+        coop.ui.CoopDialogSpectatorState.VotePayload vote = new coop.ui.CoopDialogSpectatorState.VotePayload(
+                remote.dialogId(), sessionState.localName(), optionIndex, optionText);
+        CoopMessages.Message msg = CoopMessages.dialogVote(
+                sessionState.sessionId(), service.nextSeq(), now,
+                coop.ui.CoopDialogSpectatorState.encodeVote(vote));
+        if (service.role() == CoopConnectionRole.HOST && !remote.speakerId().isEmpty()) {
+            service.sendTo(remote.speakerId(), msg);
+        } else {
+            service.send(msg);
+        }
+        String optDisplay = (optionText == null || optionText.isBlank())
+                ? ("#" + (optionIndex + 1)) : optionText.trim();
+        coop.ui.CoopFeed.post(
+                coop.ui.CoopUiLang.tr(
+                        "[Vote] You suggested: \"" + optDisplay + "\"",
+                        "[Голос] Вы посоветовали: «" + optDisplay + "»"),
+                new java.awt.Color(110, 255, 165), coop.ui.CoopFeed.Severity.INFO);
+    }
+
+    private void handleDialogSync(CoopMessages.Message message) {
+        if (droppedBeforeTheSession(message.type())) {
+            return;
+        }
+        try {
+            String body = CoopMessages.parseBody(message);
+            coop.ui.CoopDialogSpectatorState.SyncPayload payload =
+                    coop.ui.CoopDialogSpectatorState.decodeSync(body);
+            if (payload == null) {
+                return;
+            }
+            if (!payload.speakerId().isEmpty()
+                    && payload.speakerId().equals(sessionState.localPlayerId())) {
+                return;
+            }
+            dialogSpectatorState.applyRemoteSync(payload);
+            if (!payload.open() && dialogSpectatorDialogs.isRequested()) {
+                dialogSpectatorDialogs.close();
+            }
+            // Host relays a guest's dialog to any other connected guests (3+ player sessions).
+            if (service.role() == CoopConnectionRole.HOST) {
+                long now = clockMillis.getAsLong();
+                for (String peerId : sessionState.guestIds()) {
+                    if (peerId != null && !peerId.equals(message.senderId())
+                            && !peerId.equals(payload.speakerId())) {
+                        service.sendTo(peerId, CoopMessages.dialogSync(
+                                sessionState.sessionId(), service.nextSeq(), now, body));
+                    }
+                }
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to handle DIALOG_SYNC", ex);
+        }
+    }
+
+    private void handleDialogVote(CoopMessages.Message message) {
+        if (droppedBeforeTheSession(message.type())) {
+            return;
+        }
+        try {
+            String body = CoopMessages.parseBody(message);
+            coop.ui.CoopDialogSpectatorState.VotePayload vote =
+                    coop.ui.CoopDialogSpectatorState.decodeVote(body);
+            if (vote == null) {
+                return;
+            }
+            // If a guest is the speaker in a multi-guest session, route the vote straight to them.
+            if (service.role() == CoopConnectionRole.HOST
+                    && !vote.dialogId().equals(localSpectatedDialogId)) {
+                coop.ui.CoopDialogSpectatorState.SyncPayload remote = dialogSpectatorState.activeRemoteDialog();
+                if (remote != null && remote.dialogId().equals(vote.dialogId())
+                        && !remote.speakerId().isEmpty()
+                        && !remote.speakerId().equals(message.senderId())) {
+                    service.sendTo(remote.speakerId(), CoopMessages.dialogVote(
+                            sessionState.sessionId(), service.nextSeq(), clockMillis.getAsLong(), body));
+                }
+                return;
+            }
+            long now = clockMillis.getAsLong();
+            dialogSpectatorState.recordIncomingVote(vote, now);
+            lastDialogSyncStructuralKey = "";
+            nextDialogSyncAtMillis = 0L;
+            try {
+                SectorAPI sector = Global.getSector();
+                CampaignUIAPI ui = sector == null ? null : sector.getCampaignUI();
+                com.fs.starfarer.api.campaign.InteractionDialogAPI current =
+                        ui == null ? null : ui.getCurrentInteractionDialog();
+                coop.ambient.CoopDialogSpectatorBridge.flashVotedOption(current, vote.optionIndex());
+            } catch (Throwable ignored) {
+            }
+            String banner = dialogSpectatorState.speakerVoteBanner(now);
+            if (!banner.isEmpty()) {
+                coop.ui.CoopFeed.post(banner, new java.awt.Color(110, 255, 165),
+                        coop.ui.CoopFeed.Severity.IMPORTANT);
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to handle DIALOG_VOTE", ex);
+        }
+    }
+
     /** Test read: whether the marker note box is being asked for. */
     boolean markDialogRequestedForTest() {
         return markDialogs.isRequested();
@@ -11767,6 +12043,7 @@ public class CoopNetPump implements EveryFrameScript {
                 || type == CoopMessages.Type.STORM_GRID
                 || type == CoopMessages.Type.STORM_CONTROL
                 || type == CoopMessages.Type.STREAM_ADD
-                || type == CoopMessages.Type.BATTLE_STATUS;
+                || type == CoopMessages.Type.BATTLE_STATUS
+                || type == CoopMessages.Type.DIALOG_SYNC;
     }
 }

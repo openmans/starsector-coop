@@ -29,7 +29,8 @@ public enum CoopDialogArbiter {
     ALLY_JOIN,
     TACTICAL_MAP,
     CHAT,
-    TRADE;
+    TRADE,
+    DIALOG_SPECTATOR;
 
     /** True when {@code kind} outranks {@code other}. */
     public boolean outranks(CoopDialogArbiter other) {

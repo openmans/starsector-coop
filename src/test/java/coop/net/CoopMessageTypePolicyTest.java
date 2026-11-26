@@ -83,7 +83,8 @@ class CoopMessageTypePolicyTest {
             CoopMessages.Type.CONTACT_SET, CoopMessages.Type.STORY_STATE,
             CoopMessages.Type.TRADE_SYNC, CoopMessages.Type.CHAT_MSG,
             CoopMessages.Type.NEX_EVENT,
-            CoopMessages.Type.ALLY_JOIN_OFFER, CoopMessages.Type.ALLY_JOIN_REPLY);
+            CoopMessages.Type.ALLY_JOIN_OFFER, CoopMessages.Type.ALLY_JOIN_REPLY,
+            CoopMessages.Type.DIALOG_SYNC, CoopMessages.Type.DIALOG_VOTE);
 
     // ---- table: CoopNetService.coalesceKey(Message) ------------------------------------------
     // Whitelist of whole-state snapshots that may supersede a queued copy of themselves; every
@@ -262,7 +263,8 @@ class CoopMessageTypePolicyTest {
             CoopMessages.Type.FLEET_SNAPSHOT, CoopMessages.Type.NPC_FLEET_MOTION,
             CoopMessages.Type.STORM_GRID, CoopMessages.Type.STORM_CONTROL,
             CoopMessages.Type.STREAM_ADD,
-            CoopMessages.Type.BATTLE_STATUS);
+            CoopMessages.Type.BATTLE_STATUS,
+            CoopMessages.Type.DIALOG_SYNC);
 
     private static CoopMessages.Message message(CoopMessages.Type type) {
         return new CoopMessages.Message(type, "session-a", 1L, 0L, "{}");
