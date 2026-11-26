@@ -5,19 +5,18 @@ the same markets, hunt shared bounties, and manage colonies together. The host r
 Your ships, cargo, credits, officers, and skills stay yours.
 
 <p>
-  <a href="https://github.com/AyoKeito/starsector-coop/releases">Releases</a> &nbsp;·&nbsp;
+  <a href="https://github.com/openmans/starsector-coop/releases">Releases</a> &nbsp;·&nbsp;
   <a href="#quick-start">Quick start</a> &nbsp;·&nbsp;
   <a href="docs/player/LIMITATIONS.md">Known limitations</a> &nbsp;·&nbsp;
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 > [!IMPORTANT]
-> **0.2.3 adds full battle synchronisation through The Wingman Project** (installed and enabled
-> on both PCs; see "Battles together" below). 0.2.2/0.2.3 are community ports of the upstream
-> preview to **Starsector 0.98.5a-RC9** (the RC5 build the upstream preview targets is no longer
-> offered for download). Both players must run this same build on 0.98.5a-RC9 and back up their
-> saves before upgrading. Without Wingman, one player pilots each battle on their own PC; the
-> other player waits on a paused campaign, and can send their fleet in as an AI ally.
+> **0.2.5 ships a standalone one-click Windows launcher (`Starsector Coop Launcher.exe`),
+> transparent ally battle reinforcement up to 3,000 su (Tactical Map, optional Wingman, or AI),
+> and live Partner Comm Link / Trade** for **Starsector 0.98.5a-RC9**. Both players must run the
+> same release on 0.98.5a-RC9 and back up their saves before upgrading. Wingman is completely
+> optional — tactical co-op battles and the entire shared campaign work without it.
 
 ## What you share
 
@@ -25,10 +24,10 @@ Your ships, cargo, credits, officers, and skills stay yours.
 | --- | --- |
 | Sector and exploration | See your partner's fleet and the same NPC fleets. Survey progress, explored ruins, and salvaged wrecks are shared. |
 | Campaign time | Any player can toggle global pause (when `coop.allowGuestPause` is on) and fast-forward together. Battles and interaction screens pause the campaign automatically. |
-| Battles | Fly together in real time via Wingman, or pilot solo while partners send AI-ally fleets and issue live tactical orders (engage/escort/defend/retreat) from the opt-in Tactical Map in **Intel → Coop Session**. |
+| Battles | Transparent reinforcement within `coop.allyJoinRange` (default `3000 su`): partners get a live join prompt to command their fleet on the **Tactical Map** (no Wingman needed), send **AI officers**, or fly manually via optional **Wingman**. |
 | Markets and storage | Buy from shared open, black, and military markets. Use the same storage locker (with automatic chunking for large ship lockers). Take turns docking at a market. |
 | Colonies, bounties, and reputation | Govern the same colonies under one faction (with synced administrators, configurable `coop.incomeSplit`, and optional `coop.guestColonizationConsent`). Host person/system bounties, commission payouts, contacts, and whitelisted storyline flags replicate to guests. |
-| Player transfers & comms | Trade credits, cargo, and ships atomically via the direct Trade UI (`Intel → Coop Session → Trade with Partner`), chat in-game (`F8` / `coop.chatKey`), or use shared storage and jettisoned pods. |
+| Player transfers & comms | Click a partner's fleet for live **Comm Link**, trade credits/cargo/ships atomically via the direct Trade UI (`Intel → Coop Session → Trade with Partner` or Comm Link), chat in-game (`F8` / `coop.chatKey`), or use shared storage and jettisoned pods. |
 | Networking & security | Supports LAN, UPnP/NAT-PMP, optional standalone CGNAT TCP relay (`coop.relayAddress` / `coop-launcher.jar --relay <port>`), and opt-in AES-256-GCM frame encryption (`coop.encryption=aes-gcm` with `coop.password`). |
 
 The [limitations guide](docs/player/LIMITATIONS.md) explains the details, including storage fees,
@@ -58,7 +57,7 @@ the guest joins the same battle over Wingman and pilots a ship in real time.
 
 - **Starsector `0.98.5a-RC9` on both PCs**, with Ironman off. Co-op uses Normal campaign mode.
 - **The same co-op build and other mods on both PCs**, including matching mod versions.
-- **Launcher on Windows (`Coop Launcher.cmd`) and Linux/macOS (`Coop Launcher.sh`).** Uses the Java runtime bundled with Starsector.
+- **Launcher on Windows (`Starsector Coop Launcher.exe` / `Coop Launcher.cmd`) and Linux/macOS (`Coop Launcher.sh`).** Three modes (**Install / Update**, **Host a game**, **Join a game**) using the Java runtime bundled with Starsector.
 - **A connection to the host's PC.** Use a LAN, VPN, IPv6, port forwarding, or a router with
   UPnP/NAT-PMP. The default port is `7777`; forward both TCP and UDP if configuring it manually.
   See the [connection guide](docs/player/CONNECT.md).
@@ -69,13 +68,21 @@ The games check versions and builds when connecting and reject mismatched instal
 
 ### 1. Install on both PCs
 
-Use the packaged mod archive for your build. GitHub's source ZIP does not include the compiled jars.
-Extract it into `<Starsector>\mods\coop` so the files sit directly inside that folder:
+**One-click on Windows (recommended):** download **`Starsector Coop Launcher.exe`** from the
+[latest release](https://github.com/openmans/starsector-coop/releases/latest), run it, pick
+`starsector.exe`, and click **Install & Launch** (optionally tick **The Wingman Project** if you
+want manual co-op piloting). It downloads `coop-0.2.5.zip`, unpacks to `<Starsector>\mods\coop`,
+backs up and patches `vmparams` (repairing broken tuning-pack classpaths too), and enables `"coop"`
+in `mods\enabled_mods.json`.
+
+**Manual install:** download `coop-0.2.5.zip` (not GitHub's source ZIP) and extract it into
+`<Starsector>\mods\coop` so the files sit directly inside that folder:
 
 ```text
 Starsector/
 └── mods/
     └── coop/
+        ├── Starsector Coop Launcher.exe
         ├── Coop Launcher.cmd
         ├── mod_info.json
         └── jars/
@@ -85,9 +92,8 @@ Starsector/
             └── flatlaf.jar
 ```
 
-Open **Coop Launcher.cmd**, then **Details** beside the installation status. Press **Fix** on each
-repairable problem. The launcher enables the mod and adds the required `coop-forks.jar` entry to
-the game's startup classpath, with a backup of `vmparams` before editing it.
+Open **`Starsector Coop Launcher.exe`** (or **`Coop Launcher.cmd`**) and use the **Install / Update**
+tab to run **Fix vmparams & mods** or **Install / Update** from GitHub.
 
 For manual setup or a failed install check, follow the [installation guide](docs/player/INSTALL.md).
 
@@ -134,7 +140,7 @@ Read [what is and is not shared](docs/player/LIMITATIONS.md) before committing t
 **Collect reports before relaunching the game**, which rewrites `starsector.log`.
 
 On both PCs, open **Logs → Save a bug report** in the co-op launcher. Then
-[open an issue](https://github.com/AyoKeito/starsector-coop/issues/new/choose) with both report ZIPs,
+[open an issue](https://github.com/openmans/starsector-coop/issues/new/choose) with both report ZIPs,
 what each player was doing, and any `[COOP-DOCTOR]` line from the session-ending dialog or
 `report.txt` inside the ZIP.
 

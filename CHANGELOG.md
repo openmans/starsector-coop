@@ -114,14 +114,6 @@ battle-result path.
     non-`.jar` entries, missing required stock jars such as `janino.jar`), paired with idempotent
     `CoopInstallFixer.repairClasspath` (preserving all JVM tuning flags, `-Dcoop.*` properties, and
     the main class, with one-time `vmparams.backup`).
-  - **Interactive 3,000 su Partner Battle Reinforcement & Partner Comm Link:** added host policy
-    `coop.allyJoinRange` (`700..10000` su, default `3000`), `CoopAllyReinforceCoordinator` +
-    `CoopAllyJoinDialogPlugin` (`ALLY_JOIN_OFFER` / `ALLY_JOIN_REPLY`) so a partner within range
-    chooses **Tactical Map** (auto-opens `CoopTacticalMapDialogPlugin`), **Wingman direct piloting**,
-    **AI officers**, or **Decline** and joins directly via `BattleAPI.join` without widening enemy
-    NPC join range; wired `CoopPartnerCampaignPlugin` + `CoopPartnerCommPlugin` (clicking a partner's
-    fleet opens Co-op Comm Link for Direct Trade, Chat, and Fight Alongside toggle) and connected
-    `setCommsHooks` in `CoopNetPump` for the **Open Co-op Chat** and **Trade with Partner** buttons.
 
 ## 0.2.2 (community port to 0.98.5a-RC9)
 

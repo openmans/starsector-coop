@@ -520,18 +520,21 @@ suppressors remove the vanilla spawner and `BarEventManager` scripts, so it will
 
 ## Launcher
 
-`Coop Launcher.cmd` at the mod root resolves the install root two levels up and runs
-`<install>\jre\bin\javaw.exe` - no JRE to install, no execution-policy prompt.
+`Starsector Coop Launcher.exe` (native Windows GUI bootstrapper built from
+`src/launcher-exe/StarsectorCoopLauncher.cs` via `scripts/build-launcher-exe.ps1`) and
+`Coop Launcher.cmd` resolve the Starsector install root, apply any `*.jar.pending` updates, and
+run `<install>\jre\bin\javaw.exe` - no JRE to install, no console window.
 
 ```text
-src/launcher/java/coop/launcher/   22 classes
-  CoopLauncherApp      main; CardLayout Host/Join + fixed footer, owned dialogs, modeless Logs
+src/launcher/java/coop/launcher/   23 classes
+  CoopLauncherApp      main; CardLayout Install-Update/Host/Join + fixed footer, owned dialogs, modeless Logs
   CoopLauncherConfig   settings round trip through saves/common/coop_options.json.data
   CoopInvite           the invite string; `cid` carries the campaign pick, last and optional
   CoopSaveIndexReader  reads coop_saves.json.data, joins rows to descriptor.xml on disk
   CoopCampaignPicker   the Campaign drop-down (New first, then one entry per campaign)
   CoopLauncherUi       shared Swing primitives: panels, form rows, the wrapping row layouts
-  CoopInstallCheck / CoopInstallFixer / CoopInstallLayout / CoopVmparamsText   the Fix button
+  CoopModInstaller     one-click GitHub downloader/extractor (+ optional Wingman, .pending jar swap)
+  CoopInstallCheck / CoopInstallFixer / CoopInstallLayout / CoopVmparamsText   install check, classpath repair, Fix
   CoopUpdateCheck, CoopBugReport, CoopGameProcess, CoopLogTail, CoopPublicAddress, CoopPasswords,
   CoopSeeds, CoopTheme, CoopIcons, CoopAtomicFiles, CoopLauncherProbe, CoopLauncherLogging
 ```

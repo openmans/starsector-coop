@@ -51,19 +51,24 @@ Section 8 explains what the refusal message looks like and how the check works.
 
 ## 2. Unpack the mod
 
-Download `coop-0.2.1.zip` from the [0.2.1 preview release](https://github.com/AyoKeito/starsector-coop/releases/tag/v0.2.1).
-Both players need this packaged ZIP, which contains the launcher, game jars and data. Install it
-manually. The launcher's update check follows stable releases.
+For one-click setup on Windows, run **`Starsector Coop Launcher.exe`** from the
+[latest release](https://github.com/openmans/starsector-coop/releases/latest) — it downloads and
+unpacks the archive automatically.
+
+To install manually, download `coop-0.2.5.zip` from the
+[latest release](https://github.com/openmans/starsector-coop/releases/latest).
+Both players need this packaged ZIP, which contains the launcher, game jars and data.
 
 Unzip so that `mod_info.json` sits directly in `<Starsector>\mods\coop`:
 
 ```text
 K:\Starsector\mods\coop\mod_info.json
+K:\Starsector\mods\coop\Starsector Coop Launcher.exe
+K:\Starsector\mods\coop\Coop Launcher.cmd
 K:\Starsector\mods\coop\jars\coop.jar
 K:\Starsector\mods\coop\jars\coop-forks.jar
 K:\Starsector\mods\coop\jars\coop-launcher.jar
 K:\Starsector\mods\coop\jars\flatlaf.jar
-K:\Starsector\mods\coop\Coop Launcher.cmd
 K:\Starsector\mods\coop\data\
 ```
 
@@ -338,13 +343,17 @@ If it does not get that far, `CONNECT.md` is the next stop, and `REPORTING.md` s
 strings, so a matching version label alone does not make different builds compatible. A mismatch is
 refused with `COOP-MODS`. A new release means both of you update before the next session.
 
-The launcher checks at start and puts the answer in the install-check panel: `Update available:
-<version>`, `Up to date: <version>`, or `Update check: unavailable` with the reason. It is one request
-to GitHub's releases API and it never blocks the window. If you run LazyWizard's Version Checker, the
-mod ships a `coop.version` file, so it reports there too.
+The launcher checks GitHub at start (and on demand via **Check updates** in the header or
+**Refresh** in Details) and shows the status right in the header (`Up to date` / `Update X.Y.Z` /
+`Check updates`) as well as on the **Install / Update** tab. It checks `releases/latest`, falls back
+to `releases?per_page=5` for pre-releases, and falls back to raw `coop.version` on `404` or GitHub
+API rate limits (common behind CGNAT). It never blocks the **Launch** button. If you run
+LazyWizard's Version Checker, the mod also ships a `coop.version` file.
 
-The launcher checks GitHub's latest stable release. A preview marked **Pre-release** is outside that
-check; use its release page and install its packaged ZIP manually on both PCs.
+Clicking **Install / Update** (on the **Install / Update** tab or from the update prompt) downloads
+and unpacks the latest release automatically, stages any in-use jars as `*.jar.pending` for clean
+swap on restart, and can optionally also install/update **The Wingman Project**
+(`NEOysod/TheWingmanProject` -> `mods\Wingman`, enabled as `wingman_project`).
 
 **A mod update can invalidate a co-op campaign in progress.** Save compatibility across releases is
 not promised. Unless a release note says a save carries over, finish a campaign on the build you
