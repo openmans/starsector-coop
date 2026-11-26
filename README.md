@@ -125,8 +125,9 @@ seed does not restore your progress. Save compatibility across mod releases is n
 
 A few other limits affect how you play:
 
-- **Story content:** the Galatia Academy chain runs on the host. Supported temporary abyssal
-  systems and free-standing lights are shared; their generation still follows the host's position.
+- **Story & abyssal content:** the Galatia Academy chain runs on the host. Supported temporary
+  abyssal systems, free-standing abyssal lights, and slipstream encounters are shared and now also
+  trigger around guests travelling away from the host (`CoopGuestEncounterTrigger`).
 - **Weather and ghosts:** hyperspace storm state, Host slipstreams and Leviathan trails are shared.
   Guest ability surges and cosmetic ghosts stay local; star flares and visual timing can differ.
   Native storm/boost and ghost/trail visual acceptance remains open for this preview.

@@ -66,6 +66,7 @@ final class CoopTheme {
     static final Color INFO = hex("#7ab4cc");
 
     static final int CARD_ARC = 14;
+    private static Font baseDefaultFont;
 
     private CoopTheme() {
     }
@@ -106,9 +107,11 @@ final class CoopTheme {
         UIManager.put("ToolTip.border", BorderFactory.createLineBorder(CARD_BORDER));
         UIManager.put("OptionPane.background", CARD);
         UIManager.put("Panel.background", BG);
-        Font base = UIManager.getFont("defaultFont");
-        if (base != null) {
-            UIManager.put("defaultFont", base.deriveFont((float) base.getSize() + 1f));
+        if (baseDefaultFont == null) {
+            baseDefaultFont = UIManager.getFont("defaultFont");
+        }
+        if (baseDefaultFont != null) {
+            UIManager.put("defaultFont", baseDefaultFont.deriveFont((float) baseDefaultFont.getSize() + 1f));
         }
     }
 

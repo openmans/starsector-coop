@@ -148,7 +148,11 @@ class CoopLauncherLayoutTest {
             frame.setSize(frame.getWidth(), frame.getMinimumSize().height);
             frame.validate();
             JScrollPane scroll = (JScrollPane) find(frame, "setupScroll");
-            assertTrue(scroll.getVerticalScrollBar().isVisible(), "Small windows must not hide setup content");
+            assertTrue(scroll.getVerticalScrollBar().isVisible(),
+                    () -> "Small windows must not hide setup content: frame=" + frame.getSize()
+                            + ", min=" + frame.getMinimumSize()
+                            + ", pref=" + scroll.getViewport().getView().getPreferredSize()
+                            + ", extent=" + scroll.getViewport().getExtentSize());
             Rectangle footer = find(frame, "launchFooter").getBounds();
             assertTrue(footer.y >= 0);
             assertTrue(footer.y + footer.height <= frame.getContentPane().getHeight());
@@ -208,6 +212,54 @@ class CoopLauncherLayoutTest {
                     "Connection card must return in Host mode");
             assertEquals("Launch Starsector", launch.getText());
             assertEquals(footer, find(frame, "launchFooter").getBounds());
+        });
+    }
+
+    @Test
+    void updateNotificationBannerAppearsWhenNewerReleaseArrives() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            javax.swing.JPanel banner = field("updateBanner", javax.swing.JPanel.class);
+            JLabel bannerLabel = field("updateBannerLabel", JLabel.class);
+            assertFalse(banner.isVisible(), "Update banner must stay hidden before a newer release is found");
+
+            app.applyUpdateOutcome(
+                    new CoopUpdateCheck.Outcome(CoopUpdateCheck.Kind.UPDATE_AVAILABLE, "0.2.6",
+                            "https://github.com/openmans/starsector-coop/releases/tag/v0.2.6", ""),
+                    "0.2.5", false);
+            assertTrue(banner.isVisible(), "Update banner must appear when an update is available");
+            assertTrue(bannerLabel.getText().contains("0.2.6"), bannerLabel.getText());
+            assertEquals("Update 0.2.6", field("updateChip", JButton.class).getText());
+
+            app.applyUpdateOutcome(
+                    new CoopUpdateCheck.Outcome(CoopUpdateCheck.Kind.UP_TO_DATE, "0.2.5",
+                            "https://github.com/openmans/starsector-coop/releases/tag/v0.2.5", ""),
+                    "0.2.5", false);
+            assertFalse(banner.isVisible(), "Update banner must hide once up to date");
+            assertEquals("Up to date", field("updateChip", JButton.class).getText());
+        });
+    }
+
+    @Test
+    void languageToggleSwitchesBetweenRuAndEnLive() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JButton langBtn = field("langToggle", JButton.class);
+            assertEquals("RU", langBtn.getText());
+            assertEquals("Host a game", field("hostSegment", JToggleButton.class).getText());
+            assertEquals("Launch Starsector", field("launchButton", JButton.class).getText());
+
+            app.setLanguage(CoopLauncherI18n.Lang.RU, false);
+            assertEquals("EN", langBtn.getText());
+            assertEquals("Запустить сервер", field("hostSegment", JToggleButton.class).getText());
+            assertEquals("Подключиться", field("guestSegment", JToggleButton.class).getText());
+            assertEquals("Установка мода", field("installSegment", JToggleButton.class).getText());
+            assertEquals("Запустить Starsector", field("launchButton", JButton.class).getText());
+            assertEquals("Настройки", field("advancedToggle", JButton.class).getText());
+            assertEquals("Логи", field("logToggle", JButton.class).getText());
+
+            app.setLanguage(CoopLauncherI18n.Lang.EN, false);
+            assertEquals("RU", langBtn.getText());
+            assertEquals("Host a game", field("hostSegment", JToggleButton.class).getText());
+            assertEquals("Launch Starsector", field("launchButton", JButton.class).getText());
         });
     }
 

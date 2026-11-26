@@ -2,6 +2,14 @@
 
 ## 0.2.5 (3-mode Starsector launcher + .exe installer + 3000 su tactical battles & partner comm link)
 
+- **Phase 26 completion (guest-proximity encounter triggering + multi-guest despawn + M3 polish):**
+  added `CoopGuestEncounterTrigger` on the host so guests travelling away from the host in
+  hyperspace / Abyssal Hyperspace trigger native abyssal systems, free-standing abyssal lights,
+  and slipstream encounters around their own fleet (replicated to all peers, sharing
+  `EncounterManager` timeouts to avoid double-spawning); upgraded `CoopAbyssalDespawner` to track
+  all connected guests (`updateGuestPresences`) so multi-guest players never lose an active abyssal
+  system; closed `CoopLightDeferredEngagement` in-place owner/target replacement and immediate
+  `retireForLight` cleanup.
 - **Transparent ally battle reinforcement (up to 3,000 su):** added host-configurable
   `coop.allyJoinRange` (default `3000`, range `700..10000`) and interactive reinforcement dialog
   (`CoopAllyReinforceCoordinator`, `CoopAllyJoinDialogPlugin`) letting nearby partners join any
@@ -16,10 +24,14 @@
   repairs/patches `vmparams`, enables mods in `enabled_mods.json`, swaps `.pending` jars, and
   opens the main launcher.
 - **Universal 3-mode launcher (`Install / Update` · `Host a game` · `Join a game`):** redesigned in
-  Starsector's native cyan/teal palette with high-contrast amber primary accent; added multi-source
-  GitHub version checker (`releases/latest` -> `releases?per_page=5` -> raw `coop.version` for
-  CGNAT rate limits), optional **The Wingman Project** (`NEOysod/TheWingmanProject`) install
-  checkbox, and `vmparams` tuning-pack classpath integrity guard & repair.
+  Starsector's native cyan/teal palette with high-contrast amber primary accent; added automatic
+  startup GitHub update check with multi-source fallback (`releases/latest` -> `releases?per_page=5`
+  -> raw `coop.version` for CGNAT rate limits), inline amber update notification banner (`Update now`
+  / `Later`), one-time startup update prompt dialog, live switchable **RU / EN** UI language toggle
+  (auto-detected from OS locale and persisted in launcher preferences, available in both the Java
+  launcher and `Starsector Coop Launcher.exe`), optional **The Wingman Project**
+  (`NEOysod/TheWingmanProject`) install checkbox, and `vmparams` tuning-pack classpath integrity
+  guard & repair.
 
 ## 0.2.4 (Wingman battles + phases 22/25/26/27/34 + hardening)
 

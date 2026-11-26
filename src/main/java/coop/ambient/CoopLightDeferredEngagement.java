@@ -34,8 +34,14 @@ public final class CoopLightDeferredEngagement {
                                         CampaignFleetAPI player, Runnable action) {
         String lightId = CoopLightBridge.lightId(light);
         if (lightId == null) return false;
-        if (pending.containsKey(dialog)) return true;
         Object owner = CoopLightBridge.interactionOwner();
+        Pending existing = pending.get(dialog);
+        if (existing != null) {
+            if (existing.owner == owner && existing.light == light && existing.player == player) {
+                return true;
+            }
+            existing.cancel("replaced_in_place");
+        }
         if (owner == null) {
             new Observation(lightId, null, Global.getSector(), player, dialog, light)
                     .record("cancelled", "owner_unavailable");
@@ -91,6 +97,20 @@ public final class CoopLightDeferredEngagement {
         if (reason.isBlank() || reason.length() > 128)
             throw new IllegalArgumentException("Deferred cancellation reason must contain 1..128 characters");
         for (Pending value : List.copyOf(pending.values())) value.cancel(reason);
+    }
+
+    /** Retires any deferred engagement waiting on {@code lightId} (for example after expiry or remote removal). */
+    public static int retireForLight(String lightId, String reason) {
+        if (lightId == null || lightId.isBlank()) return 0;
+        String safeReason = reason == null || reason.isBlank() ? "light_retired" : reason;
+        int cancelled = 0;
+        for (Pending value : List.copyOf(pending.values())) {
+            if (lightId.equals(value.observation.lightId)) {
+                value.cancel(safeReason);
+                cancelled++;
+            }
+        }
+        return cancelled;
     }
 
     /** Pure snapshot: no native predicates, permission checks, token providers or pending cleanup. */

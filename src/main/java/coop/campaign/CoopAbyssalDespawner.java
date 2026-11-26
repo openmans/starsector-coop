@@ -50,6 +50,40 @@ public final class CoopAbyssalDespawner implements EveryFrameScript {
     }
 
     /**
+     * Multi-guest overload (Phase 26 + 27): if any guest is currently inside this abyssal system,
+     * records that guest (pinning the system against despawn); otherwise tracks the guest closest to
+     * this system in hyperspace. Preserves single-guest save compatibility with zero new saved fields.
+     */
+    public void updateGuestPresences(List<SectorEntityToken> guests, boolean inReconnectGrace) {
+        if (system == null) return;
+        if (guests == null || guests.isEmpty()) {
+            updateGuestPresence(null, inReconnectGrace);
+            return;
+        }
+        SectorEntityToken best = null;
+        float bestDist = Float.MAX_VALUE;
+        Vector2f origin = system.getLocation();
+        for (SectorEntityToken candidate : guests) {
+            if (candidate == null) continue;
+            if (candidate.getContainingLocation() == system) {
+                best = candidate;
+                break;
+            }
+            Vector2f pos = candidate.getLocationInHyperspace();
+            if (pos != null && origin != null && Float.isFinite(pos.x) && Float.isFinite(pos.y)) {
+                float dist = Misc.getDistance(origin, pos);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    best = candidate;
+                }
+            } else if (best == null) {
+                best = candidate;
+            }
+        }
+        updateGuestPresence(best, inReconnectGrace);
+    }
+
+    /**
      * Host integration calls this each frame, including paused frames and session teardown.
      * A null presence retains the guest's last visit, position and inside hold. A later observed
      * presence outside this system is the only operation that releases a saved inside hold.

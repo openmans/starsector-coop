@@ -13,6 +13,7 @@ import coop.campaign.CoopBarGenerationSuppressor;
 import coop.campaign.CoopBaseAuthority;
 import coop.campaign.CoopSlipstreamAuthority;
 import coop.campaign.CoopEncounterAuthority;
+import coop.campaign.CoopGuestEncounterTrigger;
 import coop.campaign.CoopLightAuthority;
 import coop.campaign.CoopLightWorld;
 import coop.campaign.CoopStormAuthority;
@@ -737,6 +738,7 @@ public class CoopNetPump implements EveryFrameScript {
     private CoopSlipstreamAuthority slipstreamAuthority;
     private CoopWreckAuthority wreckAuthority;
     private CoopEncounterAuthority encounterAuthority;
+    private CoopGuestEncounterTrigger guestEncounterTrigger = new CoopGuestEncounterTrigger();
     private final CoopLightWorld lightWorld;
     private final CoopStormWorld stormWorld;
     private CoopStormAuthority stormAuthority;
@@ -3686,7 +3688,7 @@ public class CoopNetPump implements EveryFrameScript {
         // the frames that are not an edge, so it gets no profiler section of its own either.
         tickNetFault();
         // Seasonal membership must be read before NPC suppression removes SlipstreamManager.
-        syncEncounterReplication();
+        syncEncounterReplication(amount);
         syncSlipstreamReplication();
         syncNpcReplication();
         syncWreckReplication();
@@ -8535,20 +8537,26 @@ public class CoopNetPump implements EveryFrameScript {
         }
     }
 
-    private void syncEncounterReplication() {
+    private void syncEncounterReplication(float amount) {
         boolean active = shouldStreamFleet();
         if (active && !encounterReplicationStreaming) {
             encounterAuthority.reset();
+            guestEncounterTrigger.reset();
             encounterReplicationStreaming = true;
         } else if (!active && encounterReplicationStreaming && !reconnect.active()) {
+            guestEncounterTrigger.reset();
             encounterReplicationStreaming = false;
         }
         try {
             // Saved despawners must retain the last Guest visit even after a session ends.
             if (service.role() == CoopConnectionRole.HOST) {
                 encounterAuthority.updateGuestPresence(reconnect.active());
-                if (active) encounterAuthority.tickHost();
-                else encounterAuthority.observeHost();
+                if (active) {
+                    guestEncounterTrigger.tickHost(amount);
+                    encounterAuthority.tickHost();
+                } else {
+                    encounterAuthority.observeHost();
+                }
             } else if (service.role() == CoopConnectionRole.NONE) {
                 // A canonical save may be played solo after Host capture replaced native lifetimes.
                 encounterAuthority.updateGuestPresence(false);

@@ -138,6 +138,11 @@ public final class CoopLauncherApp {
     private JToggleButton hostSegment;
     private JToggleButton guestSegment;
     private JButton updateChip;
+    private JButton langToggle;
+    private CoopLauncherI18n.Lang lang = CoopLauncherI18n.Lang.EN;
+    private JPanel updateBanner;
+    private JLabel updateBannerLabel;
+    private boolean updateNoticeShown;
 
     // session card
     private JPanel sessionCard;
@@ -362,6 +367,9 @@ public final class CoopLauncherApp {
         this.layout = discovered;
         this.launcherVersion = CoopInstallCheck.launcherVersion();
         buildFrame();
+        if (System.getenv("COOP_LAUNCHER_PREVIEW") == null) {
+            setLanguage(CoopLauncherI18n.loadPreferred(), false);
+        }
         if (layout == null) {
             File detected = CoopInstallLayout.detectCommonInstallDir();
             if (detected != null) {
@@ -483,6 +491,8 @@ public final class CoopLauncherApp {
 
         JPanel setup = CoopLauncherUi.panel();
         setup.setBorder(BorderFactory.createEmptyBorder(6, 22, 12, 22));
+        updateBanner = buildUpdateBanner();
+        setup.add(updateBanner, BorderLayout.NORTH);
         sessionCard = buildSessionCard();
         setup.add(sessionCard, BorderLayout.CENTER);
         connectionCard = buildConnectionCard();
@@ -550,9 +560,14 @@ public final class CoopLauncherApp {
         logToggle = CoopTheme.ghost("Logs");
         CoopIcons.apply(logToggle, CoopIcons.Symbol.TERMINAL);
         logToggle.addActionListener(event -> setDrawerVisible(!logDialog.isVisible()));
+        langToggle = CoopTheme.ghost("RU");
+        langToggle.setName("langToggle");
+        langToggle.setToolTipText("Switch interface language (RU / EN)");
+        langToggle.addActionListener(event -> setLanguage(lang.other(), true));
         actions.add(updateChip);
         actions.add(advancedToggle);
         actions.add(logToggle);
+        actions.add(langToggle);
         JPanel chrome = CoopLauncherUi.panel();
         chrome.add(brand, BorderLayout.WEST);
         chrome.add(CoopLauncherUi.centered(actions), BorderLayout.EAST);
@@ -587,6 +602,37 @@ public final class CoopLauncherApp {
         roleRow.add(roles);
         header.add(roleRow, BorderLayout.SOUTH);
         return header;
+    }
+
+    /** Inline amber notification banner shown across all tabs whenever GitHub has a newer release. */
+    private JPanel buildUpdateBanner() {
+        JPanel banner = CoopLauncherUi.panel();
+        banner.setName("updateBanner");
+        banner.setOpaque(true);
+        banner.setBackground(new java.awt.Color(44, 33, 16));
+        banner.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(CoopTheme.WARN),
+                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
+        updateBannerLabel = new JLabel("Update available");
+        updateBannerLabel.setName("updateBannerLabel");
+        updateBannerLabel.setForeground(CoopTheme.TEXT);
+        updateBannerLabel.setFont(updateBannerLabel.getFont().deriveFont(Font.BOLD));
+        updateBannerLabel.setIcon(CoopIcons.of(CoopIcons.Symbol.ALERT, 16));
+        updateBannerLabel.setIconTextGap(8);
+
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        actions.setOpaque(false);
+        JButton updateNow = CoopTheme.secondary("Update now");
+        updateNow.addActionListener(event -> runOneClickInstall());
+        JButton dismiss = CoopTheme.ghost("Later");
+        dismiss.addActionListener(event -> banner.setVisible(false));
+        actions.add(updateNow);
+        actions.add(dismiss);
+
+        banner.add(updateBannerLabel, BorderLayout.CENTER);
+        banner.add(CoopLauncherUi.centered(actions), BorderLayout.EAST);
+        banner.setVisible(false);
+        return banner;
     }
 
     private JPanel buildSessionCard() {
@@ -665,7 +711,7 @@ public final class CoopLauncherApp {
             public Component getListCellRendererComponent(javax.swing.JList<?> list, Object value,
                                                            int index, boolean selected, boolean focus) {
                 Object label = value instanceof CoopCampaignPicker.Entry entry && entry.newCampaign()
-                        ? "New campaign" : value;
+                        ? t("New campaign") : value;
                 return super.getListCellRendererComponent(list, label, index, selected, focus);
             }
         });
@@ -677,7 +723,7 @@ public final class CoopLauncherApp {
             }
         });
         customizeButton = CoopTheme.ghost("Customize");
-        CoopLauncherUi.stableWidth(customizeButton, "Customize", "Details");
+        CoopLauncherUi.stableWidth(customizeButton, "Customize", "Details", "Настроить", "Подробнее");
         customizeButton.addActionListener(event -> showPanel(worldDialog));
         form.full("Campaign", CoopLauncherUi.beside(campaignBox, customizeButton));
         worldSummary = CoopLauncherUi.summary(1);
@@ -713,7 +759,7 @@ public final class CoopLauncherApp {
         hostPasswordField.getDocument().addDocumentListener(onAnyEdit(this::noticeHostPasswordCleared));
         publicAddressField = CoopTheme.textField("Public, LAN or VPN address");
         publicLookupButton = CoopTheme.secondary("Look up");
-        CoopLauncherUi.stableWidth(publicLookupButton, "Looking up…");
+        CoopLauncherUi.stableWidth(publicLookupButton, "Looking up…", "Определить", "Поиск…");
         publicLookupButton.addActionListener(event -> lookUpPublicAddress(null));
         networkForm.full("Address your partner connects to",
                 CoopLauncherUi.beside(publicAddressField, publicLookupButton));
@@ -737,7 +783,8 @@ public final class CoopLauncherApp {
         hostEndpoint.setMinimumSize(new Dimension(0, hostEndpoint.getPreferredSize().height));
         copyInviteButton = CoopTheme.secondary("Copy invite");
         CoopIcons.apply(copyInviteButton, CoopIcons.Symbol.COPY);
-        CoopLauncherUi.stableWidth(copyInviteButton, "Copy invite", "Copied", "Looking up…");
+        CoopLauncherUi.stableWidth(copyInviteButton, "Copy invite", "Copied", "Looking up…",
+                "Копировать", "Скопировано");
         copyInviteButton.addActionListener(event -> copyInvite());
         inviteFeedback = CoopLauncherUi.summary(1);
         JPanel inviteText = new JPanel(new BorderLayout(0, 5));
@@ -831,7 +878,8 @@ public final class CoopLauncherApp {
         connectionDetailsButton.setIcon(CoopIcons.of(CoopIcons.Symbol.MINUS, 32));
         connectionDetailsButton.addActionListener(event -> showPanel(connectionDialog));
         connectionButton = CoopTheme.secondary("Check connection");
-        CoopLauncherUi.stableWidth(connectionButton, "Check connection", "Check again", "Checking…");
+        CoopLauncherUi.stableWidth(connectionButton, "Check connection", "Check again", "Checking…",
+                "Проверить связь", "Проверить снова");
         connectionButton.addActionListener(event -> {
             if (hostSegment.isSelected()) {
                 checkMyConnection();
@@ -1031,7 +1079,8 @@ public final class CoopLauncherApp {
         launchButton = CoopTheme.primary("Launch Starsector");
         CoopIcons.apply(launchButton, CoopIcons.Symbol.PLAY);
         CoopLauncherUi.stableWidth(launchButton, "Launch Starsector", "Game running",
-                "Install / Update", "Select game .exe", "Installing...");
+                "Install / Update", "Select game .exe", "Installing...",
+                "Запустить Starsector", "Установить / Обновить", "Игра запущена");
         launchButton.addActionListener(event -> {
             if (isInstallMode()) {
                 if (layout == null) {
@@ -1207,6 +1256,52 @@ public final class CoopLauncherApp {
     }
 
 
+    private String t(String en) {
+        return CoopLauncherI18n.t(lang, en);
+    }
+
+    private String tr(String en, String ru) {
+        return CoopLauncherI18n.tr(lang, en, ru);
+    }
+
+    /** Switches the launcher UI between English and Russian live, with zero restart. */
+    void setLanguage(CoopLauncherI18n.Lang target, boolean persist) {
+        if (target == null) return;
+        this.lang = target;
+        if (persist) {
+            CoopLauncherI18n.savePreferred(target);
+        }
+        if (langToggle != null) {
+            langToggle.setText(target == CoopLauncherI18n.Lang.RU ? "EN" : "RU");
+            langToggle.setToolTipText(target == CoopLauncherI18n.Lang.RU
+                    ? "Переключить язык интерфейса на English (EN)"
+                    : "Switch interface language to Русский (RU)");
+        }
+        CoopLauncherI18n.applyTree(frame, lang);
+        CoopLauncherI18n.applyTree(settingsDialog, lang);
+        CoopLauncherI18n.applyTree(installDialog, lang);
+        CoopLauncherI18n.applyTree(logDialog, lang);
+        CoopLauncherI18n.applyTree(worldDialog, lang);
+        CoopLauncherI18n.applyTree(hostNetworkDialog, lang);
+        CoopLauncherI18n.applyTree(guestNetworkDialog, lang);
+        CoopLauncherI18n.applyTree(connectionDialog, lang);
+
+        refreshInstallModeView();
+        renderRows();
+        refreshInvitePreview();
+        updateLaunchGate();
+        refreshGuestSummary();
+        if (latestUpdateOutcome != null) {
+            refreshUpdateUiText(latestUpdateOutcome, effectiveVersion());
+        } else if (updateChip != null && updateChip.isEnabled()) {
+            updateChip.setText(t("Check updates"));
+        }
+        if (frame != null) {
+            frame.revalidate();
+            frame.repaint();
+        }
+    }
+
     private boolean isInstallMode() {
         return installSegment != null && installSegment.isSelected();
     }
@@ -1238,22 +1333,28 @@ public final class CoopLauncherApp {
         }
         if (layout == null) {
             installPathField.setText("");
-            installModeSummary.setText("No Starsector folder selected yet.\n"
-                    + "Click Browse .exe and pick starsector.exe to install Starsector Coop from GitHub.");
+            installModeSummary.setText(tr(
+                    "No Starsector folder selected yet.\n"
+                            + "Click Browse .exe and pick starsector.exe to install Starsector Coop from GitHub.",
+                    "Папка Starsector ещё не выбрана.\n"
+                            + "Нажмите «Выбрать .exe» и укажите starsector.exe для установки Starsector Coop с GitHub."));
         } else {
             installPathField.setText(layout.starsectorExe().getPath());
             String installed = layout.isModInstalled()
-                    ? "Installed: v" + effectiveVersion()
-                    : "Mod not installed in mods\\coop yet";
+                    ? tr("Installed: v", "Установлено: v") + effectiveVersion()
+                    : tr("Mod not installed in mods\\coop yet", "Мод ещё не установлен в mods\\coop");
             String github;
             if (latestUpdateOutcome == null) {
-                github = "GitHub: checking...";
+                github = tr("GitHub: checking...", "GitHub: проверка...");
             } else if (latestUpdateOutcome.kind() == CoopUpdateCheck.Kind.UPDATE_AVAILABLE) {
-                github = "GitHub: v" + latestUpdateOutcome.version() + " (update available)";
+                github = "GitHub: v" + latestUpdateOutcome.version()
+                        + tr(" (update available)", " (доступно обновление)");
             } else if (latestUpdateOutcome.kind() == CoopUpdateCheck.Kind.UP_TO_DATE) {
-                github = "GitHub: v" + latestUpdateOutcome.version() + " (up to date)";
+                github = "GitHub: v" + latestUpdateOutcome.version()
+                        + tr(" (up to date)", " (актуально)");
             } else {
-                github = "GitHub: unavailable (" + latestUpdateOutcome.reason() + ")";
+                github = tr("GitHub: unavailable (", "GitHub: недоступен (")
+                        + latestUpdateOutcome.reason() + ")";
             }
             int fails = 0;
             for (CoopInstallCheck.Row row : installRows) {
@@ -1262,11 +1363,15 @@ public final class CoopLauncherApp {
                 }
             }
             String readiness = !layout.isModInstalled()
-                    ? "Click Install / Update below to download the mod and configure vmparams."
+                    ? tr("Click Install / Update below to download the mod and configure vmparams.",
+                            "Нажмите «Установить / Обновить» ниже, чтобы скачать мод и настроить vmparams.")
                     : (fails == 0
-                    ? "Ready to play — switch to Host a game (server) or Join a game (client)."
-                    : fails + (fails == 1 ? " setup issue" : " setup issues")
-                    + " found — click Fix vmparams & mods or Install / Update.");
+                    ? tr("Ready to play — switch to Host a game (server) or Join a game (client).",
+                            "Готово к игре — перейдите на «Запустить сервер» или «Подключиться».")
+                    : tr(fails + (fails == 1 ? " setup issue" : " setup issues")
+                            + " found — click Fix vmparams & mods or Install / Update.",
+                            "Найдено проблем установки: " + fails
+                            + " — нажмите «Починить vmparams и моды» или «Установить / Обновить»."));
             installModeSummary.setText(installed + " · " + github + "\n" + readiness);
         }
         if (installModeFixButton != null) {
@@ -1277,9 +1382,9 @@ public final class CoopLauncherApp {
         }
         if (installWingmanBox != null) {
             boolean wingmanPresent = layout != null && layout.isWingmanInstalled();
-            installWingmanBox.setText(wingmanPresent
+            installWingmanBox.setText(t(wingmanPresent
                     ? "Also update The Wingman Project (installed — optional manual co-op piloting)"
-                    : "Also install The Wingman Project (optional: manual co-op piloting)");
+                    : "Also install The Wingman Project (optional: manual co-op piloting)"));
             installWingmanBox.setEnabled(!modInstallRunning.get() && !gameRunning);
         }
     }
@@ -1294,9 +1399,9 @@ public final class CoopLauncherApp {
         checkingConnection = false;
         connectionChecked = false;
         setChips(List.of());
-        setConnectionStatus("Connection not checked", CoopIcons.Symbol.MINUS, CoopTheme.MUTED);
-        note(hostSegment.isSelected() ? "Check before your partner tries to join."
-                : "Test the host's launcher before starting the game.");
+        setConnectionStatus(t("Connection not checked"), CoopIcons.Symbol.MINUS, CoopTheme.MUTED);
+        note(t(hostSegment.isSelected() ? "Check before your partner tries to join."
+                : "Test the host's launcher before starting the game."));
         updateLaunchGate();
     }
 
@@ -1305,7 +1410,8 @@ public final class CoopLauncherApp {
             return;
         }
         String address = guestHostField.getText().trim();
-        guestSummary.setText(address.isEmpty() ? "Your host's campaign and connection will appear here."
+        guestSummary.setText(address.isEmpty()
+                ? t("Your host's campaign and connection will appear here.")
                 : CoopLauncherUi.brief(address + ":" + guestPortField.getText().trim() + " · "
                         + guestSectorSizeField.getText() + " sector · " + guestSectorAgeField.getText()
                         + " stars", 140));
@@ -1584,23 +1690,25 @@ public final class CoopLauncherApp {
             launchButton.setEnabled(!installing && !gameRunning);
             CoopIcons.apply(launchButton, installing ? CoopIcons.Symbol.BUSY : CoopIcons.Symbol.CHECK);
             if (installing) {
-                launchButton.setText("Installing...");
-                footerHint.setText("Downloading and configuring Starsector Coop from GitHub...");
+                launchButton.setText(t("Installing..."));
+                footerHint.setText(t("Downloading and configuring Starsector Coop from GitHub..."));
                 footerHint.setForeground(CoopTheme.MUTED);
             } else if (gameRunning) {
-                launchButton.setText("Game running");
-                footerHint.setText("Close Starsector before installing or updating the mod.");
+                launchButton.setText(t("Game running"));
+                footerHint.setText(t("Close Starsector before installing or updating the mod."));
                 footerHint.setForeground(CoopTheme.WARN);
             } else if (layout == null) {
-                launchButton.setText("Select game .exe");
-                footerHint.setText("Pick starsector.exe to download and install Starsector Coop.");
+                launchButton.setText(t("Select game .exe"));
+                footerHint.setText(t("Pick starsector.exe to download and install Starsector Coop."));
                 footerHint.setForeground(CoopTheme.WARN);
             } else {
-                launchButton.setText("Install / Update");
+                launchButton.setText(tr("Install / Update", "Установить / Обновить"));
                 footerHint.setText(updateAvailable && latestUpdateOutcome != null
-                        ? "Update v" + latestUpdateOutcome.version()
-                                + " is available. Downloads, unpacks and patches vmparams."
-                        : "Downloads the latest GitHub release, patches vmparams and enables the mod.");
+                        ? tr("Update v" + latestUpdateOutcome.version()
+                                + " is available. Downloads, unpacks and patches vmparams.",
+                                "Доступно обновление v" + latestUpdateOutcome.version()
+                                + ". Скачает, распакует и пропатчит vmparams.")
+                        : t("Downloads the latest GitHub release, patches vmparams and enables the mod."));
                 footerHint.setForeground(updateAvailable ? CoopTheme.WARN : CoopTheme.MUTED);
             }
             launchButton.setToolTipText(footerHint.getText());
@@ -1608,26 +1716,26 @@ public final class CoopLauncherApp {
             return;
         }
         CoopIcons.apply(launchButton, CoopIcons.Symbol.PLAY);
-        launchButton.setText(gameRunning ? "Game running" : "Launch Starsector");
+        launchButton.setText(t(gameRunning ? "Game running" : "Launch Starsector"));
         String reason = launchBlockedReason();
         launchButton.setEnabled(reason == null);
         connectionButton.setEnabled(!checkingConnection && !mappingCleanupPending && !gameRunning
                 && (hostSegment.isSelected() ? validPort(hostPortField.getText())
                 : !guestHostField.getText().trim().isEmpty() && validPort(guestPortField.getText())));
-        connectionButton.setText(checkingConnection || mappingCleanupPending ? "Checking…"
-                : connectionChecked ? "Check again" : "Check connection");
+        connectionButton.setText(t(checkingConnection || mappingCleanupPending ? "Checking…"
+                : connectionChecked ? "Check again" : "Check connection"));
         refreshGuestSummary();
         if (gameRunning) {
-            footerHint.setText("Press Play in Starsector's launcher, then start or load your campaign.");
+            footerHint.setText(t("Press Play in Starsector's launcher, then start or load your campaign."));
             footerHint.setForeground(CoopTheme.MUTED);
         } else if (reason != null) {
-            footerHint.setText(reason);
+            footerHint.setText(t(reason));
             footerHint.setForeground(CoopTheme.WARN);
         } else {
-            footerHint.setText("Opens Starsector's launcher. Then press Play.");
+            footerHint.setText(t("Opens Starsector's launcher. Then press Play."));
             footerHint.setForeground(CoopTheme.MUTED);
         }
-        launchButton.setToolTipText(reason);
+        launchButton.setToolTipText(reason == null ? null : t(reason));
     }
 
     private String launchBlockedReason() {
@@ -1737,16 +1845,30 @@ public final class CoopLauncherApp {
         boolean missingAddress = publicAddressField.getText().trim().isEmpty();
         copyInviteButton.setEnabled(!addressLookupRunning && validSeed
                 && validPort(hostPortField.getText()) && (invite != null || missingAddress));
-        copyInviteButton.setText(addressLookupRunning ? "Looking up…"
-                : invite != null && invite.equals(copiedInvite) ? "Copied" : "Copy invite");
-        hostEndpoint.setText(missingAddress ? "No address selected"
+        copyInviteButton.setText(t(addressLookupRunning ? "Looking up…"
+                : invite != null && invite.equals(copiedInvite) ? "Copied" : "Copy invite"));
+        hostEndpoint.setText(missingAddress ? t("No address selected")
                 : publicAddressField.getText().trim() + ":" + hostPortField.getText().trim()
-                + (password(hostPasswordField).isEmpty() ? " · Open session" : " · Password set"));
+                + (password(hostPasswordField).isEmpty()
+                        ? tr(" · Open session", " · Без пароля")
+                        : tr(" · Password set", " · С паролем")));
         hostEndpoint.setToolTipText(hostEndpoint.getText());
-        worldSummary.setText(selected(sectorSizeBox) + " sector · " + selected(sectorAgeBox)
-                + " stars · " + (!validSeed ? "Seed needs attention"
-                : selectedCampaignId().isEmpty() ? "Seed generated" : "Saved campaign"));
-        worldSummary.setToolTipText("Sector seed: " + hostSeedField.getText().trim());
+        String sizeRaw = selected(sectorSizeBox);
+        String ageRaw = selected(sectorAgeBox);
+        String sizeLabel = lang == CoopLauncherI18n.Lang.RU
+                ? ("small".equalsIgnoreCase(sizeRaw) ? "малый" : "обычный") : sizeRaw;
+        String ageLabel = lang == CoopLauncherI18n.Lang.RU ? switch (ageRaw.toLowerCase(java.util.Locale.ROOT)) {
+            case "young" -> "молодые";
+            case "average" -> "средние";
+            case "old" -> "старые";
+            default -> "смешанные";
+        } : ageRaw;
+        String seedState = !validSeed ? tr("Seed needs attention", "Нужен корректный сид")
+                : selectedCampaignId().isEmpty() ? tr("Seed generated", "Сид создан")
+                : tr("Saved campaign", "Сохранение");
+        worldSummary.setText(sizeLabel + tr(" sector · ", " сектор · ") + ageLabel
+                + tr(" stars · ", " звёзды · ") + seedState);
+        worldSummary.setToolTipText(tr("Sector seed: ", "Сид сектора: ") + hostSeedField.getText().trim());
         String feedback = addressLookupRunning ? "Looking up your address…"
                 : !validSeed ? "Set a valid seed in Customize."
                 : !validPort(hostPortField.getText()) ? "Set a valid port in Edit connection."
@@ -1754,7 +1876,7 @@ public final class CoopLauncherApp {
                 : invite == null ? "Check the address in Edit connection."
                 : invite.equals(copiedInvite) ? "Invite copied · Send it to your partner"
                 : !copiedInvite.isEmpty() ? "Settings changed · Copy a fresh invite" : "Ready to share";
-        inviteFeedback.setText(feedback);
+        inviteFeedback.setText(t(feedback));
         inviteFeedback.setForeground(invite == null ? CoopTheme.MUTED : CoopTheme.OK);
         updateLaunchGate();
     }
@@ -1847,15 +1969,19 @@ public final class CoopLauncherApp {
             }
         }
         if (fails > 0) {
-            installSummary.set(fails + (fails == 1 ? " problem" : " problems")
-                    + (warns > 0 ? ", " + warns + (warns == 1 ? " warning" : " warnings") : ""),
+            installSummary.set(tr(
+                    fails + (fails == 1 ? " problem" : " problems")
+                            + (warns > 0 ? ", " + warns + (warns == 1 ? " warning" : " warnings") : ""),
+                    "Проблем: " + fails + (warns > 0 ? ", предупр.: " + warns : "")),
                     CoopTheme.FAIL);
         } else if (warns > 0) {
-            installSummary.set(warns + (warns == 1 ? " warning" : " warnings"), CoopTheme.WARN);
+            installSummary.set(tr(
+                    warns + (warns == 1 ? " warning" : " warnings"),
+                    "Предупреждений: " + warns), CoopTheme.WARN);
         } else if (all.isEmpty()) {
-            installSummary.set("no install", CoopTheme.INFO);
+            installSummary.set(t("no install"), CoopTheme.INFO);
         } else {
-            installSummary.set("Install ready", CoopTheme.OK);
+            installSummary.set(t("Install ready"), CoopTheme.OK);
         }
         updateLaunchGate();
         refreshInstallModeView();
@@ -1892,8 +2018,9 @@ public final class CoopLauncherApp {
             }
             rowsPanel.add(renderRow(row, trailing));
         }
-        showAllButton.setText(showAllRows ? "Hide passed checks"
-                : "Show all checks (" + hidden + " passed)");
+        showAllButton.setText(showAllRows ? t("Hide passed checks")
+                : tr("Show all checks (" + hidden + " passed)",
+                        "Показать все проверки (пройдено: " + hidden + ")"));
         showAllButton.setVisible(hidden > 0 || showAllRows);
         rowsPanel.revalidate();
         rowsPanel.repaint();
@@ -2713,57 +2840,86 @@ public final class CoopLauncherApp {
             } finally {
                 updateCheckRunning.set(false);
             }
-            SwingUtilities.invokeLater(() -> {
-                latestUpdateOutcome = outcome;
-                updateRow = CoopUpdateCheck.row(outcome, version);
-                boolean available = outcome.kind() == CoopUpdateCheck.Kind.UPDATE_AVAILABLE;
-                updateAvailable = available;
-                updateUrl = outcome.url();
-                LOG.info("Update check " + updateRow);
-                renderRows();
-                refreshInstallModeView();
-                updateLaunchGate();
-                if (updateChip != null) {
-                    updateChip.setEnabled(true);
-                    updateChip.setVisible(true);
-                    if (available) {
-                        updateChip.setIcon(CoopIcons.of(CoopIcons.Symbol.ALERT, 14));
-                        updateChip.setForeground(CoopTheme.WARN);
-                        updateChip.setText("Update " + outcome.version());
-                        updateChip.setToolTipText("Installed " + version + " -> GitHub "
-                                + outcome.version()
-                                + ". Both players must install the same release. Click to open"
-                                + " the GitHub release page.");
-                    } else if (outcome.kind() == CoopUpdateCheck.Kind.UP_TO_DATE) {
-                        updateChip.setIcon(CoopIcons.of(CoopIcons.Symbol.CHECK, 14));
-                        updateChip.setForeground(CoopTheme.OK);
-                        updateChip.setText("Up to date");
-                        updateChip.setToolTipText("Installed " + version + " matches GitHub ("
-                                + outcome.version() + "). Click to check GitHub again.");
-                    } else {
-                        updateChip.setIcon(null);
-                        updateChip.setForeground(CoopTheme.MUTED);
-                        updateChip.setText("Check updates");
-                        updateChip.setToolTipText("GitHub check unavailable (" + outcome.reason()
-                                + "). Click to retry.");
-                    }
-                }
-                if (available) {
-                    append("GitHub version check: version " + outcome.version()
-                            + " is available (installed " + version + "). Both players must use"
-                            + " the same release: " + outcome.url());
-                } else if (manual) {
-                    if (outcome.kind() == CoopUpdateCheck.Kind.UP_TO_DATE) {
-                        append("GitHub version check: up to date (installed " + version
-                                + ", GitHub " + outcome.version() + ").");
-                    } else {
-                        append("GitHub version check: unavailable (" + outcome.reason() + ").");
-                    }
-                }
-            });
+            SwingUtilities.invokeLater(() -> applyUpdateOutcome(outcome, version, manual));
         }, "coop-launcher-update-check");
         thread.setDaemon(true);
         thread.start();
+    }
+
+    void applyUpdateOutcome(CoopUpdateCheck.Outcome outcome, String version, boolean manual) {
+        latestUpdateOutcome = outcome;
+        updateRow = CoopUpdateCheck.row(outcome, version);
+        boolean available = outcome.kind() == CoopUpdateCheck.Kind.UPDATE_AVAILABLE;
+        updateAvailable = available;
+        updateUrl = outcome.url();
+        LOG.info("Update check " + updateRow);
+        renderRows();
+        refreshInstallModeView();
+        updateLaunchGate();
+        refreshUpdateUiText(outcome, version);
+        if (available) {
+            append("GitHub version check: version " + outcome.version()
+                    + " is available (installed " + version + "). Both players must use"
+                    + " the same release: " + outcome.url());
+            if ((manual || !updateNoticeShown) && frame != null && frame.isShowing()
+                    && System.getenv("COOP_LAUNCHER_PREVIEW") == null) {
+                updateNoticeShown = true;
+                promptInstallOrOpenUpdate();
+            }
+        } else if (manual) {
+            if (outcome.kind() == CoopUpdateCheck.Kind.UP_TO_DATE) {
+                append("GitHub version check: up to date (installed " + version
+                        + ", GitHub " + outcome.version() + ").");
+            } else {
+                append("GitHub version check: unavailable (" + outcome.reason() + ").");
+            }
+        }
+    }
+
+    private void refreshUpdateUiText(CoopUpdateCheck.Outcome outcome, String version) {
+        boolean available = outcome.kind() == CoopUpdateCheck.Kind.UPDATE_AVAILABLE;
+        if (updateChip != null) {
+            updateChip.setEnabled(true);
+            updateChip.setVisible(true);
+            if (available) {
+                updateChip.setIcon(CoopIcons.of(CoopIcons.Symbol.ALERT, 14));
+                updateChip.setForeground(CoopTheme.WARN);
+                updateChip.setText(tr("Update ", "Обновить ") + outcome.version());
+                updateChip.setToolTipText(tr(
+                        "Installed " + version + " -> GitHub " + outcome.version()
+                                + ". Both players must install the same release. Click to update.",
+                        "Установлена " + version + " -> на GitHub " + outcome.version()
+                                + ". Оба игрока должны быть на одной версии. Нажмите для обновления."));
+            } else if (outcome.kind() == CoopUpdateCheck.Kind.UP_TO_DATE) {
+                updateChip.setIcon(CoopIcons.of(CoopIcons.Symbol.CHECK, 14));
+                updateChip.setForeground(CoopTheme.OK);
+                updateChip.setText(t("Up to date"));
+                updateChip.setToolTipText(tr(
+                        "Installed " + version + " matches GitHub (" + outcome.version()
+                                + "). Click to check GitHub again.",
+                        "Установлена актуальная версия " + version + " (GitHub: "
+                                + outcome.version() + "). Нажмите, чтобы проверить ещё раз."));
+            } else {
+                updateChip.setIcon(null);
+                updateChip.setForeground(CoopTheme.MUTED);
+                updateChip.setText(t("Check updates"));
+                updateChip.setToolTipText(tr(
+                        "GitHub check unavailable (" + outcome.reason() + "). Click to retry.",
+                        "Проверка GitHub недоступна (" + outcome.reason() + "). Нажмите для повтора."));
+            }
+        }
+        if (updateBanner != null && updateBannerLabel != null) {
+            if (available) {
+                updateBannerLabel.setText(tr(
+                        "Update v" + outcome.version() + " is available (installed v" + version
+                                + ") — both players need the same build.",
+                        "Доступно обновление v" + outcome.version() + " (установлена v" + version
+                                + ") — у обоих игроков должна быть одна сборка."));
+                updateBanner.setVisible(true);
+            } else {
+                updateBanner.setVisible(false);
+            }
+        }
     }
 
     /**
@@ -2980,7 +3136,7 @@ public final class CoopLauncherApp {
         LOG.info("Started starsector.exe pid " + pid);
         append("Starsector started (pid " + pid + "). This window keeps showing the co-op lines from"
                 + " the game log.");
-        launchButton.setText("Game running");
+        launchButton.setText(t("Game running"));
         gameRunning = true;
         updateLaunchGate();
         gameProcess.onExit().thenAccept(process -> {
@@ -2990,7 +3146,7 @@ public final class CoopLauncherApp {
             SwingUtilities.invokeLater(() -> {
                 LOG.info("starsector.exe exited with code " + process.exitValue());
                 append("Starsector exited (code " + process.exitValue() + ").");
-                launchButton.setText("Launch Starsector");
+                launchButton.setText(t("Launch Starsector"));
                 gameRunning = false;
                 updateLaunchGate();
                 // The session just wrote saves. The picker and both hints are about to be read by
@@ -3020,15 +3176,26 @@ public final class CoopLauncherApp {
             }
             return;
         }
-        Object[] options = { "Install automatically", "Open GitHub", "Cancel" };
+        String remoteVer = latestUpdateOutcome != null && !latestUpdateOutcome.version().isEmpty()
+                ? "v" + latestUpdateOutcome.version() : tr("a newer release", "новая версия");
+        String installedVer = effectiveVersion();
+        Object[] options = { t("Update now"), tr("Open GitHub", "Открыть GitHub"), t("Later") };
         int choice = JOptionPane.showOptionDialog(frame,
-                "A newer Starsector Coop release is available on GitHub.\n\n"
-                        + "Download and install it into:\n"
-                        + layout.modRoot() + "\n"
-                        + "and update vmparams / enabled_mods.json automatically?",
-                "Starsector Coop Update",
+                tr("Starsector Coop " + remoteVer + " is available on GitHub (installed: v"
+                                + installedVer + ").\n\n"
+                                + "Both players must be on the same version to connect.\n"
+                                + "Download and install it into:\n"
+                                + layout.modRoot() + "\n"
+                                + "and update vmparams / enabled_mods.json automatically?",
+                        "На GitHub доступна версия Starsector Coop " + remoteVer
+                                + " (установлена: v" + installedVer + ").\n\n"
+                                + "Для игры по сети у обоих игроков должна быть одна версия.\n"
+                                + "Скачать и установить в:\n"
+                                + layout.modRoot() + "\n"
+                                + "и автоматически обновить vmparams и enabled_mods.json?"),
+                tr("Update Available — Starsector Coop", "Доступно обновление — Starsector Coop"),
                 JOptionPane.YES_NO_CANCEL_OPTION,
-                JOptionPane.QUESTION_MESSAGE,
+                JOptionPane.INFORMATION_MESSAGE,
                 null,
                 options,
                 options[0]);

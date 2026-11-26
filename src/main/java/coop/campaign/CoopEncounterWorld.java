@@ -437,9 +437,14 @@ public final class CoopEncounterWorld implements CoopEncounterAuthority.Encounte
 
     @Override public void updateGuestPresence(boolean reconnectGrace) {
         SectorAPI sector = sectorSupplier.get(); if (sector == null) return;
+        List<SectorEntityToken> guests = CoopPresenceRegistry.getAll();
+        if (guests.isEmpty()) {
+            SectorEntityToken single = CoopPresenceRegistry.get();
+            guests = single == null ? List.of() : List.of(single);
+        }
         for (StarSystemAPI system : systems(sector)) {
             if (savedRecipe(system) == null) continue;
-            ensureHostDespawner(system).updateGuestPresence(CoopPresenceRegistry.get(), reconnectGrace);
+            ensureHostDespawner(system).updateGuestPresences(guests, reconnectGrace);
         }
     }
 

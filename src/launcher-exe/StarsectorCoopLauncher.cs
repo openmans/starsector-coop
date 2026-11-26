@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Net;
@@ -771,14 +772,18 @@ namespace StarsectorCoopBootstrap
         private static readonly Color OkColor = Color.FromArgb(82, 224, 124);
         private static readonly Color WarnColor = Color.FromArgb(255, 179, 64);
 
+        private readonly Label subtitleLabel;
+        private readonly Label fieldLabel;
         private readonly TextBox pathBox;
         private readonly Button browseButton;
+        private readonly Button langButton;
         private readonly CheckBox wingmanBox;
         private readonly Label statusLabel;
         private readonly ProgressBar progressBar;
         private readonly Button installButton;
         private readonly Button launchOnlyButton;
         private readonly bool autoStart;
+        private bool russian;
         private bool busy;
 
         public int ExitCode { get; private set; }
@@ -786,6 +791,7 @@ namespace StarsectorCoopBootstrap
         public InstallerForm(string initialInstallRoot, bool autoStart, bool initialWingman)
         {
             this.autoStart = autoStart;
+            this.russian = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName.Equals("ru", StringComparison.OrdinalIgnoreCase);
             Text = "Starsector Coop Launcher";
             ClientSize = new Size(580, 308);
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -804,17 +810,19 @@ namespace StarsectorCoopBootstrap
                 Location = new Point(24, 18),
                 AutoSize = true
             };
-            var subtitle = new Label
+            langButton = MakeButton(russian ? "EN" : "RU", SecondaryBg, Color.FromArgb(203, 245, 255), BorderColor, 48, 26);
+            langButton.Location = new Point(508, 20);
+            langButton.Click += (s, e) => { russian = !russian; ApplyLanguage(); };
+
+            subtitleLabel = new Label
             {
-                Text = "Select starsector.exe — downloads the latest release from GitHub, patches vmparams & launches.",
                 ForeColor = MutedColor,
                 Location = new Point(25, 50),
                 Size = new Size(530, 22)
             };
 
-            var fieldLabel = new Label
+            fieldLabel = new Label
             {
-                Text = "Starsector executable (starsector.exe)",
                 Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
                 ForeColor = TextColor,
                 Location = new Point(24, 84),
@@ -838,7 +846,6 @@ namespace StarsectorCoopBootstrap
 
             wingmanBox = new CheckBox
             {
-                Text = "Also install The Wingman Project (optional: manual co-op piloting)",
                 ForeColor = TextColor,
                 BackColor = BgColor,
                 Location = new Point(24, 144),
@@ -848,11 +855,6 @@ namespace StarsectorCoopBootstrap
 
             statusLabel = new Label
             {
-                Text = initialInstallRoot != null
-                    ? (Program.IsModReady(initialInstallRoot)
-                        ? "Starsector Coop is installed. Click Launch or Install / Update from GitHub."
-                        : "Starsector found. Click Install & Launch to download and configure the mod.")
-                    : "Choose your starsector.exe file to begin.",
                 ForeColor = initialInstallRoot != null ? OkColor : WarnColor,
                 Location = new Point(24, 174),
                 Size = new Size(532, 34)
@@ -874,20 +876,21 @@ namespace StarsectorCoopBootstrap
                 BackColor = CardColor
             };
 
-            launchOnlyButton = MakeButton("Launch installed", SecondaryBg, Color.FromArgb(203, 245, 255), BorderColor, 146, 36);
+            launchOnlyButton = MakeButton("Launch installed", SecondaryBg, Color.FromArgb(203, 245, 255), BorderColor, 168, 36);
             launchOnlyButton.Location = new Point(24, 14);
             launchOnlyButton.Click += (s, e) => LaunchExisting();
 
-            installButton = MakeButton("Install & Launch", PrimaryBg, PrimaryFg, Color.FromArgb(255, 196, 112), 186, 36);
+            installButton = MakeButton("Install & Launch", PrimaryBg, PrimaryFg, Color.FromArgb(255, 196, 112), 204, 36);
             installButton.Font = new Font("Segoe UI", 10f, FontStyle.Bold);
-            installButton.Location = new Point(370, 14);
+            installButton.Location = new Point(352, 14);
             installButton.Click += async (s, e) => await RunInstallAsync();
 
             footer.Controls.Add(launchOnlyButton);
             footer.Controls.Add(installButton);
 
             Controls.Add(title);
-            Controls.Add(subtitle);
+            Controls.Add(langButton);
+            Controls.Add(subtitleLabel);
             Controls.Add(fieldLabel);
             Controls.Add(pathBox);
             Controls.Add(browseButton);
@@ -896,7 +899,7 @@ namespace StarsectorCoopBootstrap
             Controls.Add(progressBar);
             Controls.Add(footer);
 
-            UpdateButtons();
+            ApplyLanguage();
             Shown += async (s, e) =>
             {
                 if (this.autoStart && !string.IsNullOrWhiteSpace(pathBox.Text))
@@ -904,6 +907,38 @@ namespace StarsectorCoopBootstrap
                     await RunInstallAsync();
                 }
             };
+        }
+
+        private string Tr(string en, string ru)
+        {
+            return russian ? ru : en;
+        }
+
+        private void ApplyLanguage()
+        {
+            langButton.Text = russian ? "EN" : "RU";
+            subtitleLabel.Text = Tr(
+                "Select starsector.exe — downloads the latest release from GitHub, patches vmparams & launches.",
+                "Укажите starsector.exe — скачает релиз с GitHub, пропатчит vmparams и запустит лаунчер.");
+            fieldLabel.Text = Tr("Starsector executable (starsector.exe)", "Файл игры (starsector.exe)");
+            browseButton.Text = Tr("Browse .exe", "Выбрать .exe");
+            wingmanBox.Text = Tr(
+                "Also install The Wingman Project (optional: manual co-op piloting)",
+                "Также установить The Wingman Project (опционально: ручное пилотирование)");
+            launchOnlyButton.Text = Tr("Launch installed", "Запустить лаунчер");
+            if (!busy)
+            {
+                string root = Program.ResolveInstallRoot(pathBox.Text);
+                statusLabel.ForeColor = root != null ? OkColor : WarnColor;
+                statusLabel.Text = root != null
+                    ? (Program.IsModReady(root)
+                        ? Tr("Starsector Coop is installed. Click Launch or Update from GitHub.",
+                             "Starsector Coop установлен. Нажмите «Запустить» или «Обновить с GitHub».")
+                        : Tr("Starsector found. Click Install & Launch to download and configure the mod.",
+                             "Игра найдена. Нажмите «Установить и запустить» для скачивания и настройки."))
+                    : Tr("Choose your starsector.exe file to begin.", "Выберите файл starsector.exe, чтобы начать.");
+            }
+            UpdateButtons();
         }
 
         private static Button MakeButton(string text, Color bg, Color fg, Color border, int w, int h)
@@ -961,8 +996,11 @@ namespace StarsectorCoopBootstrap
             bool ready = valid && Program.IsModReady(root);
             browseButton.Enabled = !busy;
             wingmanBox.Enabled = !busy;
+            langButton.Enabled = !busy;
             installButton.Enabled = !busy;
-            installButton.Text = valid ? (ready ? "Update & Launch" : "Install & Launch") : "Select starsector.exe";
+            installButton.Text = valid
+                ? (ready ? Tr("Update & Launch", "Обновить и запустить") : Tr("Install & Launch", "Установить и запустить"))
+                : Tr("Select starsector.exe", "Выбрать starsector.exe");
             launchOnlyButton.Visible = ready;
             launchOnlyButton.Enabled = !busy && ready;
         }
