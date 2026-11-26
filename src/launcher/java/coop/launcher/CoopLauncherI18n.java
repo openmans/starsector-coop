@@ -65,8 +65,24 @@ final class CoopLauncherI18n {
 
         // Install / Update mode
         put("Starsector executable", "Файл игры (starsector.exe)");
+        put("Starsector folder", "Папка Starsector");
         put("Select starsector.exe...", "Выберите starsector.exe...");
         put("Browse .exe", "Выбрать .exe");
+        put("Open folder", "Открыть папку");
+        put("Update", "Обновить");
+        put("Install", "Установить");
+        put("Launch", "Запустить");
+        put("Log", "Лог");
+        put("Bug report", "Баг-репорт");
+        put("Log folder", "Папка логов");
+        put("Host & Join are inside the game (green CO-OP button & F7).",
+                "Хост и подключение внутри игры (зелёная кнопка CO-OP и F7).");
+        put("Press Play in Starsector's launcher, then use the green CO-OP button.",
+                "Нажмите Play в игре, затем зелёную кнопку CO-OP в меню.");
+        put("Pick starsector.exe to install, update, or launch the game.",
+                "Выберите starsector.exe для установки, обновления или запуска.");
+        put("Click Update or open Details to fix vmparams / mod setup.",
+                "Нажмите «Обновить» или «Подробнее», чтобы починить vmparams / моды.");
         put("Also install The Wingman Project (optional: manual co-op piloting)",
                 "Также установить The Wingman Project (опционально: ручное пилотирование)");
         put("Also update The Wingman Project (installed — optional manual co-op piloting)",

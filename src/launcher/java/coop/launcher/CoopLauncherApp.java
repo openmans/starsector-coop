@@ -139,6 +139,8 @@ public final class CoopLauncherApp {
     private JToggleButton guestSegment;
     private JButton updateChip;
     private JButton langToggle;
+    private JButton openFolderButton;
+    private JButton updateActionButton;
     private CoopLauncherI18n.Lang lang = CoopLauncherI18n.Lang.EN;
     private JPanel updateBanner;
     private JLabel updateBannerLabel;
@@ -375,46 +377,24 @@ public final class CoopLauncherApp {
             if (detected != null) {
                 adoptLayout(CoopInstallLayout.ofInstallRoot(detected));
             } else {
-                append("Starsector was not auto-detected. Use the Install / Update tab to select"
-                        + " starsector.exe and install the mod in one click.");
+                append("Starsector was not auto-detected. Click Browse .exe to select"
+                        + " starsector.exe and install or update the mod in one click.");
             }
         } else {
             adoptLayout(layout);
         }
-        boolean needsInstallTab = layout == null || !layout.isModInstalled()
-                || CoopInstallCheck.blocked(installRows);
-        if (needsInstallTab && System.getenv("COOP_LAUNCHER_PREVIEW") == null) {
-            installSegment.setSelected(true);
-            hostSegment.setSelected(false);
-            guestSegment.setSelected(false);
-            onRoleChanged();
-        } else if (layout == null) {
-            hostSegment.setSelected(true);
-            guestSegment.setSelected(false);
-            installSegment.setSelected(false);
-            onRoleChanged();
-        }
         if (applyFix && layout != null) {
-            // Started with administrator rights by an unelevated copy that could not write the
-            // files. Both targets are safe to run: the fixer writes nothing when a file is already
-            // right, so the one that was not broken reports "nothing to change".
             applyInstallFix(List.of(CoopInstallFixer.Target.VMPARAMS,
                     CoopInstallFixer.Target.ENABLED_MODS), "the elevated relaunch");
         }
         if (System.getenv("COOP_LAUNCHER_PREVIEW") == null) {
             startUpdateCheck();
         }
-        if (hostSegment.isSelected() && publicAddressField.getText().trim().isEmpty()
-                && System.getenv("COOP_LAUNCHER_PREVIEW") == null) {
-            lookUpPublicAddress(null, true);
-        }
-        applyPreview();
+        updateLaunchGate();
         frame.setVisible(true);
         SwingUtilities.invokeLater(() -> {
-            if (hostSegment.isSelected()) {
-                campaignBox.requestFocusInWindow();
-            } else {
-                guestInviteField.requestFocusInWindow();
+            if (launchButton != null) {
+                launchButton.requestFocusInWindow();
             }
         });
     }
@@ -489,41 +469,45 @@ public final class CoopLauncherApp {
         root.setBackground(CoopTheme.BG);
         root.add(buildHeader(), BorderLayout.NORTH);
 
-        JPanel setup = CoopLauncherUi.panel();
-        setup.setBorder(BorderFactory.createEmptyBorder(6, 22, 12, 22));
-        updateBanner = buildUpdateBanner();
-        setup.add(updateBanner, BorderLayout.NORTH);
+        // Keep legacy session/settings models constructed for lifecycle tests while showing only
+        // the minimal single-screen updater + live log + launch UI to the player.
         sessionCard = buildSessionCard();
-        setup.add(sessionCard, BorderLayout.CENTER);
         connectionCard = buildConnectionCard();
-        setup.add(connectionCard, BorderLayout.SOUTH);
-        JScrollPane setupScroll = CoopLauncherUi.scroll(setup);
-        setupScroll.setName("setupScroll");
-        root.add(setupScroll, BorderLayout.CENTER);
-
         advancedCard = buildAdvancedCard();
         settingsDialog = CoopLauncherUi.dialog(frame, "Settings",
                 CoopLauncherUi.scroll(advancedCard), 660, 520, true,
                 "Changes are used when you launch.");
         installDialog = CoopLauncherUi.dialog(frame, "Installation",
                 CoopLauncherUi.scroll(buildInstallCard()), 720, 500, false, "");
+
+        JPanel center = new JPanel(new BorderLayout(0, 10));
+        center.setOpaque(false);
+        center.setBorder(BorderFactory.createEmptyBorder(8, 22, 12, 22));
+
+        JPanel topStack = new JPanel(new BorderLayout(0, 10));
+        topStack.setOpaque(false);
+        updateBanner = buildUpdateBanner();
+        installForm.setVisible(true);
+        topStack.add(updateBanner, BorderLayout.NORTH);
+        topStack.add(installForm, BorderLayout.CENTER);
+        center.add(topStack, BorderLayout.NORTH);
+
         drawer = buildDrawer();
-        logDialog = CoopLauncherUi.dialog(frame, "Session log", drawer, 760, 460, false,
-                "This window can stay open while you play.");
+        drawer.setName("embeddedLogPanel");
+        center.add(drawer, BorderLayout.CENTER);
+        logDialog = CoopLauncherUi.dialog(frame, "Session log", new JPanel(), 760, 460, false, "");
+
+        root.add(center, BorderLayout.CENTER);
         root.add(buildFooter(), BorderLayout.SOUTH);
 
         frame.setContentPane(root);
         java.awt.Rectangle screen = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
                 .getMaximumWindowBounds();
         frame.setMinimumSize(new Dimension(
-                Math.min(com.formdev.flatlaf.util.UIScale.scale(620), screen.width - 24),
-                Math.min(com.formdev.flatlaf.util.UIScale.scale(480), screen.height - 24)));
-        // Size once from both role layouts and the active font scale. Keep a little breathing
-        // room without a fixed-height empty area; subsequent edits must not resize the window.
-        frame.pack();
-        int preferredHeight = frame.getHeight() + com.formdev.flatlaf.util.UIScale.scale(8);
-        frame.setSize(Math.min(com.formdev.flatlaf.util.UIScale.scale(720), screen.width - 24),
-                Math.min(preferredHeight, screen.height - 24));
+                Math.min(com.formdev.flatlaf.util.UIScale.scale(580), screen.width - 24),
+                Math.min(com.formdev.flatlaf.util.UIScale.scale(440), screen.height - 24)));
+        frame.setSize(Math.min(com.formdev.flatlaf.util.UIScale.scale(680), screen.width - 24),
+                Math.min(com.formdev.flatlaf.util.UIScale.scale(540), screen.height - 24));
         frame.setLocationRelativeTo(null);
     }
 
@@ -565,42 +549,24 @@ public final class CoopLauncherApp {
         langToggle.setToolTipText("Switch interface language (RU / EN)");
         langToggle.addActionListener(event -> setLanguage(lang.other(), true));
         actions.add(updateChip);
-        actions.add(advancedToggle);
-        actions.add(logToggle);
         actions.add(langToggle);
         JPanel chrome = CoopLauncherUi.panel();
         chrome.add(brand, BorderLayout.WEST);
         chrome.add(CoopLauncherUi.centered(actions), BorderLayout.EAST);
         header.add(chrome, BorderLayout.NORTH);
 
+        // Kept instantiated (not added to header) for legacy lifecycle test seams.
         installSegment = CoopTheme.segment("Install / Update");
         installSegment.setName("installSegment");
         hostSegment = CoopTheme.segment("Host a game");
         hostSegment.setName("hostSegment");
         guestSegment = CoopTheme.segment("Join a game");
         guestSegment.setName("guestSegment");
-        CoopIcons.apply(installSegment, CoopIcons.Symbol.CHECK);
-        CoopIcons.apply(hostSegment, CoopIcons.Symbol.HOST);
-        CoopIcons.apply(guestSegment, CoopIcons.Symbol.LINK);
         ButtonGroup group = new ButtonGroup();
         group.add(installSegment);
         group.add(hostSegment);
         group.add(guestSegment);
-        installSegment.addActionListener(event -> onRoleChanged());
-        hostSegment.addActionListener(event -> onRoleChanged());
-        guestSegment.addActionListener(event -> onRoleChanged());
-        JPanel roles = new JPanel(new GridLayout(1, 3, 4, 0));
-        roles.setBackground(CoopTheme.FIELD);
-        roles.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(CoopTheme.CARD_BORDER),
-                BorderFactory.createEmptyBorder(4, 4, 4, 4)));
-        roles.add(installSegment);
-        roles.add(hostSegment);
-        roles.add(guestSegment);
-        JPanel roleRow = CoopLauncherUi.panel();
-        roleRow.setBorder(BorderFactory.createEmptyBorder(10, 0, 8, 0));
-        roleRow.add(roles);
-        header.add(roleRow, BorderLayout.SOUTH);
+        installSegment.setSelected(true);
         return header;
     }
 
@@ -641,7 +607,6 @@ public final class CoopLauncherApp {
         installForm = buildInstallModeForm();
         hostForm = buildHostForm();
         guestForm = buildGuestForm();
-        sessionBody.add(installForm, "install");
         sessionBody.add(hostForm, "host");
         sessionBody.add(guestForm, "guest");
         return sessionBody;
@@ -657,7 +622,22 @@ public final class CoopLauncherApp {
         JButton browseExe = CoopTheme.secondary("Browse .exe");
         browseExe.setToolTipText("Select starsector.exe (or your Starsector install folder).");
         browseExe.addActionListener(event -> chooseInstallFolder());
-        form.full("Starsector executable", CoopLauncherUi.beside(installPathField, browseExe));
+        openFolderButton = CoopTheme.secondary("Open folder");
+        openFolderButton.setName("openFolderButton");
+        openFolderButton.setToolTipText("Open the Starsector game folder in Explorer.");
+        openFolderButton.addActionListener(event -> {
+            if (layout == null) {
+                chooseInstallFolder();
+                return;
+            }
+            LOG.info("Opening game folder " + layout.installRoot());
+            openPath(layout.installRoot());
+        });
+        JPanel pathActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        pathActions.setOpaque(false);
+        pathActions.add(browseExe);
+        pathActions.add(openFolderButton);
+        form.full("Starsector folder", CoopLauncherUi.beside(installPathField, pathActions));
 
         installModeSummary = CoopLauncherUi.summary(2);
         installModeSummary.setName("installModeSummary");
@@ -673,25 +653,12 @@ public final class CoopLauncherApp {
                 + " enabled_mods.json. Optional — tactical map co-op battles work without it.");
         form.raw(installWingmanBox);
 
-        JPanel quickActions = new JPanel();
-        quickActions.setLayout(new javax.swing.BoxLayout(quickActions, javax.swing.BoxLayout.X_AXIS));
-        quickActions.setOpaque(false);
         installModeFixButton = CoopTheme.secondary("Fix vmparams & mods");
-        installModeFixButton.setToolTipText("Back up and patch vmparams (including broken tuning-pack"
-                + " classpaths) and tick coop in enabled_mods.json.");
         installModeFixButton.addActionListener(event -> applyInstallFix(
                 List.of(CoopInstallFixer.Target.VMPARAMS, CoopInstallFixer.Target.ENABLED_MODS),
                 "vmparams and enabled_mods.json"));
         installModeCheckButton = CoopTheme.ghost("Check GitHub");
         installModeCheckButton.addActionListener(event -> startUpdateCheck(true));
-        JButton detailsButton = CoopTheme.ghost("All checks");
-        detailsButton.addActionListener(event -> showPanel(installDialog));
-        quickActions.add(installModeFixButton);
-        quickActions.add(CoopTheme.hgap(8));
-        quickActions.add(installModeCheckButton);
-        quickActions.add(CoopTheme.hgap(8));
-        quickActions.add(detailsButton);
-        form.raw(quickActions);
 
         installProgressBar = new javax.swing.JProgressBar(0, 100);
         installProgressBar.setStringPainted(true);
@@ -1076,41 +1043,60 @@ public final class CoopLauncherApp {
         footerHint.setFont(footerHint.getFont().deriveFont(footerHint.getFont().getSize() - 1f));
         JPanel status = CoopLauncherUi.statusBlock(install, footerHint, 2);
         status.setName("launchStatus");
-        launchButton = CoopTheme.primary("Launch Starsector");
-        CoopIcons.apply(launchButton, CoopIcons.Symbol.PLAY);
-        CoopLauncherUi.stableWidth(launchButton, "Launch Starsector", "Game running",
-                "Install / Update", "Select game .exe", "Installing...",
-                "Запустить Starsector", "Установить / Обновить", "Игра запущена");
-        launchButton.addActionListener(event -> {
-            if (isInstallMode()) {
-                if (layout == null) {
-                    chooseInstallFolder();
-                } else {
-                    runOneClickInstall();
-                }
+        updateActionButton = CoopTheme.secondary("Update");
+        updateActionButton.setName("updateActionButton");
+        CoopIcons.apply(updateActionButton, CoopIcons.Symbol.CHECK);
+        CoopLauncherUi.stableWidth(updateActionButton, "Update", "Install", "Installing...",
+                "Обновить", "Установить", "Установка...");
+        updateActionButton.addActionListener(event -> {
+            if (layout == null) {
+                chooseInstallFolder();
             } else {
-                launch();
+                runOneClickInstall();
             }
         });
+        launchButton = CoopTheme.primary("Launch");
+        launchButton.setName("launchButton");
+        CoopIcons.apply(launchButton, CoopIcons.Symbol.PLAY);
+        CoopLauncherUi.stableWidth(launchButton, "Launch", "Game running", "Select game .exe",
+                "Запустить", "Игра запущена", "Выбрать .exe");
+        launchButton.addActionListener(event -> {
+            if (layout == null) {
+                chooseInstallFolder();
+            } else {
+                launchSimple();
+            }
+        });
+        JPanel footerActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        footerActions.setOpaque(false);
+        footerActions.add(updateActionButton);
+        footerActions.add(launchButton);
         footer.add(status, BorderLayout.CENTER);
-        footer.add(CoopLauncherUi.centered(launchButton), BorderLayout.EAST);
+        footer.add(CoopLauncherUi.centered(footerActions), BorderLayout.EAST);
         return footer;
     }
 
     private JPanel buildDrawer() {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBackground(CoopTheme.FIELD);
-        panel.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, CoopTheme.CARD_BORDER));
+        panel.setBorder(BorderFactory.createLineBorder(CoopTheme.CARD_BORDER));
 
-        JPanel toolbar = new JPanel(new CoopTheme.WrapLayout(6, 6));
+        JPanel headerRow = new JPanel(new BorderLayout(8, 0));
+        headerRow.setOpaque(true);
+        headerRow.setBackground(CoopTheme.CARD);
+        headerRow.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, CoopTheme.CARD_BORDER),
+                BorderFactory.createEmptyBorder(4, 12, 4, 8)));
+        JLabel logTitle = new JLabel("Log");
+        logTitle.setFont(logTitle.getFont().deriveFont(Font.BOLD));
+        logTitle.setForeground(CoopTheme.TEXT);
+
+        JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         toolbar.setOpaque(false);
-        toolbar.setBorder(BorderFactory.createEmptyBorder(2, 14, 0, 14));
-        bugReportButton = CoopTheme.secondary("Save a bug report");
+        bugReportButton = CoopTheme.ghost("Bug report");
         bugReportButton.addActionListener(event -> saveBugReport());
         includeSaveBox = new JCheckBox("Include my newest save", true);
-        includeSaveBox.setOpaque(false);
-        includeSaveBox.setForeground(CoopTheme.MUTED);
-        JButton openLogFolder = CoopTheme.ghost("Open log folder");
+        JButton openLogFolder = CoopTheme.ghost("Log folder");
         openLogFolder.addActionListener(event -> {
             if (layout == null) {
                 append("There is no install to open a log folder for yet.");
@@ -1122,12 +1108,13 @@ public final class CoopLauncherApp {
         JButton clear = CoopTheme.ghost("Clear");
         clear.addActionListener(event -> statusArea.setText(""));
         toolbar.add(bugReportButton);
-        toolbar.add(includeSaveBox);
-        toolbar.add(CoopTheme.hgap(8));
         toolbar.add(openLogFolder);
         toolbar.add(clear);
 
-        statusArea = new JTextArea(9, 60);
+        headerRow.add(logTitle, BorderLayout.WEST);
+        headerRow.add(toolbar, BorderLayout.EAST);
+
+        statusArea = new JTextArea(10, 60);
         statusArea.setEditable(false);
         statusArea.setLineWrap(true);
         statusArea.setWrapStyleWord(true);
@@ -1136,12 +1123,11 @@ public final class CoopLauncherApp {
                 .setUpdatePolicy(javax.swing.text.DefaultCaret.NEVER_UPDATE);
         statusArea.setForeground(CoopTheme.TEXT);
         statusArea.setBackground(CoopTheme.FIELD);
-        statusArea.setBorder(BorderFactory.createEmptyBorder(6, 14, 10, 14));
+        statusArea.setBorder(BorderFactory.createEmptyBorder(8, 12, 10, 12));
         JScrollPane scroll = new JScrollPane(statusArea);
         scroll.setBorder(BorderFactory.createEmptyBorder());
-        scroll.setPreferredSize(new Dimension(600, 190));
 
-        panel.add(toolbar, BorderLayout.NORTH);
+        panel.add(headerRow, BorderLayout.NORTH);
         panel.add(scroll, BorderLayout.CENTER);
         return panel;
     }
@@ -1363,15 +1349,15 @@ public final class CoopLauncherApp {
                 }
             }
             String readiness = !layout.isModInstalled()
-                    ? tr("Click Install / Update below to download the mod and configure vmparams.",
-                            "Нажмите «Установить / Обновить» ниже, чтобы скачать мод и настроить vmparams.")
+                    ? tr("Click Install below to download the mod and configure vmparams.",
+                            "Нажмите «Установить» ниже, чтобы скачать мод и настроить vmparams.")
                     : (fails == 0
-                    ? tr("Ready to play — switch to Host a game (server) or Join a game (client).",
-                            "Готово к игре — перейдите на «Запустить сервер» или «Подключиться».")
+                    ? tr("Ready to play — press Launch and open the green CO-OP button in game.",
+                            "Готово к игре — нажмите «Запустить» и откройте зелёную кнопку CO-OP в игре.")
                     : tr(fails + (fails == 1 ? " setup issue" : " setup issues")
-                            + " found — click Fix vmparams & mods or Install / Update.",
+                            + " found — click Update or Details to fix.",
                             "Найдено проблем установки: " + fails
-                            + " — нажмите «Починить vmparams и моды» или «Установить / Обновить»."));
+                            + " — нажмите «Обновить» или «Подробнее»."));
             installModeSummary.setText(installed + " · " + github + "\n" + readiness);
         }
         if (installModeFixButton != null) {
@@ -1685,57 +1671,49 @@ public final class CoopLauncherApp {
         if (launchButton == null || footerHint == null) {
             return;
         }
-        if (isInstallMode()) {
-            boolean installing = modInstallRunning.get();
-            launchButton.setEnabled(!installing && !gameRunning);
-            CoopIcons.apply(launchButton, installing ? CoopIcons.Symbol.BUSY : CoopIcons.Symbol.CHECK);
-            if (installing) {
-                launchButton.setText(t("Installing..."));
-                footerHint.setText(t("Downloading and configuring Starsector Coop from GitHub..."));
-                footerHint.setForeground(CoopTheme.MUTED);
-            } else if (gameRunning) {
-                launchButton.setText(t("Game running"));
-                footerHint.setText(t("Close Starsector before installing or updating the mod."));
-                footerHint.setForeground(CoopTheme.WARN);
-            } else if (layout == null) {
-                launchButton.setText(t("Select game .exe"));
-                footerHint.setText(t("Pick starsector.exe to download and install Starsector Coop."));
-                footerHint.setForeground(CoopTheme.WARN);
-            } else {
-                launchButton.setText(tr("Install / Update", "Установить / Обновить"));
-                footerHint.setText(updateAvailable && latestUpdateOutcome != null
-                        ? tr("Update v" + latestUpdateOutcome.version()
-                                + " is available. Downloads, unpacks and patches vmparams.",
-                                "Доступно обновление v" + latestUpdateOutcome.version()
-                                + ". Скачает, распакует и пропатчит vmparams.")
-                        : t("Downloads the latest GitHub release, patches vmparams and enables the mod."));
-                footerHint.setForeground(updateAvailable ? CoopTheme.WARN : CoopTheme.MUTED);
-            }
-            launchButton.setToolTipText(footerHint.getText());
-            refreshInstallModeView();
-            return;
+        boolean installing = modInstallRunning.get();
+        boolean modPresent = layout != null && layout.isModInstalled();
+        boolean blocked = layout != null && CoopInstallCheck.blocked(installRows);
+
+        if (openFolderButton != null) {
+            openFolderButton.setEnabled(layout != null);
         }
+        if (updateActionButton != null) {
+            updateActionButton.setEnabled(!installing && !gameRunning);
+            CoopIcons.apply(updateActionButton, installing ? CoopIcons.Symbol.BUSY : CoopIcons.Symbol.CHECK);
+            updateActionButton.setText(installing ? t("Installing...")
+                    : modPresent ? t("Update") : t("Install"));
+        }
+
         CoopIcons.apply(launchButton, CoopIcons.Symbol.PLAY);
-        launchButton.setText(t(gameRunning ? "Game running" : "Launch Starsector"));
-        String reason = launchBlockedReason();
-        launchButton.setEnabled(reason == null);
-        connectionButton.setEnabled(!checkingConnection && !mappingCleanupPending && !gameRunning
-                && (hostSegment.isSelected() ? validPort(hostPortField.getText())
-                : !guestHostField.getText().trim().isEmpty() && validPort(guestPortField.getText())));
-        connectionButton.setText(t(checkingConnection || mappingCleanupPending ? "Checking…"
-                : connectionChecked ? "Check again" : "Check connection"));
-        refreshGuestSummary();
         if (gameRunning) {
-            footerHint.setText(t("Press Play in Starsector's launcher, then start or load your campaign."));
+            launchButton.setText(t("Game running"));
+            launchButton.setEnabled(false);
+            footerHint.setText(t("Press Play in Starsector's launcher, then use the green CO-OP button."));
             footerHint.setForeground(CoopTheme.MUTED);
-        } else if (reason != null) {
-            footerHint.setText(t(reason));
+        } else if (installing) {
+            launchButton.setText(t("Launch"));
+            launchButton.setEnabled(false);
+            footerHint.setText(t("Downloading and configuring Starsector Coop from GitHub..."));
+            footerHint.setForeground(CoopTheme.MUTED);
+        } else if (layout == null) {
+            launchButton.setText(t("Select game .exe"));
+            launchButton.setEnabled(true);
+            footerHint.setText(t("Pick starsector.exe to install, update, or launch the game."));
+            footerHint.setForeground(CoopTheme.WARN);
+        } else if (blocked) {
+            launchButton.setText(t("Launch"));
+            launchButton.setEnabled(false);
+            footerHint.setText(t("Click Update or open Details to fix vmparams / mod setup."));
             footerHint.setForeground(CoopTheme.WARN);
         } else {
-            footerHint.setText(t("Opens Starsector's launcher. Then press Play."));
+            launchButton.setText(t("Launch"));
+            launchButton.setEnabled(true);
+            footerHint.setText(t("Host & Join are inside the game (green CO-OP button & F7)."));
             footerHint.setForeground(CoopTheme.MUTED);
         }
-        launchButton.setToolTipText(reason == null ? null : t(reason));
+        launchButton.setToolTipText(footerHint.getText());
+        refreshInstallModeView();
     }
 
     private String launchBlockedReason() {
@@ -3099,6 +3077,20 @@ public final class CoopLauncherApp {
         handoffToGame(layout, CoopGameProcess::launch);
     }
 
+    /**
+     * Launches Starsector directly without overwriting the player's in-game CO-OP Host/Join config.
+     */
+    private void launchSimple() {
+        if (layout == null || gameRunning || modInstallRunning.get()) {
+            return;
+        }
+        if (CoopInstallCheck.blocked(installRows)) {
+            showPanel(installDialog);
+            return;
+        }
+        handoffToGame(layout, CoopGameProcess::launch);
+    }
+
     /** Release the probe's forward before the game can create its own on the same port. */
     void handoffToGame(CoopInstallLayout launched, GameStarter starter) {
         closeListener("the game is starting");
@@ -3146,7 +3138,7 @@ public final class CoopLauncherApp {
             SwingUtilities.invokeLater(() -> {
                 LOG.info("starsector.exe exited with code " + process.exitValue());
                 append("Starsector exited (code " + process.exitValue() + ").");
-                launchButton.setText(t("Launch Starsector"));
+                launchButton.setText(t("Launch"));
                 gameRunning = false;
                 updateLaunchGate();
                 // The session just wrote saves. The picker and both hints are about to be read by

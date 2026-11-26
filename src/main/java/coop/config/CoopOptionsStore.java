@@ -499,6 +499,39 @@ public final class CoopOptionsStore {
     }
 
     /**
+     * In-game CO-OP launcher write path: persists local session launch keys (including the safe
+     * one-shot world/campaign keys {@code coop.newGameSeed}, {@code coop.sectorSize},
+     * {@code coop.sectorAge}, and {@code coop.expectedCampaignId}) into
+     * {@code saves/common/coop_options.json.data} so Title Screen Host/Join works identically to
+     * the external desktop launcher.
+     */
+    public boolean writeSessionLaunchSettings(Map<String, String> values) {
+        if (values == null || values.isEmpty()) {
+            return true;
+        }
+        Map<String, String> accepted = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            String key = entry.getKey();
+            CoopOptionsRegistry.Option option = CoopOptionsRegistry.require(key);
+            if (option.tier() == CoopOptionsRegistry.Tier.POLICY) {
+                continue;
+            }
+            if (option.dOnly()
+                    && !CoopOptionsRegistry.NEW_GAME_SEED.equals(key)
+                    && !CoopOptionsRegistry.SECTOR_SIZE.equals(key)
+                    && !CoopOptionsRegistry.SECTOR_AGE.equals(key)
+                    && !CoopOptionsRegistry.EXPECTED_CAMPAIGN_ID.equals(key)) {
+                continue;
+            }
+            accepted.put(key, entry.getValue());
+        }
+        if (accepted.isEmpty()) {
+            return false;
+        }
+        return rewriteCommon(accepted);
+    }
+
+    /**
      * The file half of {@link #writeOverrides} and {@link #consumeOneShot}: rewrite
      * {@code saves/common/coop_options.json.data} whole with {@code accepted} applied over what is
      * already in it, carrying every other entry through untouched. A null value drops its key.

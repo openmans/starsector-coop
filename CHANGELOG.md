@@ -2,6 +2,15 @@
 
 ## 0.2.5 (3-mode Starsector launcher + .exe installer + 3000 su tactical battles & partner comm link)
 
+- **Native in-game green `CO-OP` button on the Title Screen & in-campaign Host/Join (`F7`):**
+  added a native emerald-green `CO-OP` button directly beneath the main menu on Starsector's Title
+  Screen (`CoopTitleScreenBridge`, `CoopTitleScreenOverlay`, `CoopInGameLauncherSession`) opening a
+  bilingual **RU / EN** Host / Join modal with clipboard `coop://` invite copy/paste, async public
+  IP detection, UPnP toggle, seed & world settings, and runtime seed/storm-role rebinding so
+  players can host or join directly before pressing `New Game` or `Load Game` without leaving
+  Starsector; also accessible live inside any loaded campaign via `F7`
+  (`CoopCampaignConnectDialog`, `CoopNetPump.startHostRuntime` / `startGuestRuntime` /
+  `stopRuntimeSession`).
 - **Phase 26 completion (guest-proximity encounter triggering + multi-guest despawn + M3 polish):**
   added `CoopGuestEncounterTrigger` on the host so guests travelling away from the host in
   hyperspace / Abyssal Hyperspace trigger native abyssal systems, free-standing abyssal lights,
@@ -23,15 +32,12 @@
   UAC elevation when needed, downloads the latest GitHub release (plus optional Wingman),
   repairs/patches `vmparams`, enables mods in `enabled_mods.json`, swaps `.pending` jars, and
   opens the main launcher.
-- **Universal 3-mode launcher (`Install / Update` · `Host a game` · `Join a game`):** redesigned in
-  Starsector's native cyan/teal palette with high-contrast amber primary accent; added automatic
-  startup GitHub update check with multi-source fallback (`releases/latest` -> `releases?per_page=5`
-  -> raw `coop.version` for CGNAT rate limits), inline amber update notification banner (`Update now`
-  / `Later`), one-time startup update prompt dialog, live switchable **RU / EN** UI language toggle
-  (auto-detected from OS locale and persisted in launcher preferences, available in both the Java
-  launcher and `Starsector Coop Launcher.exe`), optional **The Wingman Project**
-  (`NEOysod/TheWingmanProject`) install checkbox, and `vmparams` tuning-pack classpath integrity
-  guard & repair.
+- **Minimal single-screen updater & launch utility (`coop-launcher.jar`):** simplified the external
+  launcher to one clean screen (Starsector path + **Open folder**, optional **The Wingman Project**
+  checkbox, embedded live **Log** panel with bug-report/log-folder/clear buttons, **Update** &
+  **Launch** actions, automatic startup GitHub update check with amber notification banner, and live
+  **RU / EN** toggle); Host & Join configuration now lives directly inside Starsector without
+  external launcher clutter, and launching preserves in-game CO-OP settings.
 
 ## 0.2.4 (Wingman battles + phases 22/25/26/27/34 + hardening)
 

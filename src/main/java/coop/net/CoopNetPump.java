@@ -3579,6 +3579,7 @@ public class CoopNetPump implements EveryFrameScript {
         t = profiler.split(SECTION_CFG_PROPERTIES, t);
         maybeStartFromMemoryFlags();
         t = profiler.split(SECTION_CFG_MEMORY_FLAGS, t);
+        pollConnectMenuHotkey();
         service.flushOutbound();
         // net-fix-7: before the producers below tick, so a snapshot the queue cap threw away is
         // re-sent on this frame rather than the next one.
@@ -4101,6 +4102,131 @@ public class CoopNetPump implements EveryFrameScript {
             CoopLog.warn(CoopNetPump.class, "Coop could not settle a stable local player id;"
                     + " this launch uses a fresh one", ex);
         }
+    }
+
+    private boolean connectMenuKeyWasDown;
+
+    /**
+     * Polls {@code F7} (edge-triggered) inside the campaign to open the native in-game
+     * Host / Join dialog without leaving the game. Silently ignored in headless tests.
+     */
+    private void pollConnectMenuHotkey() {
+        try {
+            if (!org.lwjgl.input.Keyboard.isCreated()) {
+                return;
+            }
+            boolean down = org.lwjgl.input.Keyboard.isKeyDown(org.lwjgl.input.Keyboard.KEY_F7);
+            boolean pressed = down && !connectMenuKeyWasDown;
+            connectMenuKeyWasDown = down;
+            if (!pressed) {
+                return;
+            }
+            SectorAPI sector = Global.getSector();
+            if (sector == null || sector.getCampaignUI() == null) {
+                return;
+            }
+            if (sector.getCampaignUI().isShowingDialog() || sector.getCampaignUI().isShowingMenu()) {
+                return;
+            }
+            sector.getCampaignUI().showInteractionDialog(
+                    new coop.ui.CoopCampaignConnectDialog(), sector.getPlayerFleet());
+        } catch (Throwable ignored) {
+            // Headless tests or LWJGL unavailable.
+        }
+    }
+
+    /**
+     * Starts hosting live from the in-campaign Host / Join dialog. Returns {@code null} on success,
+     * or a human-readable error message on failure.
+     */
+    public String startHostRuntime(int port, String password, boolean enablePortMapping) {
+        coop.handshake.CoopGameVersionCheck.Result versionRefusal = gameVersionRefusal();
+        if (versionRefusal != null) {
+            return versionRefusal.mismatchMessage();
+        }
+        if (refuseSurvivalCampaign()) {
+            return "Survival mode is not supported in co-op.";
+        }
+        if (port < 1 || port > 65535) {
+            return "Port must be between 1 and 65535.";
+        }
+        if (service.role() != CoopConnectionRole.NONE) {
+            stopRuntimeSession();
+        }
+        try {
+            lobbyPassword = password == null ? "" : password.trim();
+            service.startHost(port);
+            beginLocalRole(CoopConnectionRole.HOST);
+            if (enablePortMapping) {
+                startPortMapper(port);
+            }
+            CoopLog.info(CoopNetPump.class, "Coop host started live from in-game UI on port " + port);
+            return null;
+        } catch (RuntimeException ex) {
+            CoopLog.warn(CoopNetPump.class, "Live host start failed on port " + port, ex);
+            return ex.getMessage() == null ? ex.toString() : ex.getMessage();
+        }
+    }
+
+    /**
+     * Connects live as a guest from the in-campaign Host / Join dialog. Returns {@code null} on
+     * success, or a human-readable error message on failure.
+     */
+    public String startGuestRuntime(String host, int port, String password) {
+        coop.handshake.CoopGameVersionCheck.Result versionRefusal = gameVersionRefusal();
+        if (versionRefusal != null) {
+            return versionRefusal.mismatchMessage();
+        }
+        if (refuseSurvivalCampaign()) {
+            return "Survival mode is not supported in co-op.";
+        }
+        String cleanHost = host == null ? "" : host.trim();
+        if (cleanHost.isEmpty()) {
+            return "Host address is blank.";
+        }
+        if (port < 1 || port > 65535) {
+            return "Port must be between 1 and 65535.";
+        }
+        if (service.role() != CoopConnectionRole.NONE) {
+            stopRuntimeSession();
+        }
+        try {
+            lobbyPassword = password == null ? "" : password.trim();
+            beginLocalRole(CoopConnectionRole.GUEST);
+            guestConnectHost = cleanHost;
+            guestConnectPort = port;
+            service.connect(cleanHost, port);
+            CoopLog.info(CoopNetPump.class,
+                    "Coop guest connect started live from in-game UI to " + cleanHost + ":" + port);
+            return null;
+        } catch (RuntimeException ex) {
+            CoopLog.warn(CoopNetPump.class, "Live guest connect failed to " + cleanHost + ":" + port, ex);
+            return ex.getMessage() == null ? ex.toString() : ex.getMessage();
+        }
+    }
+
+    /** Returns the active live transport role ({@code HOST}, {@code GUEST}, or {@code NONE}). */
+    public CoopConnectionRole currentRole() {
+        return service.role();
+    }
+
+    /** Stops the active live host/guest session cleanly from the in-campaign UI. */
+    public void stopRuntimeSession() {
+        try {
+            if (service.role() != CoopConnectionRole.NONE) {
+                sendSessionLeaveInline(CoopMessages.LEAVE_REASON_MENU);
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+        }
+        shutdownPortMapper();
+        try {
+            service.shutdown();
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Error shutting down live co-op session", ex);
+        }
+        lobbyHelloSent = false;
+        handshakeManifestSent = false;
+        seedLockRequestSent = false;
     }
 
     private void maybeStartFromMemoryFlags() {

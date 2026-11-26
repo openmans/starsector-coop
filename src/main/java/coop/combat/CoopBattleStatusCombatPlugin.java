@@ -1,9 +1,11 @@
 package coop.combat;
 
+import com.fs.starfarer.api.GameState;
 import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.combat.BaseEveryFrameCombatPlugin;
 import com.fs.starfarer.api.combat.CombatEngineAPI;
 import com.fs.starfarer.api.input.InputEventAPI;
+import coop.ui.CoopTitleScreenOverlay;
 import coop.util.CoopLog;
 
 import java.util.List;
@@ -37,6 +39,9 @@ public class CoopBattleStatusCombatPlugin extends BaseEveryFrameCombatPlugin {
     @Override
     public void advance(float amount, List<InputEventAPI> events) {
         try {
+            if (Global.getCurrentState() == GameState.TITLE) {
+                CoopTitleScreenOverlay.onTitleFrame();
+            }
             CoopBattleBridge bridge = CoopBattleBridge.active();
             if (bridge == null) {
                 return;

@@ -46,6 +46,7 @@ import coop.ui.CoopSessionStatsIntel;
 import coop.util.CoopLog;
 
 public class CoopModPlugin extends BaseModPlugin {
+    private static volatile CoopNetPump activePump;
     private CoopNetService netService;
     /**
      * The previous game's pump, kept only so its router mapping can be released on the next load.
@@ -54,6 +55,11 @@ public class CoopModPlugin extends BaseModPlugin {
      * one-hour lease. That is why the lease is short.
      */
     private CoopNetPump netPump;
+
+    /** Returns the active campaign's {@link CoopNetPump}, or {@code null} when not in a campaign. */
+    public static CoopNetPump activeNetPump() {
+        return activePump;
+    }
 
     @Override
     public void onApplicationLoad() throws Exception {
@@ -266,6 +272,20 @@ public class CoopModPlugin extends BaseModPlugin {
     }
 
     /**
+     * Updates {@code -Dcoop.newGameSeed} and rebinds forked {@code Misc.random} at runtime when
+     * the player configures Host / Join directly from the in-game Title Screen CO-OP panel.
+     */
+    public static void applyRuntimeSeed(String newGameSeed) {
+        String clean = newGameSeed == null ? "" : newGameSeed.trim();
+        if (clean.isEmpty()) {
+            System.clearProperty(CoopNetStartupConfig.NEW_GAME_SEED_PROPERTY);
+        } else {
+            System.setProperty(CoopNetStartupConfig.NEW_GAME_SEED_PROPERTY, clean);
+        }
+        rebindTheForkedSharedRandom();
+    }
+
+    /**
      * Where the rebound shared {@link java.util.Random} goes. Production writes the forked
      * {@code Misc.random} field; a test swaps this, because merely touching {@code Misc} outside a
      * running game runs its {@code Global.getSettings()}-reading static initialiser.
@@ -342,6 +362,7 @@ public class CoopModPlugin extends BaseModPlugin {
         if (netPump != null) {
             tearDownPreviousPump(netPump);
             netPump = null;
+            activePump = null;
         }
         // The held guest snapshot belongs to the session that just ended; the copy already written
         // into the previous save is untouched, which is the point of it.
@@ -369,6 +390,7 @@ public class CoopModPlugin extends BaseModPlugin {
         CoopSystemDriveFrameHook.install(Global.getSector());
         CoopNetPump pump = CoopNetPumpInstaller.install(Global.getSector(), netService);
         netPump = pump;
+        activePump = pump;
         // Phase 20.6 milestone 0: the always-on link status line. Cosmetic and self-disabling, so it
         // goes in right after the pump it reads from and before anything that could fail on its own.
         CoopLinkHud.install(Global.getSector(), pump);

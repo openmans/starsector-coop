@@ -12,20 +12,17 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
 import javax.swing.JButton;
-import javax.swing.JDialog;
+import javax.swing.JCheckBox;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
-import javax.swing.JScrollPane;
-import javax.swing.JTextField;
 import javax.swing.JTextArea;
-import javax.swing.JToggleButton;
 import javax.swing.SwingUtilities;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** Real Swing layout regressions; no game, clipboard, file writes or network probes. */
+/** Real Swing layout regressions for the minimal single-screen updater + live log + launch UI. */
 class CoopLauncherLayoutTest {
     private CoopLauncherApp app;
     private JFrame frame;
@@ -38,13 +35,10 @@ class CoopLauncherLayoutTest {
             app = new CoopLauncherApp();
             invoke("buildFrame");
             frame = field("frame", JFrame.class);
-            field("hostSegment", JToggleButton.class).setSelected(true);
-            invoke("onRoleChanged");
+            invoke("updateLaunchGate");
             frame.addNotify();
             frame.validate();
         });
-        // Campaign selection applies restored world fields on the following event-loop turn.
-        SwingUtilities.invokeAndWait(() -> frame.validate());
     }
 
     @AfterEach
@@ -55,104 +49,34 @@ class CoopLauncherLayoutTest {
     }
 
     @Test
-    void bothRolesFitTheDefaultWindowAndShareTheSameLaunchBar() throws Exception {
-        SwingUtilities.invokeAndWait(() -> {
-            JScrollPane scroll = (JScrollPane) find(frame, "setupScroll");
-            assertFalse(scroll.getVerticalScrollBar().isVisible(), () -> "Host setup scrolls: content "
-                    + scroll.getViewport().getView().getPreferredSize() + ", viewport "
-                    + scroll.getViewport().getExtentSize());
-            int spareHeight = scroll.getViewport().getExtentSize().height
-                    - scroll.getViewport().getView().getPreferredSize().height;
-            assertTrue(spareHeight <= com.formdev.flatlaf.util.UIScale.scale(12),
-                    () -> "Default window leaves excess vertical space: " + spareHeight);
-            Rectangle footer = find(frame, "launchFooter").getBounds();
-            field("guestSegment", JToggleButton.class).doClick();
-            frame.validate();
-            assertFalse(scroll.getVerticalScrollBar().isVisible(), "Empty join setup must fit");
-            field("guestInviteField", JTextField.class).setText(
-                    "coop://203.0.113.9:7777/?seed=MN-8402913377120455081&size=normal&age=mixed");
-            frame.validate();
-            assertFalse(scroll.getVerticalScrollBar().isVisible(), "Accepted invite must still fit");
-            assertEquals(footer, find(frame, "launchFooter").getBounds());
-        });
-    }
-
-    @Test
-    void logsAndChangingFeedbackDoNotMoveSetupOrResizeActions() throws Exception {
-        SwingUtilities.invokeAndWait(() -> {
-            Rectangle footer = find(frame, "launchFooter").getBounds();
-            Rectangle setup = find(frame, "setupScroll").getBounds();
-            JButton copy = field("copyInviteButton", JButton.class);
-            int width = copy.getPreferredSize().width;
-            copy.setText("Copied");
-            JDialog logs = field("logDialog", JDialog.class);
-            logs.setFocusableWindowState(false);
-            logs.setLocation(-10000, -10000);
-            logs.setVisible(true);
-            frame.validate();
-            assertEquals(footer, find(frame, "launchFooter").getBounds());
-            assertEquals(setup, find(frame, "setupScroll").getBounds());
-            assertEquals(width, copy.getPreferredSize().width);
-            logs.setVisible(false);
-        });
-    }
-
-    @Test
-    void prototypeBaselinesIconsAndActionAlignmentArePreserved() throws Exception {
+    void minimalSingleScreenShowsLogUpdateLaunchAndOpenFolder() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             JLabel title = (JLabel) find(frame, "launcherTitle");
             JLabel version = (JLabel) find(frame, "launcherVersion");
+            assertNotNull(title);
+            assertNotNull(version);
             assertEquals(bounds(title).y + title.getBaseline(title.getWidth(), title.getHeight()),
                     bounds(version).y + version.getBaseline(version.getWidth(), version.getHeight()),
                     "Version must share the title's text baseline");
+
+            assertNotNull(find(frame, "embeddedLogPanel"), "Log window must be embedded directly in main frame");
+            assertTrue(find(frame, "embeddedLogPanel").isVisible());
+            Component openFolder = find(frame, "openFolderButton");
+            assertNotNull(openFolder, "Open folder button must be visible");
+            assertTrue(openFolder.getHeight() > 0 && openFolder.getWidth() > 0, "Open folder button must be laid out");
+            assertNotNull(find(frame, "installPathField"), "Game path field must be visible");
+            assertTrue(find(frame, "installPathField").getHeight() > 0, "Game path field must be laid out");
+            assertNotNull(find(frame, "updateActionButton"), "Update button must be visible");
+            assertNotNull(find(frame, "launchButton"), "Launch button must be visible");
+            assertNotNull(find(frame, "installWingmanBox"), "Optional Wingman checkbox must be present");
+            assertNull(find(frame, "hostSegment"), "Host tab must not clutter the minimal external launcher");
+            assertNull(find(frame, "guestSegment"), "Join tab must not clutter the minimal external launcher");
+
             JButton launch = field("launchButton", JButton.class);
-            assertCentered(bounds(find(frame, "launchStatus")), bounds(launch));
-            assertCentered(bounds(find(frame, "installStatusRow"))
-                    .union(bounds(field("footerHint", JTextArea.class))), bounds(launch));
-            JButton copy = field("copyInviteButton", JButton.class);
-            JButton edit = (JButton) find(frame, "editHostConnection");
-            assertCentered(bounds(copy), bounds(edit));
-            assertTrue(bounds(edit).x + edit.getWidth() <= bounds(copy).x,
-                    "Edit belongs beside Copy invite");
-            JLabel connectionTitle = field("connectionTitle", JLabel.class);
-            JTextArea summary = field("connectionSummary", JTextArea.class);
-            Rectangle text = bounds(connectionTitle).union(bounds(summary));
-            assertEquals(bounds(connectionTitle).x, bounds(summary).x);
-            assertCentered(text, bounds(field("connectionButton", JButton.class)));
-            assertCentered(text, bounds(field("connectionDetailsButton", JButton.class)));
-            for (String name : new String[] { "advancedToggle", "logToggle", "copyInviteButton",
-                    "launchButton", "connectionDetailsButton" }) {
-                assertNotNull(field(name, JButton.class).getIcon(), name + " needs its prototype icon");
-            }
-            assertNotNull(field("installSegment", JToggleButton.class).getIcon());
-            assertNotNull(field("hostSegment", JToggleButton.class).getIcon());
-            assertNotNull(field("guestSegment", JToggleButton.class).getIcon());
-            assertNotNull(edit.getIcon());
-            assertEquals("Edit connection", edit.getAccessibleContext().getAccessibleName());
+            assertNotNull(launch.getIcon());
+            assertNotNull(field("updateActionButton", JButton.class).getIcon());
             assertNotNull(field("installSummary", JLabel.class).getIcon());
-        });
-    }
 
-    private Rectangle bounds(Component component) {
-        return SwingUtilities.convertRectangle(component.getParent(), component.getBounds(), frame);
-    }
-
-    private static void assertCentered(Rectangle content, Rectangle action) {
-        assertTrue(Math.abs(content.getCenterY() - action.getCenterY()) <= 1,
-                () -> "Action " + action + " must be vertically centered beside " + content);
-    }
-
-    @Test
-    void smallWindowsCanScrollSetupWhileLaunchRemainsVisible() throws Exception {
-        SwingUtilities.invokeAndWait(() -> {
-            frame.setSize(frame.getWidth(), frame.getMinimumSize().height);
-            frame.validate();
-            JScrollPane scroll = (JScrollPane) find(frame, "setupScroll");
-            assertTrue(scroll.getVerticalScrollBar().isVisible(),
-                    () -> "Small windows must not hide setup content: frame=" + frame.getSize()
-                            + ", min=" + frame.getMinimumSize()
-                            + ", pref=" + scroll.getViewport().getView().getPreferredSize()
-                            + ", extent=" + scroll.getViewport().getExtentSize());
             Rectangle footer = find(frame, "launchFooter").getBounds();
             assertTrue(footer.y >= 0);
             assertTrue(footer.y + footer.height <= frame.getContentPane().getHeight());
@@ -160,67 +84,28 @@ class CoopLauncherLayoutTest {
     }
 
     @Test
-    void invalidInvitesCannotLaunchUsingThePreviouslyAcceptedConnection() throws Exception {
+    void launchAndOpenFolderEnableOnceInstallLayoutIsSelected() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
-            setField("layout", CoopInstallLayout.ofInstallRoot(new File("build/layout-test-install")));
-            field("guestSegment", JToggleButton.class).doClick();
-            JTextField invite = field("guestInviteField", JTextField.class);
-            invite.setText("coop://203.0.113.9:7777/?seed=MN-8402913377120455081");
-            assertTrue(field("launchButton", JButton.class).isEnabled());
-            invite.setText("not an invite");
-            assertFalse(field("launchButton", JButton.class).isEnabled());
-            invite.setText("");
-            assertTrue(field("launchButton", JButton.class).isEnabled(), "Clearing permits manual setup");
-        });
-    }
-
-    @Test
-    void editingTheEndpointDiscardsTheOldConnectionResult() throws Exception {
-        SwingUtilities.invokeAndWait(() -> {
-            field("guestSegment", JToggleButton.class).doClick();
-            setField("connectionChecked", true);
-            field("connectionTitle", JLabel.class).setText("Host reachable");
-            field("guestHostField", JTextField.class).setText("203.0.113.10");
-            assertEquals("Connection not checked", field("connectionTitle", JLabel.class).getText());
-            assertFalse(field("connectionChecked", Boolean.class));
-        });
-    }
-
-    @Test
-    void installUpdateModeSwitchesCleanlyAndKeepsLaunchBarAligned() throws Exception {
-        SwingUtilities.invokeAndWait(() -> {
-            Rectangle footer = find(frame, "launchFooter").getBounds();
-            JScrollPane scroll = (JScrollPane) find(frame, "setupScroll");
-            JButton launch = field("launchButton", JButton.class);
-
-            field("installSegment", JToggleButton.class).doClick();
-            frame.validate();
-            assertFalse(scroll.getVerticalScrollBar().isVisible(), "Install / Update mode must fit");
-            assertFalse(field("connectionCard", javax.swing.JPanel.class).isVisible(),
-                    "Connection card should stay hidden in Install / Update mode");
-            assertTrue(launch.isEnabled(), "Install / Update mode must allow selecting game .exe");
-            assertEquals("Select game .exe", launch.getText());
-            assertEquals(footer, find(frame, "launchFooter").getBounds());
+            assertFalse(field("openFolderButton", JButton.class).isEnabled());
+            assertEquals("Select game .exe", field("launchButton", JButton.class).getText());
 
             setField("layout", CoopInstallLayout.ofInstallRoot(new File("build/layout-test-install")));
             invoke("updateLaunchGate");
-            assertEquals("Install / Update", launch.getText());
-
-            field("hostSegment", JToggleButton.class).doClick();
-            frame.validate();
-            assertTrue(field("connectionCard", javax.swing.JPanel.class).isVisible(),
-                    "Connection card must return in Host mode");
-            assertEquals("Launch Starsector", launch.getText());
-            assertEquals(footer, find(frame, "launchFooter").getBounds());
+            assertTrue(field("openFolderButton", JButton.class).isEnabled());
+            assertEquals("Launch", field("launchButton", JButton.class).getText());
+            assertTrue(field("launchButton", JButton.class).isEnabled());
+            assertTrue(field("updateActionButton", JButton.class).isEnabled());
         });
     }
 
     @Test
     void updateNotificationBannerAppearsWhenNewerReleaseArrives() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
-            javax.swing.JPanel banner = field("updateBanner", javax.swing.JPanel.class);
-            JLabel bannerLabel = field("updateBannerLabel", JLabel.class);
-            assertFalse(banner.isVisible(), "Update banner must stay hidden before a newer release is found");
+            Component banner = find(frame, "updateBanner");
+            JLabel bannerLabel = (JLabel) find(frame, "updateBannerLabel");
+            assertNotNull(banner);
+            assertNotNull(bannerLabel);
+            assertFalse(banner.isVisible());
 
             app.applyUpdateOutcome(
                     new CoopUpdateCheck.Outcome(CoopUpdateCheck.Kind.UPDATE_AVAILABLE, "0.2.6",
@@ -242,25 +127,29 @@ class CoopLauncherLayoutTest {
     @Test
     void languageToggleSwitchesBetweenRuAndEnLive() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
+            setField("layout", CoopInstallLayout.ofInstallRoot(new File("build/layout-test-install")));
+            invoke("updateLaunchGate");
+
             JButton langBtn = field("langToggle", JButton.class);
             assertEquals("RU", langBtn.getText());
-            assertEquals("Host a game", field("hostSegment", JToggleButton.class).getText());
-            assertEquals("Launch Starsector", field("launchButton", JButton.class).getText());
+            assertEquals("Launch", field("launchButton", JButton.class).getText());
+            assertEquals("Open folder", field("openFolderButton", JButton.class).getText());
 
             app.setLanguage(CoopLauncherI18n.Lang.RU, false);
             assertEquals("EN", langBtn.getText());
-            assertEquals("Запустить сервер", field("hostSegment", JToggleButton.class).getText());
-            assertEquals("Подключиться", field("guestSegment", JToggleButton.class).getText());
-            assertEquals("Установка мода", field("installSegment", JToggleButton.class).getText());
-            assertEquals("Запустить Starsector", field("launchButton", JButton.class).getText());
-            assertEquals("Настройки", field("advancedToggle", JButton.class).getText());
-            assertEquals("Логи", field("logToggle", JButton.class).getText());
+            assertEquals("Запустить", field("launchButton", JButton.class).getText());
+            assertEquals("Открыть папку", field("openFolderButton", JButton.class).getText());
+            assertTrue(field("installWingmanBox", JCheckBox.class).getText().contains("Wingman"));
 
             app.setLanguage(CoopLauncherI18n.Lang.EN, false);
             assertEquals("RU", langBtn.getText());
-            assertEquals("Host a game", field("hostSegment", JToggleButton.class).getText());
-            assertEquals("Launch Starsector", field("launchButton", JButton.class).getText());
+            assertEquals("Launch", field("launchButton", JButton.class).getText());
+            assertEquals("Open folder", field("openFolderButton", JButton.class).getText());
         });
+    }
+
+    private Rectangle bounds(Component component) {
+        return SwingUtilities.convertRectangle(component.getParent(), component.getBounds(), frame);
     }
 
     private void setField(String name, Object value) {
