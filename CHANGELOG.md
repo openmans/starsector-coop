@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.4 (Wingman battles + phases 22/25/26/27/34 + hardening)
+
+Release build of the expanded 0.2.3 tree. Everything below is new relative to the
+released 0.2.3: global pause/fast-forward, guest bounties, tactical orders and map, multi-guest
+3-4 players, ambient system-call sync, the hardened Wingman path (MethodHandles, auto-join,
+UPnP), chat, trade UI, transport encryption, the CGNAT relay server, guest snapshot restore,
+allied wreck recovery, the Nexerelin adapter and the Linux/macOS launcher.
+
 ## 0.2.3 (Wingman battles)
 
 Full battle synchronisation through The Wingman Project (0.9.4-beta or later, installed and
