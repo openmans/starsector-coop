@@ -26,6 +26,10 @@ public final class CoopInstallLayout {
     /** Folder name the mod is expected to use; only the enabled-mods check depends on it. */
     public static final String MOD_ID = "coop";
 
+    /** Optional Wingman Project mod id and folder name for manual co-op battle piloting. */
+    public static final String WINGMAN_MOD_ID = "wingman_project";
+    public static final String WINGMAN_FOLDER = "Wingman";
+
     private final File installRoot;
     private final File modRoot;
 
@@ -86,6 +90,59 @@ public final class CoopInstallLayout {
                 && new File(candidate, "starsector-core").isDirectory();
     }
 
+    /**
+     * Resolves a player-selected path (either {@code starsector.exe}, the install root folder, or
+     * {@code starsector-core}) into the Starsector install root, or {@code null} if it is not a
+     * valid Starsector install.
+     */
+    public static File resolveInstallRoot(File selected) {
+        if (selected == null) {
+            return null;
+        }
+        if (selected.isFile()) {
+            String name = selected.getName();
+            if ("starsector.exe".equalsIgnoreCase(name) || "vmparams".equalsIgnoreCase(name)) {
+                File parent = selected.getParentFile();
+                return looksLikeInstall(parent) ? parent : null;
+            }
+            return null;
+        }
+        if (looksLikeInstall(selected)) {
+            return selected;
+        }
+        if ("starsector-core".equalsIgnoreCase(selected.getName())
+                || "mods".equalsIgnoreCase(selected.getName())) {
+            File parent = selected.getParentFile();
+            if (looksLikeInstall(parent)) {
+                return parent;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Best-guess existing Starsector install folder on Windows for pre-positioning the file picker,
+     * or {@code null} if none of the standard locations exist.
+     */
+    public static File detectCommonInstallDir() {
+        String[] candidates = {
+                "C:\\Program Files (x86)\\Fractal Softworks\\Starsector",
+                "C:\\Program Files\\Fractal Softworks\\Starsector",
+                "C:\\Starsector",
+                "D:\\Starsector",
+                "D:\\Games\\Starsector",
+                "E:\\Starsector",
+                "G:\\Starsector"
+        };
+        for (String path : candidates) {
+            File dir = new File(path);
+            if (looksLikeInstall(dir)) {
+                return dir;
+            }
+        }
+        return null;
+    }
+
     public File installRoot() {
         return installRoot;
     }
@@ -128,6 +185,27 @@ public final class CoopInstallLayout {
 
     public File forksJar() {
         return new File(new File(modRoot, "jars"), "coop-forks.jar");
+    }
+
+    public File launcherJar() {
+        return new File(new File(modRoot, "jars"), "coop-launcher.jar");
+    }
+
+    /** True when the core mod files are present under {@link #modRoot()}. */
+    public boolean isModInstalled() {
+        return modInfo().isFile() && coopJar().isFile() && forksJar().isFile();
+    }
+
+    /** Optional Wingman Project mod directory ({@code <install>/mods/Wingman}). */
+    public File wingmanModRoot() {
+        return new File(new File(installRoot, "mods"), WINGMAN_FOLDER);
+    }
+
+    /** True when The Wingman Project is installed under {@code mods/Wingman}. */
+    public boolean isWingmanInstalled() {
+        File root = wingmanModRoot();
+        return new File(root, "mod_info.json").isFile()
+                && new File(new File(root, "jars"), "Wingman.jar").isFile();
     }
 
     /** The folder holding {@code common} and every {@code save_*}. */

@@ -82,7 +82,8 @@ class CoopMessageTypePolicyTest {
             CoopMessages.Type.COLONY_CONSENT_REQ, CoopMessages.Type.COLONY_CONSENT_RES,
             CoopMessages.Type.CONTACT_SET, CoopMessages.Type.STORY_STATE,
             CoopMessages.Type.TRADE_SYNC, CoopMessages.Type.CHAT_MSG,
-            CoopMessages.Type.NEX_EVENT);
+            CoopMessages.Type.NEX_EVENT,
+            CoopMessages.Type.ALLY_JOIN_OFFER, CoopMessages.Type.ALLY_JOIN_REPLY);
 
     // ---- table: CoopNetService.coalesceKey(Message) ------------------------------------------
     // Whitelist of whole-state snapshots that may supersede a queued copy of themselves; every

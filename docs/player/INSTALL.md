@@ -4,7 +4,18 @@ Two people, two copies of Starsector, one shared campaign. Both of you do everyt
 There is no "client-only" install; the two machines run the same mod and check each other at
 connect time.
 
-## Quick start
+## Quick start (one-click `.exe` launcher on Windows)
+
+1. Run **`Starsector Coop Launcher.exe`** from anywhere (Desktop, Downloads, or `mods\coop`).
+   - If the mod is not installed yet, pick your **`starsector.exe`** and click **Install & Launch** —
+     it downloads the latest GitHub release, unpacks it into `<Starsector>\mods\coop`, backs up and
+     patches `vmparams` (including repairing broken tuning-pack classpaths), enables `"coop"` in
+     `mods\enabled_mods.json`, and opens the main **Coop Launcher** (with no console window).
+   - On subsequent runs, **`Starsector Coop Launcher.exe`** opens the 3-mode **Coop Launcher**
+     directly (**Install / Update**, **Host a game**, **Join a game**).
+2. A script-only fallback (`Install Starsector Coop.cmd` / `Coop Launcher.cmd`) is also included.
+
+### Manual quick start
 
 1. Unzip so `mod_info.json` sits in `<Starsector>\mods\coop`.
 2. Launch the co-op launcher: double-click `<Starsector>\mods\coop\Coop Launcher.cmd` on Windows,

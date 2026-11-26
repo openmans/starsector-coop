@@ -8,6 +8,25 @@ released 0.2.3: global pause/fast-forward, guest bounties, tactical orders and m
 UPnP), chat, trade UI, transport encryption, the CGNAT relay server, guest snapshot restore,
 allied wreck recovery, the Nexerelin adapter and the Linux/macOS launcher.
 
+- Launcher GitHub version checker: added multi-source fallback (`releases/latest` ->
+  `releases?per_page=5` for pre-releases -> `raw.githubusercontent.com/.../main/coop.version`
+  on 404 or CGNAT API rate limit), visible header status/check button (`Check updates` /
+  `Up to date` / `Update X.Y.Z`), re-checking on `Refresh`, and `mod_info.json` fallback when
+  running unpacked dev builds.
+- Native Windows `.exe` launcher & one-click bootstrapper (`Starsector Coop Launcher.exe`,
+  built from `src/launcher-exe/StarsectorCoopLauncher.cs` via `scripts/build-launcher-exe.ps1`):
+  single standalone `.exe` with Starsector-styled GUI and no console window that detects or picks
+  `starsector.exe`, requests UAC elevation when needed, downloads the latest GitHub release,
+  configures `vmparams` + `enabled_mods.json`, applies `.pending` jar updates, and launches the
+  3-mode Starsector Coop Launcher directly.
+- Universal 3-mode launcher (`Install / Update` · `Host a game` · `Join a game`): added dedicated
+  **Install / Update** mode directly in the top mode switcher (auto-selected when Starsector is
+  unconfigured, with `starsector.exe` picker, live GitHub version status, optional **The Wingman
+  Project** install checkbox pulling from `NEOysod/TheWingmanProject` into `mods\Wingman` and
+  enabling `wingman_project`, download progress bar, one-click `Install / Update` button, and
+  one-click `Fix vmparams & mods`), plus standalone JRE auto-detection in `Coop Launcher.cmd` and
+  standalone one-click `Install Starsector Coop.cmd`.
+
 ## 0.2.3 (Wingman battles)
 
 Full battle synchronisation through The Wingman Project (0.9.4-beta or later, installed and
@@ -93,6 +112,14 @@ battle-result path.
     non-`.jar` entries, missing required stock jars such as `janino.jar`), paired with idempotent
     `CoopInstallFixer.repairClasspath` (preserving all JVM tuning flags, `-Dcoop.*` properties, and
     the main class, with one-time `vmparams.backup`).
+  - **Interactive 3,000 su Partner Battle Reinforcement & Partner Comm Link:** added host policy
+    `coop.allyJoinRange` (`700..10000` su, default `3000`), `CoopAllyReinforceCoordinator` +
+    `CoopAllyJoinDialogPlugin` (`ALLY_JOIN_OFFER` / `ALLY_JOIN_REPLY`) so a partner within range
+    chooses **Tactical Map** (auto-opens `CoopTacticalMapDialogPlugin`), **Wingman direct piloting**,
+    **AI officers**, or **Decline** and joins directly via `BattleAPI.join` without widening enemy
+    NPC join range; wired `CoopPartnerCampaignPlugin` + `CoopPartnerCommPlugin` (clicking a partner's
+    fleet opens Co-op Comm Link for Direct Trade, Chat, and Fight Alongside toggle) and connected
+    `setCommsHooks` in `CoopNetPump` for the **Open Co-op Chat** and **Trade with Partner** buttons.
 
 ## 0.2.2 (community port to 0.98.5a-RC9)
 

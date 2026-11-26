@@ -79,6 +79,23 @@ class CoopInstallLayoutTest {
         assertEquals("coop", CoopInstallLayout.MOD_ID);
     }
 
+    @Test
+    void resolveInstallRootAcceptsExeCoreFolderOrRoot(@TempDir Path temp) throws IOException {
+        File root = install(temp);
+        assertEquals(root, CoopInstallLayout.resolveInstallRoot(new File(root, "starsector.exe")));
+        assertEquals(root, CoopInstallLayout.resolveInstallRoot(root));
+        assertEquals(root, CoopInstallLayout.resolveInstallRoot(new File(root, "starsector-core")));
+        assertEquals(null, CoopInstallLayout.resolveInstallRoot(new File(root, "not-there.exe")));
+
+        CoopInstallLayout layout = CoopInstallLayout.ofInstallRoot(root);
+        assertFalse(layout.isModInstalled());
+        Files.createDirectories(layout.coopJar().toPath().getParent());
+        Files.writeString(layout.modInfo().toPath(), "{}");
+        Files.writeString(layout.coopJar().toPath(), "a");
+        Files.writeString(layout.forksJar().toPath(), "b");
+        assertTrue(layout.isModInstalled());
+    }
+
     private static File path(File root, String... parts) {
         File file = root;
         for (String part : parts) {

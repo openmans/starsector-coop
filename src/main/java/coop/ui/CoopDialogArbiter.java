@@ -26,6 +26,7 @@ public enum CoopDialogArbiter {
     LOBBY,
     CONNECTING,
     MARK,
+    ALLY_JOIN,
     TACTICAL_MAP,
     CHAT,
     TRADE;

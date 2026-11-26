@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.swing.BorderFactory;
@@ -133,6 +134,7 @@ public final class CoopLauncherApp {
     private JFrame frame;
 
     // header
+    private JToggleButton installSegment;
     private JToggleButton hostSegment;
     private JToggleButton guestSegment;
     private JButton updateChip;
@@ -140,8 +142,19 @@ public final class CoopLauncherApp {
     // session card
     private JPanel sessionCard;
     private JPanel sessionBody;
+    private JPanel connectionCard;
+    private JPanel installForm;
     private JPanel hostForm;
     private JPanel guestForm;
+
+    // install / update mode controls
+    private JTextField installPathField;
+    private JTextArea installModeSummary;
+    private JCheckBox installWingmanBox;
+    private JButton installModeFixButton;
+    private JButton installModeCheckButton;
+    private javax.swing.JProgressBar installProgressBar;
+    private CoopUpdateCheck.Outcome latestUpdateOutcome;
     private JTextField hostPortField;
     private JPasswordField hostPasswordField;
     private JTextField hostSeedField;
@@ -241,6 +254,10 @@ public final class CoopLauncherApp {
     /** The update-check row, kept apart because it arrives on its own schedule and off the disk. */
     private CoopInstallCheck.Row updateRow;
     private String updateUrl = "";
+    private boolean updateAvailable;
+    private final AtomicBoolean updateCheckRunning = new AtomicBoolean(false);
+    private final AtomicBoolean modInstallRunning = new AtomicBoolean(false);
+    private JButton installUpdateButton;
     /**
      * Set once the player empties the host password field themselves. From then on nothing refills
      * it: a host who deliberately wants an open session should not have to fight the launcher about
@@ -346,20 +363,27 @@ public final class CoopLauncherApp {
         this.launcherVersion = CoopInstallCheck.launcherVersion();
         buildFrame();
         if (layout == null) {
-            append("This folder does not look like a Starsector install, so the launcher could not"
-                    + " work out where the game is. Use \"Folder\" in Installation details to point at it.");
-            setDrawerVisible(true);
-            chooseInstallFolder();
+            File detected = CoopInstallLayout.detectCommonInstallDir();
+            if (detected != null) {
+                adoptLayout(CoopInstallLayout.ofInstallRoot(detected));
+            } else {
+                append("Starsector was not auto-detected. Use the Install / Update tab to select"
+                        + " starsector.exe and install the mod in one click.");
+            }
         } else {
             adoptLayout(layout);
         }
-        if (layout == null) {
-            // Nothing was adopted, so prefill() - the only thing that picks a role - never ran.
-            // Without this neither segment is selected: the window shows the host form while the
-            // Connection button runs the guest path, and LAUNCH stays enabled with no reason in the
-            // footer.
+        boolean needsInstallTab = layout == null || !layout.isModInstalled()
+                || CoopInstallCheck.blocked(installRows);
+        if (needsInstallTab && System.getenv("COOP_LAUNCHER_PREVIEW") == null) {
+            installSegment.setSelected(true);
+            hostSegment.setSelected(false);
+            guestSegment.setSelected(false);
+            onRoleChanged();
+        } else if (layout == null) {
             hostSegment.setSelected(true);
             guestSegment.setSelected(false);
+            installSegment.setSelected(false);
             onRoleChanged();
         }
         if (applyFix && layout != null) {
@@ -461,7 +485,8 @@ public final class CoopLauncherApp {
         setup.setBorder(BorderFactory.createEmptyBorder(6, 22, 12, 22));
         sessionCard = buildSessionCard();
         setup.add(sessionCard, BorderLayout.CENTER);
-        setup.add(buildConnectionCard(), BorderLayout.SOUTH);
+        connectionCard = buildConnectionCard();
+        setup.add(connectionCard, BorderLayout.SOUTH);
         JScrollPane setupScroll = CoopLauncherUi.scroll(setup);
         setupScroll.setName("setupScroll");
         root.add(setupScroll, BorderLayout.CENTER);
@@ -507,14 +532,17 @@ public final class CoopLauncherApp {
         version.setName("launcherVersion");
         brandLayout.insets = new Insets(0, 10, 0, 0);
         brand.add(version, brandLayout);
-        updateChip = CoopTheme.ghost("Update available");
-        updateChip.setVisible(false);
+        updateChip = CoopTheme.ghost("Check updates");
+        updateChip.setName("updateChip");
+        updateChip.setToolTipText("Check GitHub for a newer Starsector Coop release.");
         updateChip.addActionListener(event -> {
-            if (!updateUrl.isEmpty()) {
-                openUrl(updateUrl);
+            if (updateAvailable) {
+                promptInstallOrOpenUpdate();
+            } else {
+                startUpdateCheck(true);
             }
         });
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         actions.setOpaque(false);
         advancedToggle = CoopTheme.ghost("Settings");
         CoopIcons.apply(advancedToggle, CoopIcons.Symbol.SETTINGS);
@@ -530,20 +558,28 @@ public final class CoopLauncherApp {
         chrome.add(CoopLauncherUi.centered(actions), BorderLayout.EAST);
         header.add(chrome, BorderLayout.NORTH);
 
+        installSegment = CoopTheme.segment("Install / Update");
+        installSegment.setName("installSegment");
         hostSegment = CoopTheme.segment("Host a game");
+        hostSegment.setName("hostSegment");
         guestSegment = CoopTheme.segment("Join a game");
+        guestSegment.setName("guestSegment");
+        CoopIcons.apply(installSegment, CoopIcons.Symbol.CHECK);
         CoopIcons.apply(hostSegment, CoopIcons.Symbol.HOST);
         CoopIcons.apply(guestSegment, CoopIcons.Symbol.LINK);
         ButtonGroup group = new ButtonGroup();
+        group.add(installSegment);
         group.add(hostSegment);
         group.add(guestSegment);
+        installSegment.addActionListener(event -> onRoleChanged());
         hostSegment.addActionListener(event -> onRoleChanged());
         guestSegment.addActionListener(event -> onRoleChanged());
-        JPanel roles = new JPanel(new GridLayout(1, 2, 4, 0));
+        JPanel roles = new JPanel(new GridLayout(1, 3, 4, 0));
         roles.setBackground(CoopTheme.FIELD);
         roles.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(CoopTheme.CARD_BORDER),
                 BorderFactory.createEmptyBorder(4, 4, 4, 4)));
+        roles.add(installSegment);
         roles.add(hostSegment);
         roles.add(guestSegment);
         JPanel roleRow = CoopLauncherUi.panel();
@@ -556,11 +592,68 @@ public final class CoopLauncherApp {
     private JPanel buildSessionCard() {
         sessionBody = new JPanel(new CardLayout());
         sessionBody.setOpaque(false);
+        installForm = buildInstallModeForm();
         hostForm = buildHostForm();
         guestForm = buildGuestForm();
+        sessionBody.add(installForm, "install");
         sessionBody.add(hostForm, "host");
         sessionBody.add(guestForm, "guest");
         return sessionBody;
+    }
+
+    private JPanel buildInstallModeForm() {
+        JPanel panel = CoopLauncherUi.panel();
+        Form form = new Form(panel);
+
+        installPathField = CoopTheme.textField("Select starsector.exe...");
+        installPathField.setEditable(false);
+        installPathField.setName("installPathField");
+        JButton browseExe = CoopTheme.secondary("Browse .exe");
+        browseExe.setToolTipText("Select starsector.exe (or your Starsector install folder).");
+        browseExe.addActionListener(event -> chooseInstallFolder());
+        form.full("Starsector executable", CoopLauncherUi.beside(installPathField, browseExe));
+
+        installModeSummary = CoopLauncherUi.summary(2);
+        installModeSummary.setName("installModeSummary");
+        installModeSummary.setText("Select starsector.exe to install or update Starsector Coop from GitHub.");
+        form.raw(installModeSummary);
+
+        installWingmanBox = new JCheckBox("Also install The Wingman Project (optional: manual co-op piloting)");
+        installWingmanBox.setName("installWingmanBox");
+        installWingmanBox.setOpaque(false);
+        installWingmanBox.setForeground(CoopTheme.TEXT);
+        installWingmanBox.setToolTipText("Downloads the latest Wingman release from"
+                + " NEOysod/TheWingmanProject into mods\\Wingman and enables wingman_project in"
+                + " enabled_mods.json. Optional — tactical map co-op battles work without it.");
+        form.raw(installWingmanBox);
+
+        JPanel quickActions = new JPanel();
+        quickActions.setLayout(new javax.swing.BoxLayout(quickActions, javax.swing.BoxLayout.X_AXIS));
+        quickActions.setOpaque(false);
+        installModeFixButton = CoopTheme.secondary("Fix vmparams & mods");
+        installModeFixButton.setToolTipText("Back up and patch vmparams (including broken tuning-pack"
+                + " classpaths) and tick coop in enabled_mods.json.");
+        installModeFixButton.addActionListener(event -> applyInstallFix(
+                List.of(CoopInstallFixer.Target.VMPARAMS, CoopInstallFixer.Target.ENABLED_MODS),
+                "vmparams and enabled_mods.json"));
+        installModeCheckButton = CoopTheme.ghost("Check GitHub");
+        installModeCheckButton.addActionListener(event -> startUpdateCheck(true));
+        JButton detailsButton = CoopTheme.ghost("All checks");
+        detailsButton.addActionListener(event -> showPanel(installDialog));
+        quickActions.add(installModeFixButton);
+        quickActions.add(CoopTheme.hgap(8));
+        quickActions.add(installModeCheckButton);
+        quickActions.add(CoopTheme.hgap(8));
+        quickActions.add(detailsButton);
+        form.raw(quickActions);
+
+        installProgressBar = new javax.swing.JProgressBar(0, 100);
+        installProgressBar.setStringPainted(true);
+        installProgressBar.setString("");
+        installProgressBar.setVisible(false);
+        form.raw(installProgressBar);
+
+        return panel;
     }
 
     private JPanel buildHostForm() {
@@ -872,13 +965,19 @@ public final class CoopLauncherApp {
         refresh.addActionListener(event -> {
             LOG.info("Install check refreshed by the player");
             refreshInstallRows();
+            startUpdateCheck(true);
         });
-        JButton folder = CoopTheme.ghost("Folder");
-        folder.setToolTipText("Point the launcher at a different Starsector install.");
+        installUpdateButton = CoopTheme.ghost("Install / Update");
+        installUpdateButton.setToolTipText("Download the latest Starsector Coop release from GitHub"
+                + " and configure vmparams and enabled_mods.json automatically.");
+        installUpdateButton.addActionListener(event -> confirmAndInstallMod(false));
+        JButton folder = CoopTheme.ghost("Game .exe");
+        folder.setToolTipText("Select starsector.exe (or your Starsector install folder).");
         folder.addActionListener(event -> chooseInstallFolder());
         JButton guide = CoopTheme.ghost("Guide");
         guide.setToolTipText("Open the install guide (INSTALL.md).");
         guide.addActionListener(event -> openInstallDoc());
+        card.trailing.add(installUpdateButton);
         card.trailing.add(refresh);
         card.trailing.add(folder);
         card.trailing.add(guide);
@@ -931,8 +1030,19 @@ public final class CoopLauncherApp {
         status.setName("launchStatus");
         launchButton = CoopTheme.primary("Launch Starsector");
         CoopIcons.apply(launchButton, CoopIcons.Symbol.PLAY);
-        CoopLauncherUi.stableWidth(launchButton, "Launch Starsector", "Game running");
-        launchButton.addActionListener(event -> launch());
+        CoopLauncherUi.stableWidth(launchButton, "Launch Starsector", "Game running",
+                "Install / Update", "Select game .exe", "Installing...");
+        launchButton.addActionListener(event -> {
+            if (isInstallMode()) {
+                if (layout == null) {
+                    chooseInstallFolder();
+                } else {
+                    runOneClickInstall();
+                }
+            } else {
+                launch();
+            }
+        });
         footer.add(status, BorderLayout.CENTER);
         footer.add(CoopLauncherUi.centered(launchButton), BorderLayout.EAST);
         return footer;
@@ -1097,11 +1207,22 @@ public final class CoopLauncherApp {
     }
 
 
+    private boolean isInstallMode() {
+        return installSegment != null && installSegment.isSelected();
+    }
+
     private void onRoleChanged() {
+        boolean installMode = isInstallMode();
         boolean host = hostSegment.isSelected();
-        ((CardLayout) sessionBody.getLayout()).show(sessionBody, host ? "host" : "guest");
+        String card = installMode ? "install" : (host ? "host" : "guest");
+        ((CardLayout) sessionBody.getLayout()).show(sessionBody, card);
+        if (connectionCard != null) {
+            connectionCard.setVisible(!installMode);
+        }
         connectionInputsChanged();
-        if (host) {
+        if (installMode) {
+            refreshInstallModeView();
+        } else if (host) {
             maybeGenerateHostPassword();
             maybeGenerateHostSeed();
             refreshInvitePreview();
@@ -1109,6 +1230,58 @@ public final class CoopLauncherApp {
         updateLaunchGate();
         sessionBody.revalidate();
         sessionBody.repaint();
+    }
+
+    private void refreshInstallModeView() {
+        if (installPathField == null || installModeSummary == null) {
+            return;
+        }
+        if (layout == null) {
+            installPathField.setText("");
+            installModeSummary.setText("No Starsector folder selected yet.\n"
+                    + "Click Browse .exe and pick starsector.exe to install Starsector Coop from GitHub.");
+        } else {
+            installPathField.setText(layout.starsectorExe().getPath());
+            String installed = layout.isModInstalled()
+                    ? "Installed: v" + effectiveVersion()
+                    : "Mod not installed in mods\\coop yet";
+            String github;
+            if (latestUpdateOutcome == null) {
+                github = "GitHub: checking...";
+            } else if (latestUpdateOutcome.kind() == CoopUpdateCheck.Kind.UPDATE_AVAILABLE) {
+                github = "GitHub: v" + latestUpdateOutcome.version() + " (update available)";
+            } else if (latestUpdateOutcome.kind() == CoopUpdateCheck.Kind.UP_TO_DATE) {
+                github = "GitHub: v" + latestUpdateOutcome.version() + " (up to date)";
+            } else {
+                github = "GitHub: unavailable (" + latestUpdateOutcome.reason() + ")";
+            }
+            int fails = 0;
+            for (CoopInstallCheck.Row row : installRows) {
+                if (row.status() == CoopInstallCheck.Status.FAIL) {
+                    fails++;
+                }
+            }
+            String readiness = !layout.isModInstalled()
+                    ? "Click Install / Update below to download the mod and configure vmparams."
+                    : (fails == 0
+                    ? "Ready to play — switch to Host a game (server) or Join a game (client)."
+                    : fails + (fails == 1 ? " setup issue" : " setup issues")
+                    + " found — click Fix vmparams & mods or Install / Update.");
+            installModeSummary.setText(installed + " · " + github + "\n" + readiness);
+        }
+        if (installModeFixButton != null) {
+            installModeFixButton.setEnabled(layout != null && !modInstallRunning.get() && !gameRunning);
+        }
+        if (installModeCheckButton != null) {
+            installModeCheckButton.setEnabled(!updateCheckRunning.get() && !modInstallRunning.get());
+        }
+        if (installWingmanBox != null) {
+            boolean wingmanPresent = layout != null && layout.isWingmanInstalled();
+            installWingmanBox.setText(wingmanPresent
+                    ? "Also update The Wingman Project (installed — optional manual co-op piloting)"
+                    : "Also install The Wingman Project (optional: manual co-op piloting)");
+            installWingmanBox.setEnabled(!modInstallRunning.get() && !gameRunning);
+        }
     }
 
     /** An old result must never describe a different endpoint or a different role. */
@@ -1406,6 +1579,36 @@ public final class CoopLauncherApp {
         if (launchButton == null || footerHint == null) {
             return;
         }
+        if (isInstallMode()) {
+            boolean installing = modInstallRunning.get();
+            launchButton.setEnabled(!installing && !gameRunning);
+            CoopIcons.apply(launchButton, installing ? CoopIcons.Symbol.BUSY : CoopIcons.Symbol.CHECK);
+            if (installing) {
+                launchButton.setText("Installing...");
+                footerHint.setText("Downloading and configuring Starsector Coop from GitHub...");
+                footerHint.setForeground(CoopTheme.MUTED);
+            } else if (gameRunning) {
+                launchButton.setText("Game running");
+                footerHint.setText("Close Starsector before installing or updating the mod.");
+                footerHint.setForeground(CoopTheme.WARN);
+            } else if (layout == null) {
+                launchButton.setText("Select game .exe");
+                footerHint.setText("Pick starsector.exe to download and install Starsector Coop.");
+                footerHint.setForeground(CoopTheme.WARN);
+            } else {
+                launchButton.setText("Install / Update");
+                footerHint.setText(updateAvailable && latestUpdateOutcome != null
+                        ? "Update v" + latestUpdateOutcome.version()
+                                + " is available. Downloads, unpacks and patches vmparams."
+                        : "Downloads the latest GitHub release, patches vmparams and enables the mod.");
+                footerHint.setForeground(updateAvailable ? CoopTheme.WARN : CoopTheme.MUTED);
+            }
+            launchButton.setToolTipText(footerHint.getText());
+            refreshInstallModeView();
+            return;
+        }
+        CoopIcons.apply(launchButton, CoopIcons.Symbol.PLAY);
+        launchButton.setText(gameRunning ? "Game running" : "Launch Starsector");
         String reason = launchBlockedReason();
         launchButton.setEnabled(reason == null);
         connectionButton.setEnabled(!checkingConnection && !mappingCleanupPending && !gameRunning
@@ -1655,6 +1858,7 @@ public final class CoopLauncherApp {
             installSummary.set("Install ready", CoopTheme.OK);
         }
         updateLaunchGate();
+        refreshInstallModeView();
 
         rowsPanel.removeAll();
         int hidden = 0;
@@ -1665,12 +1869,19 @@ public final class CoopLauncherApp {
                 continue;
             }
             JButton trailing = null;
-            if (row == updateRow && !updateUrl.isEmpty()) {
+            if (row == updateRow && updateAvailable) {
+                trailing = CoopTheme.inline("Install update");
+                trailing.setToolTipText("Download and install the latest GitHub release automatically.");
+                trailing.addActionListener(event -> runOneClickInstall());
+            } else if (row == updateRow && !updateUrl.isEmpty()) {
                 trailing = CoopTheme.inline("Open release page");
                 trailing.addActionListener(event -> {
                     LOG.info("Opening the release page " + updateUrl);
                     openUrl(updateUrl);
                 });
+            } else if (row == updateRow) {
+                trailing = CoopTheme.inline("Check again");
+                trailing.addActionListener(event -> startUpdateCheck(true));
             } else if (row.fixable() != null) {
                 CoopInstallFixer.Target target = row.fixable();
                 String label = row.label();
@@ -2477,27 +2688,100 @@ public final class CoopLauncherApp {
      * up the worker the buttons use. Every failure lands on a neutral row and nothing else changes.
      */
     private void startUpdateCheck() {
-        String version = launcherVersion;
+        startUpdateCheck(false);
+    }
+
+    private void startUpdateCheck(boolean manual) {
+        if (!updateCheckRunning.compareAndSet(false, true)) {
+            return;
+        }
+        String version = effectiveVersion();
+        SwingUtilities.invokeLater(() -> {
+            if (updateChip != null) {
+                updateChip.setEnabled(false);
+                updateChip.setIcon(CoopIcons.of(CoopIcons.Symbol.BUSY, 14));
+                updateChip.setForeground(CoopTheme.MUTED);
+                updateChip.setText("Checking...");
+                updateChip.setToolTipText("Checking GitHub for the latest Starsector Coop release...");
+                updateChip.setVisible(true);
+            }
+        });
         Thread thread = new Thread(() -> {
-            CoopUpdateCheck.Outcome outcome = CoopUpdateCheck.check(version);
+            CoopUpdateCheck.Outcome outcome;
+            try {
+                outcome = CoopUpdateCheck.check(version);
+            } finally {
+                updateCheckRunning.set(false);
+            }
             SwingUtilities.invokeLater(() -> {
-                updateRow = CoopUpdateCheck.row(outcome);
+                latestUpdateOutcome = outcome;
+                updateRow = CoopUpdateCheck.row(outcome, version);
                 boolean available = outcome.kind() == CoopUpdateCheck.Kind.UPDATE_AVAILABLE;
-                updateUrl = available ? outcome.url() : "";
+                updateAvailable = available;
+                updateUrl = outcome.url();
                 LOG.info("Update check " + updateRow);
                 renderRows();
-                updateChip.setText("Update available");
-                updateChip.setToolTipText("Both players must install the same release. Click to open"
-                        + " the release page.");
-                updateChip.setVisible(available);
+                refreshInstallModeView();
+                updateLaunchGate();
+                if (updateChip != null) {
+                    updateChip.setEnabled(true);
+                    updateChip.setVisible(true);
+                    if (available) {
+                        updateChip.setIcon(CoopIcons.of(CoopIcons.Symbol.ALERT, 14));
+                        updateChip.setForeground(CoopTheme.WARN);
+                        updateChip.setText("Update " + outcome.version());
+                        updateChip.setToolTipText("Installed " + version + " -> GitHub "
+                                + outcome.version()
+                                + ". Both players must install the same release. Click to open"
+                                + " the GitHub release page.");
+                    } else if (outcome.kind() == CoopUpdateCheck.Kind.UP_TO_DATE) {
+                        updateChip.setIcon(CoopIcons.of(CoopIcons.Symbol.CHECK, 14));
+                        updateChip.setForeground(CoopTheme.OK);
+                        updateChip.setText("Up to date");
+                        updateChip.setToolTipText("Installed " + version + " matches GitHub ("
+                                + outcome.version() + "). Click to check GitHub again.");
+                    } else {
+                        updateChip.setIcon(null);
+                        updateChip.setForeground(CoopTheme.MUTED);
+                        updateChip.setText("Check updates");
+                        updateChip.setToolTipText("GitHub check unavailable (" + outcome.reason()
+                                + "). Click to retry.");
+                    }
+                }
                 if (available) {
-                    append("Version " + outcome.version() + " is out. Both of you have to be on the"
-                            + " same release: " + outcome.url());
+                    append("GitHub version check: version " + outcome.version()
+                            + " is available (installed " + version + "). Both players must use"
+                            + " the same release: " + outcome.url());
+                } else if (manual) {
+                    if (outcome.kind() == CoopUpdateCheck.Kind.UP_TO_DATE) {
+                        append("GitHub version check: up to date (installed " + version
+                                + ", GitHub " + outcome.version() + ").");
+                    } else {
+                        append("GitHub version check: unavailable (" + outcome.reason() + ").");
+                    }
                 }
             });
         }, "coop-launcher-update-check");
         thread.setDaemon(true);
         thread.start();
+    }
+
+    /**
+     * Resolves the version to compare against GitHub: prefers the launcher jar's manifest version,
+     * falling back to {@code mod_info.json} when running unpacked ({@code "dev"}).
+     */
+    private String effectiveVersion() {
+        String current = launcherVersion == null ? "" : launcherVersion.trim();
+        if (!current.isEmpty() && !"dev".equalsIgnoreCase(current)) {
+            return current;
+        }
+        if (layout != null) {
+            String modVersion = CoopInstallCheck.readModInfoVersion(layout.modInfo());
+            if (modVersion != null && !modVersion.isBlank()) {
+                return modVersion.trim();
+            }
+        }
+        return current.isEmpty() ? "dev" : current;
     }
 
     private void launch() {
@@ -2729,24 +3013,224 @@ public final class CoopLauncherApp {
         append("Tailing " + log + ".");
     }
 
+    private void promptInstallOrOpenUpdate() {
+        if (layout == null) {
+            if (!updateUrl.isEmpty()) {
+                openUrl(updateUrl);
+            }
+            return;
+        }
+        Object[] options = { "Install automatically", "Open GitHub", "Cancel" };
+        int choice = JOptionPane.showOptionDialog(frame,
+                "A newer Starsector Coop release is available on GitHub.\n\n"
+                        + "Download and install it into:\n"
+                        + layout.modRoot() + "\n"
+                        + "and update vmparams / enabled_mods.json automatically?",
+                "Starsector Coop Update",
+                JOptionPane.YES_NO_CANCEL_OPTION,
+                JOptionPane.QUESTION_MESSAGE,
+                null,
+                options,
+                options[0]);
+        if (choice == 0) {
+            runOneClickInstall();
+        } else if (choice == 1 && !updateUrl.isEmpty()) {
+            LOG.info("Opening the release page " + updateUrl);
+            openUrl(updateUrl);
+        }
+    }
+
+    private void confirmAndInstallMod(boolean missingModPrompt) {
+        if (layout == null) {
+            chooseInstallFolder();
+            return;
+        }
+        String heading = missingModPrompt
+                ? "Starsector Coop is not installed in this Starsector folder yet.\n\n"
+                : "Download the latest Starsector Coop release from GitHub?\n\n";
+        int answer = JOptionPane.showConfirmDialog(frame,
+                heading
+                        + "Target: " + layout.modRoot() + "\n"
+                        + "The launcher will download the latest release archive, unpack it into"
+                        + " mods\\coop, back up and patch vmparams, and enable the mod in"
+                        + " enabled_mods.json.",
+                "Install Starsector Coop",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.QUESTION_MESSAGE);
+        if (answer == JOptionPane.YES_OPTION) {
+            runOneClickInstall();
+        }
+    }
+
+    /**
+     * Downloads the latest release archive from GitHub, unpacks it into {@code mods/coop}, patches
+     * {@code vmparams}, and enables {@code "coop"} in {@code enabled_mods.json}.
+     */
+    private void runOneClickInstall() {
+        if (layout == null) {
+            chooseInstallFolder();
+            return;
+        }
+        if (gameRunning) {
+            fail("Close Starsector before installing or updating the mod.");
+            return;
+        }
+        if (!modInstallRunning.compareAndSet(false, true)) {
+            return;
+        }
+        CoopInstallLayout targetLayout = layout;
+        String current = effectiveVersion();
+        boolean includeWingman = installWingmanBox != null && installWingmanBox.isSelected();
+        LOG.info("One-click GitHub install requested for " + targetLayout
+                + (includeWingman ? " (+ Wingman)" : ""));
+        append("Installing latest Starsector Coop" + (includeWingman ? " + The Wingman Project" : "")
+                + " from GitHub into " + targetLayout.modRoot() + "...");
+        setDrawerVisible(true);
+        SwingUtilities.invokeLater(() -> {
+            if (installUpdateButton != null) {
+                installUpdateButton.setEnabled(false);
+            }
+            if (installProgressBar != null) {
+                installProgressBar.setIndeterminate(true);
+                installProgressBar.setString("Checking GitHub...");
+                installProgressBar.setVisible(true);
+            }
+            if (updateChip != null) {
+                updateChip.setEnabled(false);
+                updateChip.setIcon(CoopIcons.of(CoopIcons.Symbol.BUSY, 14));
+                updateChip.setForeground(CoopTheme.ACCENT);
+                updateChip.setText("Installing...");
+                updateChip.setVisible(true);
+            }
+            updateLaunchGate();
+        });
+        Thread worker = new Thread(() -> {
+            CoopModInstaller.InstallResult result;
+            try {
+                result = CoopModInstaller.installLatest(targetLayout, current, includeWingman, (stage, percent) ->
+                        SwingUtilities.invokeLater(() -> {
+                            if (updateChip != null) {
+                                updateChip.setText(percent >= 0 ? "Downloading " + percent + "%" : stage);
+                            }
+                            if (installProgressBar != null) {
+                                if (percent >= 0) {
+                                    installProgressBar.setIndeterminate(false);
+                                    installProgressBar.setValue(percent);
+                                } else {
+                                    installProgressBar.setIndeterminate(true);
+                                }
+                                installProgressBar.setString(stage);
+                            }
+                        }));
+            } finally {
+                modInstallRunning.set(false);
+            }
+            SwingUtilities.invokeLater(() -> finishOneClickInstall(result));
+        }, "coop-launcher-installer");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private void finishOneClickInstall(CoopModInstaller.InstallResult result) {
+        if (installUpdateButton != null) {
+            installUpdateButton.setEnabled(true);
+        }
+        if (installProgressBar != null) {
+            installProgressBar.setIndeterminate(false);
+            installProgressBar.setValue(result.ok() ? 100 : 0);
+            installProgressBar.setString(result.ok() ? "Installed v" + result.version() : "");
+            installProgressBar.setVisible(false);
+        }
+        for (String line : result.details()) {
+            LOG.info("Installer: " + line);
+            append("  " + line);
+        }
+        append(result.summary());
+        refreshInstallRows();
+        refreshInstallModeView();
+        updateLaunchGate();
+        if (result.accessDenied()) {
+            offerElevatedRelaunch();
+            startUpdateCheck(false);
+            return;
+        }
+        if (result.ok()) {
+            if (!result.version().isEmpty()) {
+                this.launcherVersion = result.version();
+            }
+            startUpdateCheck(false);
+            File launcherExe = layout == null ? null
+                    : new File(layout.modRoot(), "Starsector Coop Launcher.exe");
+            File launcherCmd = layout == null ? null : new File(layout.modRoot(), "Coop Launcher.cmd");
+            boolean canRestart = (launcherExe != null && launcherExe.isFile())
+                    || (launcherCmd != null && launcherCmd.isFile());
+            if (result.restartRecommended() && canRestart) {
+                int restart = JOptionPane.showConfirmDialog(frame,
+                        result.summary()
+                                + "\n\nSome jars were in use by the running launcher and staged for"
+                                + " swap. Restart Coop Launcher now to finish applying them?",
+                        "Starsector Coop Installed",
+                        JOptionPane.YES_NO_OPTION,
+                        JOptionPane.INFORMATION_MESSAGE);
+                if (restart == JOptionPane.YES_OPTION) {
+                    try {
+                        if (launcherExe != null && launcherExe.isFile()) {
+                            new ProcessBuilder(launcherExe.getAbsolutePath())
+                                    .directory(layout.modRoot())
+                                    .start();
+                        } else {
+                            new ProcessBuilder("cmd.exe", "/c", "start", "", launcherCmd.getAbsolutePath())
+                                    .directory(layout.modRoot())
+                                    .start();
+                        }
+                        shutdown();
+                        return;
+                    } catch (Exception ex) {
+                        LOG.warn("Could not restart Coop Launcher automatically", ex);
+                    }
+                }
+            } else {
+                String extra = result.restartRecommended()
+                        ? "\n\nRestart Coop Launcher to finish swapping the updated jar files."
+                        : "";
+                JOptionPane.showMessageDialog(frame,
+                        result.summary() + extra,
+                        "Starsector Coop Installed",
+                        JOptionPane.INFORMATION_MESSAGE);
+            }
+        } else {
+            startUpdateCheck(false);
+            fail(result.summary());
+        }
+    }
+
     private void chooseInstallFolder() {
         JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle("Pick your Starsector folder (the one with starsector.exe in it)");
-        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        if (layout != null) {
-            chooser.setCurrentDirectory(layout.installRoot());
+        chooser.setDialogTitle("Select starsector.exe (or your Starsector install folder)");
+        chooser.setFileSelectionMode(JFileChooser.FILES_AND_DIRECTORIES);
+        chooser.setAcceptAllFileFilterUsed(true);
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
+                "Starsector executable (starsector.exe)", "exe"));
+        File startDir = layout != null ? layout.installRoot() : CoopInstallLayout.detectCommonInstallDir();
+        if (startDir != null && startDir.isDirectory()) {
+            chooser.setCurrentDirectory(startDir);
         }
         if (chooser.showOpenDialog(frame) != JFileChooser.APPROVE_OPTION) {
             return;
         }
         File chosen = chooser.getSelectedFile();
-        LOG.info("Player picked the install folder " + chosen);
-        if (!CoopInstallLayout.looksLikeInstall(chosen)) {
-            fail(chosen + " does not hold starsector.exe, vmparams and starsector-core, so it is not"
-                    + " a Starsector install.");
+        LOG.info("Player picked " + chosen);
+        File resolvedRoot = CoopInstallLayout.resolveInstallRoot(chosen);
+        if (resolvedRoot == null) {
+            fail(chosen + " is not starsector.exe or a Starsector install folder (expected"
+                    + " starsector.exe, vmparams and starsector-core).");
             return;
         }
-        adoptLayout(CoopInstallLayout.ofInstallRoot(chosen));
+        CoopInstallLayout adopted = CoopInstallLayout.ofInstallRoot(resolvedRoot);
+        adoptLayout(adopted);
+        if (!adopted.isModInstalled()) {
+            confirmAndInstallMod(true);
+        }
     }
 
     private void openInstallDoc() {

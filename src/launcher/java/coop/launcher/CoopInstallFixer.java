@@ -288,7 +288,48 @@ public final class CoopInstallFixer {
     public static Result apply(CoopInstallLayout layout, Target target) {
         Objects.requireNonNull(layout, "layout");
         Objects.requireNonNull(target, "target");
-        return target == Target.VMPARAMS ? applyVmparams(layout) : applyEnabledMods(layout);
+        return target == Target.VMPARAMS ? applyVmparams(layout) : applyEnabledMod(layout, CoopInstallLayout.MOD_ID);
+    }
+
+    /** Enables an arbitrary mod id (for example {@code "coop"} or {@code "wingman_project"}) in {@code enabled_mods.json}. */
+    public static Result applyEnabledMod(CoopInstallLayout layout, String modId) {
+        Objects.requireNonNull(layout, "layout");
+        Objects.requireNonNull(modId, "modId");
+        File file = layout.enabledMods();
+        String text = null;
+        if (file.isFile()) {
+            try {
+                text = Files.readString(file.toPath(), StandardCharsets.UTF_8);
+            } catch (IOException | RuntimeException ex) {
+                LOG.warn("Could not read " + file, ex);
+                return refused("Could not read " + file + ": " + ex + ". "
+                        + enabledModsFixText());
+            }
+        }
+        String written;
+        try {
+            written = addEnabledMod(text, modId);
+        } catch (IllegalArgumentException ex) {
+            LOG.warn("Refusing to edit " + file + ": " + ex.getMessage());
+            return refused(ex.getMessage() + ". Delete it and re-tick the mod in the Starsector"
+                    + " launcher. " + enabledModsFixText());
+        }
+        if (written == null) {
+            return new Result(false, false,
+                    "\"" + modId + "\" is already in " + file + ".");
+        }
+        try {
+            CoopAtomicFiles.writeAtomically(file.toPath(), written.getBytes(StandardCharsets.UTF_8));
+        } catch (AccessDeniedException ex) {
+            LOG.warn("Access denied writing " + file, ex);
+            return denied(file);
+        } catch (IOException | RuntimeException ex) {
+            LOG.warn("Could not write " + file, ex);
+            return refused("Could not write " + file + ": " + ex + ". " + enabledModsFixText());
+        }
+        LOG.info("Added \"" + modId + "\" to " + file);
+        return new Result(true, false, "Ticked \"" + modId + "\" in " + file
+                + ". Your other mods are untouched and in the same order.");
     }
 
     private static Result applyVmparams(CoopInstallLayout layout) {
@@ -343,44 +384,6 @@ public final class CoopInstallFixer {
         LOG.info("Patched " + file + "; backup at " + backup);
         return new Result(true, false, "Put " + CoopVmparamsText.FORKS_ENTRY + " first on the"
                 + " classpath in " + file + ". The file it replaced is at " + backup + ".");
-    }
-
-    private static Result applyEnabledMods(CoopInstallLayout layout) {
-        File file = layout.enabledMods();
-        String text = null;
-        if (file.isFile()) {
-            try {
-                text = Files.readString(file.toPath(), StandardCharsets.UTF_8);
-            } catch (IOException | RuntimeException ex) {
-                LOG.warn("Could not read " + file, ex);
-                return refused("Could not read " + file + ": " + ex + ". "
-                        + enabledModsFixText());
-            }
-        }
-        String written;
-        try {
-            written = addEnabledMod(text, CoopInstallLayout.MOD_ID);
-        } catch (IllegalArgumentException ex) {
-            LOG.warn("Refusing to edit " + file + ": " + ex.getMessage());
-            return refused(ex.getMessage() + ". Delete it and re-tick the mod in the Starsector"
-                    + " launcher. " + enabledModsFixText());
-        }
-        if (written == null) {
-            return new Result(false, false,
-                    "\"" + CoopInstallLayout.MOD_ID + "\" is already in " + file + ".");
-        }
-        try {
-            CoopAtomicFiles.writeAtomically(file.toPath(), written.getBytes(StandardCharsets.UTF_8));
-        } catch (AccessDeniedException ex) {
-            LOG.warn("Access denied writing " + file, ex);
-            return denied(file);
-        } catch (IOException | RuntimeException ex) {
-            LOG.warn("Could not write " + file, ex);
-            return refused("Could not write " + file + ": " + ex + ". " + enabledModsFixText());
-        }
-        LOG.info("Added \"" + CoopInstallLayout.MOD_ID + "\" to " + file);
-        return new Result(true, false, "Ticked \"" + CoopInstallLayout.MOD_ID + "\" in " + file
-                + ". Your other mods are untouched and in the same order.");
     }
 
     private static Result refused(String message) {

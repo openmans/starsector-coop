@@ -124,6 +124,7 @@ class CoopLauncherLayoutTest {
                     "launchButton", "connectionDetailsButton" }) {
                 assertNotNull(field(name, JButton.class).getIcon(), name + " needs its prototype icon");
             }
+            assertNotNull(field("installSegment", JToggleButton.class).getIcon());
             assertNotNull(field("hostSegment", JToggleButton.class).getIcon());
             assertNotNull(field("guestSegment", JToggleButton.class).getIcon());
             assertNotNull(edit.getIcon());
@@ -178,6 +179,35 @@ class CoopLauncherLayoutTest {
             field("guestHostField", JTextField.class).setText("203.0.113.10");
             assertEquals("Connection not checked", field("connectionTitle", JLabel.class).getText());
             assertFalse(field("connectionChecked", Boolean.class));
+        });
+    }
+
+    @Test
+    void installUpdateModeSwitchesCleanlyAndKeepsLaunchBarAligned() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            Rectangle footer = find(frame, "launchFooter").getBounds();
+            JScrollPane scroll = (JScrollPane) find(frame, "setupScroll");
+            JButton launch = field("launchButton", JButton.class);
+
+            field("installSegment", JToggleButton.class).doClick();
+            frame.validate();
+            assertFalse(scroll.getVerticalScrollBar().isVisible(), "Install / Update mode must fit");
+            assertFalse(field("connectionCard", javax.swing.JPanel.class).isVisible(),
+                    "Connection card should stay hidden in Install / Update mode");
+            assertTrue(launch.isEnabled(), "Install / Update mode must allow selecting game .exe");
+            assertEquals("Select game .exe", launch.getText());
+            assertEquals(footer, find(frame, "launchFooter").getBounds());
+
+            setField("layout", CoopInstallLayout.ofInstallRoot(new File("build/layout-test-install")));
+            invoke("updateLaunchGate");
+            assertEquals("Install / Update", launch.getText());
+
+            field("hostSegment", JToggleButton.class).doClick();
+            frame.validate();
+            assertTrue(field("connectionCard", javax.swing.JPanel.class).isVisible(),
+                    "Connection card must return in Host mode");
+            assertEquals("Launch Starsector", launch.getText());
+            assertEquals(footer, find(frame, "launchFooter").getBounds());
         });
     }
 

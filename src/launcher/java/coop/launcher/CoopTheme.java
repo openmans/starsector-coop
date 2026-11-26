@@ -45,32 +45,37 @@ final class CoopTheme {
 
     private static final Logger LOG = Logger.getLogger(CoopTheme.class);
 
-    static final Color BG = hex("#111820");
-    static final Color CARD = hex("#1a232d");
-    static final Color CARD_BORDER = hex("#283442");
-    static final Color FIELD = hex("#0e141b");
-    static final Color TEXT = hex("#e6edf3");
-    static final Color MUTED = hex("#a0adbc");
-    static final Color ACCENT = hex("#4fd1e8");
-    static final Color ACCENT_HOVER = hex("#72dcef");
-    static final Color ACCENT_PRESSED = hex("#36b9d1");
-    static final Color ON_ACCENT = hex("#0b1218");
-    static final Color OK = hex("#3ecf8e");
-    static final Color WARN = hex("#f4a63a");
-    static final Color FAIL = hex("#f0584f");
-    static final Color INFO = hex("#7b8794");
+    // Starsector native UI palette (from starsector-core/data/config/settings.json:
+    // buttonBg #46deff, buttonBgDark #1f5e70, buttonText #aadeff, tooltipTitle #cbf5ff)
+    // paired with a warm high-contrast amber primary accent (#ff9e2c).
+    static final Color BG = hex("#0b1622");
+    static final Color CARD = hex("#112233");
+    static final Color CARD_BORDER = hex("#245169");
+    static final Color FIELD = hex("#09131d");
+    static final Color TEXT = hex("#e6f6ff");
+    static final Color MUTED = hex("#8fb5cc");
+    static final Color ACCENT = hex("#46deff");
+    static final Color ACCENT_HOVER = hex("#7be9ff");
+    static final Color ACCENT_PRESSED = hex("#28b8db");
+    static final Color PRIMARY = hex("#ff9e2c");
+    static final Color ON_ACCENT = hex("#0a1118");
+    static final Color BUTTON_TEXT = hex("#cbf5ff");
+    static final Color OK = hex("#52e07c");
+    static final Color WARN = hex("#ffb340");
+    static final Color FAIL = hex("#ff5e57");
+    static final Color INFO = hex("#7ab4cc");
 
     static final int CARD_ARC = 14;
 
     private CoopTheme() {
     }
 
-    /** Installs FlatLaf dark with the launcher's palette. Call once, before any component exists. */
+    /** Installs FlatLaf dark with Starsector's native palette. Call once, before any component exists. */
     static void install() {
         Map<String, String> extra = new HashMap<>();
-        extra.put("@background", "#111820");
-        extra.put("@foreground", "#e6edf3");
-        extra.put("@accentColor", "#4fd1e8");
+        extra.put("@background", "#0b1622");
+        extra.put("@foreground", "#e6f6ff");
+        extra.put("@accentColor", "#46deff");
         FlatLaf.setGlobalExtraDefaults(extra);
         if (!FlatDarkLaf.setup()) {
             LOG.warn("FlatLaf did not install; the window will use the default look and feel");
@@ -332,45 +337,52 @@ final class CoopTheme {
         return null;
     }
 
-    /** The one cyan button: Launch. */
+    /** High-contrast warm amber primary action button (Launch / Install). */
     static JButton primary(String text) {
         JButton button = new JButton(text);
         button.putClientProperty("FlatLaf.style",
-                "background: #4fd1e8; foreground: #0b1218; hoverBackground: #72dcef;"
-                        + " pressedBackground: #36b9d1; disabledBackground: #2a3644;"
-                        + " disabledText: #a0adbc; borderWidth: 0; focusWidth: 1; arc: 8;"
+                "background: #ff9e2c; foreground: #0a1118; hoverBackground: #ffb652;"
+                        + " pressedBackground: #e08318; disabledBackground: #182c3b;"
+                        + " disabledText: #6f93a8; borderColor: #ffc470; borderWidth: 1;"
+                        + " focusedBorderColor: #ffe0a8; focusWidth: 1; arc: 8;"
                         + " margin: 9,20,9,20");
         button.setFont(button.getFont().deriveFont(Font.BOLD, (float) button.getFont().getSize() + 1f));
         return button;
     }
 
-    /** A bordered secondary button. */
+    /** Native Starsector cyan-teal bordered action button (buttonBgDark + buttonText). */
     static JButton secondary(String text) {
         JButton button = new JButton(text);
         button.putClientProperty("FlatLaf.style",
-                "background: #1f2a36; hoverBackground: #283442; pressedBackground: #16202a;"
-                        + " borderColor: #34424f; focusedBorderColor: #4fd1e8; arc: 8;"
-                        + " margin: 6,16,6,16");
+                "background: #174557; foreground: #cbf5ff; hoverBackground: #216078;"
+                        + " pressedBackground: #103444; disabledBackground: #112433;"
+                        + " disabledText: #5e8296; borderColor: #3597b8;"
+                        + " hoverBorderColor: #46deff; focusedBorderColor: #46deff;"
+                        + " borderWidth: 1; arc: 8; margin: 6,16,6,16");
+        button.setForeground(BUTTON_TEXT);
         return button;
     }
 
-    /** A borderless button for the low-key actions (refresh, open folder, toggles). */
+    /** Subtle Starsector-tinted toolbar/utility button with clear button affordance. */
     static JButton ghost(String text) {
         JButton button = new JButton(text);
-        button.putClientProperty("JButton.buttonType", "toolBarButton");
         button.putClientProperty("FlatLaf.style",
-                "toolbar.hoverBackground: #283442; toolbar.pressedBackground: #16202a;"
-                        + " margin: 6,12,6,12; arc: 8");
-        button.setForeground(MUTED);
+                "background: #132e40; foreground: #aadeff; hoverBackground: #1d4961;"
+                        + " pressedBackground: #103042; disabledBackground: #0e1e2b;"
+                        + " disabledText: #5a7b8f; borderColor: #29617a;"
+                        + " hoverBorderColor: #46deff; focusedBorderColor: #46deff;"
+                        + " borderWidth: 1; margin: 5,11,5,11; arc: 8");
+        button.setForeground(hex("#aadeff"));
         return button;
     }
 
-    /** A button that lives inside a text field's trailing slot. */
+    /** A bright cyan inline action link-button. */
     static JButton inline(String text) {
         JButton button = new JButton(text);
         button.putClientProperty("JButton.buttonType", "toolBarButton");
         button.putClientProperty("FlatLaf.style",
-                "toolbar.hoverBackground: #283442; margin: 2,8,2,8; arc: 8");
+                "toolbar.hoverBackground: #194357; toolbar.pressedBackground: #103042;"
+                        + " margin: 2,8,2,8; arc: 8");
         button.setForeground(ACCENT);
         return button;
     }
@@ -378,10 +390,11 @@ final class CoopTheme {
     static JToggleButton segment(String text) {
         JToggleButton button = new JToggleButton(text);
         button.putClientProperty("FlatLaf.style",
-                "background: #0e141b; foreground: #a0adbc; hoverBackground: #283442;"
-                        + " selectedBackground: #233441; selectedForeground: #e6edf3;"
-                        + " pressedBackground: #35495b; borderWidth: 0; focusWidth: 1; arc: 8;"
-                        + " margin: 8,22,8,22");
+                "background: #0d1e2c; foreground: #8fb5cc; hoverBackground: #173a4f;"
+                        + " selectedBackground: #1f5e70; selectedForeground: #e8faff;"
+                        + " pressedBackground: #27738a; borderColor: #245169;"
+                        + " selectedBorderColor: #46deff; borderWidth: 1; focusWidth: 1; arc: 8;"
+                        + " margin: 8,20,8,20");
         button.setFont(button.getFont().deriveFont(Font.BOLD));
         button.setForeground(MUTED);
         button.addItemListener(event -> button.setForeground(button.isSelected() ? TEXT : MUTED));

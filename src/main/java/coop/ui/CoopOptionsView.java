@@ -120,6 +120,7 @@ public record CoopOptionsView(List<Section> sections) {
         LABELS.put(CoopOptionsRegistry.PAUSE_ON_GUEST_SCREENS, "Pause while a guest reads a screen");
         LABELS.put(CoopOptionsRegistry.ALLOW_MID_SESSION_JOIN, "Allow joining a session in progress");
         LABELS.put(CoopOptionsRegistry.WINGMAN_BATTLES, "Wingman serves the battles");
+        LABELS.put(CoopOptionsRegistry.ALLY_JOIN_RANGE, "Ally battle join range (su)");
         LABELS.put(CoopOptionsRegistry.LOOT_SPLIT, "Battle loot split");
         LABELS.put(CoopOptionsRegistry.INCOME_SPLIT, "Colony income split");
         LABELS.put(CoopOptionsRegistry.GUEST_COLONIZATION_CONSENT, "Guest asks before colonizing");
@@ -136,6 +137,7 @@ public record CoopOptionsView(List<Section> sections) {
         // presses to cross the default. Ports get no stepper at all - nobody finds 7777 by clicking.
         STEPS.put(CoopOptionsRegistry.RECONNECT_GRACE_SECONDS, 15);
         STEPS.put(CoopOptionsRegistry.MAX_GUESTS, 1);
+        STEPS.put(CoopOptionsRegistry.ALLY_JOIN_RANGE, 250);
     }
 
     /** The label for {@code key}; falls back to the key itself for anything unlabelled. */

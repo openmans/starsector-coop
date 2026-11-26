@@ -384,7 +384,11 @@ public final class CoopMessages {
         /** Bidirectional in-game co-op text chat message. */
         CHAT_MSG,
         /** Host &rarr; guest optional Nexerelin diplomacy/invasion state event. */
-        NEX_EVENT
+        NEX_EVENT,
+        /** Fighting player &rarr; nearby partner within {@code coop.allyJoinRange}: prompt to join battle. */
+        ALLY_JOIN_OFFER,
+        /** Partner &rarr; fighting player: chosen participation mode (tactical / Wingman / AI / decline). */
+        ALLY_JOIN_REPLY
     }
 
     /**
@@ -465,7 +469,7 @@ public final class CoopMessages {
                   INTERACTION_CLAIM, INTERACTION_ACCEPT, INTERACTION_REJECT, INTERACTION_RELEASE,
                   ABILITY_ACTIVATE, DIALOG_BEGIN,
                   BATTLE_BEGIN, BATTLE_STATUS, BATTLE_END, BATTLE_RESULT,
-                  BATTLE_ORDER, BATTLE_ORDER_ACK, ENGAGE_GUEST,
+                  BATTLE_ORDER, BATTLE_ORDER_ACK, ENGAGE_GUEST, ALLY_JOIN_OFFER, ALLY_JOIN_REPLY,
                   SAVE_CHECKPOINT, SAVE_CHECKPOINT_RESULT, RESPAWN_PLAYER, STALL_NOTICE,
                   SESSION_LEAVE,
                   OPTIONS_SNAPSHOT, OPTIONS_APPLIED, SESSION_STATS, LINK_STATUS,
@@ -2938,5 +2942,13 @@ public final class CoopMessages {
 
     public static Message nexEvent(String sessionId, long seq, long sentAtMillis, String body) {
         return bodyMessage(Type.NEX_EVENT, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message allyJoinOffer(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.ALLY_JOIN_OFFER, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message allyJoinReply(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.ALLY_JOIN_REPLY, sessionId, seq, sentAtMillis, body);
     }
 }

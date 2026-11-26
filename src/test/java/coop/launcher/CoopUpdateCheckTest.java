@@ -188,6 +188,114 @@ class CoopUpdateCheckTest {
         assertTrue(outcome.reason().length() <= 80, outcome.reason());
     }
 
+    // ---- multi-source GitHub fallbacks --------------------------------------------------------
+
+    @Test
+    void fallsBackToPrereleaseWhenLatestReturns404() {
+        String listBody = """
+                [
+                  {
+                    "tag_name": "v0.4.0",
+                    "html_url": "https://github.com/openmans/starsector-coop/releases/tag/v0.4.0",
+                    "draft": true,
+                    "prerelease": true
+                  },
+                  {
+                    "tag_name": "v0.3.1-rc1",
+                    "html_url": "https://github.com/openmans/starsector-coop/releases/tag/v0.3.1-rc1",
+                    "draft": false,
+                    "prerelease": true
+                  }
+                ]
+                """;
+        CoopUpdateCheck.Outcome outcome = CoopUpdateCheck.checkWithFallback("0.2.4", (url, agent) -> {
+            if (CoopUpdateCheck.RELEASES_URL.equals(url)) {
+                return new CoopUpdateCheck.Response(404, NOT_FOUND_BODY);
+            }
+            if (CoopUpdateCheck.RELEASES_LIST_URL.equals(url)) {
+                return new CoopUpdateCheck.Response(200, listBody);
+            }
+            throw new AssertionError("unexpected URL: " + url);
+        });
+
+        assertEquals(CoopUpdateCheck.Kind.UPDATE_AVAILABLE, outcome.kind());
+        assertEquals("0.3.1", outcome.version());
+        assertEquals("https://github.com/openmans/starsector-coop/releases/tag/v0.3.1-rc1", outcome.url());
+    }
+
+    @Test
+    void fallsBackToMasterVersionFileWhenNoReleasesExist() {
+        String versionFile = """
+                {
+                    # Comment with # inside
+                    "modName": "Starsector Coop V1",
+                    "modVersion": {
+                        "major": 0, # inline comment
+                        "minor": 2,
+                        "patch": 5
+                    },
+                    "directDownloadURL": "https://github.com/openmans/starsector-coop/releases/latest#top"
+                }
+                """;
+        CoopUpdateCheck.Outcome outcome = CoopUpdateCheck.checkWithFallback("0.2.4", (url, agent) -> {
+            if (CoopUpdateCheck.RELEASES_URL.equals(url)) {
+                return new CoopUpdateCheck.Response(404, NOT_FOUND_BODY);
+            }
+            if (CoopUpdateCheck.RELEASES_LIST_URL.equals(url)) {
+                return new CoopUpdateCheck.Response(200, "[]");
+            }
+            if (CoopUpdateCheck.MASTER_VERSION_URL.equals(url)) {
+                return new CoopUpdateCheck.Response(200, versionFile);
+            }
+            throw new AssertionError("unexpected URL: " + url);
+        });
+
+        assertEquals(CoopUpdateCheck.Kind.UPDATE_AVAILABLE, outcome.kind());
+        assertEquals("0.2.5", outcome.version());
+        assertEquals("https://github.com/openmans/starsector-coop/releases/latest#top", outcome.url());
+    }
+
+    @Test
+    void fallsBackToMasterVersionFileOnGitHubApiRateLimit() {
+        String versionFile = """
+                {
+                    "modVersion": { "major": 0, "minor": 2, "patch": 4 },
+                    "directDownloadURL": "https://github.com/openmans/starsector-coop/releases/latest"
+                }
+                """;
+        CoopUpdateCheck.Outcome outcome = CoopUpdateCheck.checkWithFallback("0.2.4", (url, agent) -> {
+            if (CoopUpdateCheck.RELEASES_URL.equals(url)) {
+                return new CoopUpdateCheck.Response(403, "{\"message\":\"API rate limit exceeded\"}");
+            }
+            if (CoopUpdateCheck.MASTER_VERSION_URL.equals(url)) {
+                return new CoopUpdateCheck.Response(200, versionFile);
+            }
+            throw new AssertionError("unexpected URL: " + url);
+        });
+
+        assertEquals(CoopUpdateCheck.Kind.UP_TO_DATE, outcome.kind());
+        assertEquals("0.2.4", outcome.version());
+        assertEquals("https://github.com/openmans/starsector-coop/releases/latest", outcome.url());
+    }
+
+    @Test
+    void rowWithCurrentVersionShowsInstalledAndRemoteVersions() {
+        CoopUpdateCheck.Outcome update = new CoopUpdateCheck.Outcome(
+                CoopUpdateCheck.Kind.UPDATE_AVAILABLE, "0.2.5",
+                "https://github.com/openmans/starsector-coop/releases/tag/v0.2.5", "");
+        CoopInstallCheck.Row updateRow = CoopUpdateCheck.row(update, "0.2.4");
+        assertEquals(CoopInstallCheck.Status.WARN, updateRow.status());
+        assertTrue(updateRow.detail().contains("Installed 0.2.4"), updateRow.detail());
+        assertTrue(updateRow.detail().contains("0.2.5"), updateRow.detail());
+
+        CoopUpdateCheck.Outcome ahead = new CoopUpdateCheck.Outcome(
+                CoopUpdateCheck.Kind.UP_TO_DATE, "0.2.4",
+                "https://github.com/openmans/starsector-coop/releases/tag/v0.2.4", "");
+        CoopInstallCheck.Row aheadRow = CoopUpdateCheck.row(ahead, "0.2.5");
+        assertEquals(CoopInstallCheck.Status.OK, aheadRow.status());
+        assertTrue(aheadRow.detail().contains("ahead of GitHub release 0.2.4"), aheadRow.detail());
+    }
+
     private static CoopUpdateCheck.Outcome evaluate(String current, int status, String body) {
         return CoopUpdateCheck.check(current, CoopUpdateCheck.RELEASES_URL,
                 (url, agent) -> new CoopUpdateCheck.Response(status, body));

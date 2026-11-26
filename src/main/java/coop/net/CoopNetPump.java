@@ -574,6 +574,17 @@ public class CoopNetPump implements EveryFrameScript {
     private final coop.ui.CoopDialogController tacticalMapDialogs =
             new coop.ui.CoopDialogController("tacticalMap", this::nowMillis);
     private coop.ui.CoopTacticalMapDialogPlugin activeTacticalMapDialog;
+    /** Interactive partner battle reinforcement prompt (up to coop.allyJoinRange su). */
+    private final coop.ui.CoopDialogController allyJoinDialogs =
+            new coop.ui.CoopDialogController("allyJoin", this::nowMillis);
+    private final coop.ui.CoopDialogController chatDialogs =
+            new coop.ui.CoopDialogController("chat", this::nowMillis);
+    private final coop.ui.CoopDialogController tradeDialogs =
+            new coop.ui.CoopDialogController("trade", this::nowMillis);
+    private final coop.combat.CoopAllyReinforceCoordinator allyReinforce =
+            new coop.combat.CoopAllyReinforceCoordinator();
+    private com.fs.starfarer.api.campaign.BattleAPI lastOfferedBattle;
+    private coop.trade.CoopTradeSession activeTradeSession;
     /**
      * The marker itself: the per-session counter, both log lines, the partner's copy and the HUD
      * acknowledgement. Every seam is a bound {@code this::} reference rather than a lambda over a
@@ -1069,6 +1080,7 @@ public class CoopNetPump implements EveryFrameScript {
         // checkpoint above — a game load replaces the previous session's feed.
         this.intelFeed.setTacticalMapHook(battleBridge::isRemoteBattleActive,
                 this::requestTacticalMapDialog);
+        this.intelFeed.setCommsHooks(this::requestChatDialog, this::requestTradeDialog);
         this.sessionState.setMaxGuests(this.service.peerCapacity());
         coop.ui.CoopSessionIntelFeed.install(this.intelFeed);
         // Phase 28: same static-handle argument. The options page is constructed by the intel screen
@@ -1315,7 +1327,7 @@ public class CoopNetPump implements EveryFrameScript {
      */
     public java.util.List<coop.ui.CoopDialogController> coopDialogsForBridge() {
         return java.util.List.of(reconnectDialogs, desyncDialogs, lobbyDialogs, connectingDialogs,
-                markDialogs, tacticalMapDialogs);
+                markDialogs, allyJoinDialogs, tacticalMapDialogs, chatDialogs, tradeDialogs);
     }
 
     /** Bridge-only: the same predicate the pump gates gameplay replication on. */
@@ -3613,7 +3625,9 @@ public class CoopNetPump implements EveryFrameScript {
         // Last of the dialog controllers: it yields to every other coop dialog, and it has
         // anything to do only on the handful of frames after the marker key was pressed.
         tickMarkDialog();
+        tickAllyReinforce();
         tickTacticalMapDialog();
+        tickCommsDialogs();
         t = profiler.split(SECTION_LOBBY, t);
         // Phase 21: after the lobby, so the release that starts the session is already visible and
         // isSessionPlayable() is true on the very frame the first sample is taken.
@@ -4865,6 +4879,7 @@ public class CoopNetPump implements EveryFrameScript {
                  RELIABLE_ACK -> true;
             // Scoped to the connection the drop edge just tore down, or to state it just reset.
             case STORM_CONTROL, AMBIENT_CALL, COLONY_CONSENT_REQ, COLONY_CONSENT_RES, TRADE_SYNC,
+                 ALLY_JOIN_OFFER, ALLY_JOIN_REPLY,
                  INTERACTION_CLAIM, INTERACTION_ACCEPT, INTERACTION_REJECT, INTERACTION_RELEASE,
                  DIALOG_BEGIN, BATTLE_ORDER, BATTLE_ORDER_ACK,
                  LOBBY_HELLO, LOBBY_CHALLENGE, LOBBY_ACCEPT, LOBBY_REJECT, LOBBY_STATUS,
@@ -5639,6 +5654,8 @@ public class CoopNetPump implements EveryFrameScript {
             case TRADE_SYNC -> handleTradeSync(message);
             case CHAT_MSG -> handleChatMsg(message);
             case NEX_EVENT -> handleNexEvent(message);
+            case ALLY_JOIN_OFFER -> handleAllyJoinOffer(message);
+            case ALLY_JOIN_REPLY -> handleAllyJoinReply(message);
             case GUEST_SNAPSHOT -> handleGuestSnapshot(message);
             case SAVE_CHECKPOINT -> handleSaveCheckpoint(message);
             case SAVE_CHECKPOINT_RESULT -> handleSaveCheckpointResult(message);
@@ -9896,12 +9913,125 @@ public class CoopNetPump implements EveryFrameScript {
         try {
             coop.trade.CoopTradeSession.WireFrame frame =
                     coop.trade.CoopTradeSession.decodeOffer(CoopMessages.parseBody(message));
-            if (frame != null) {
-                coop.ui.CoopFeed.post("Co-op trade [" + frame.action() + "] updated by partner.",
-                        null, coop.ui.CoopFeed.Severity.IMPORTANT);
+            if (frame == null) {
+                return;
             }
+            String localId = sessionState.localPlayerId();
+            String remoteId = frame.playerId().isEmpty()
+                    ? (message.senderId() == null ? "partner" : message.senderId()) : frame.playerId();
+            if (activeTradeSession == null || !activeTradeSession.tradeId().equals(frame.tradeId())) {
+                activeTradeSession = new coop.trade.CoopTradeSession(frame.tradeId(), remoteId, localId);
+            }
+            switch (frame.action()) {
+                case "OFFER" -> activeTradeSession.updateOffer(remoteId, frame.offer().credits(),
+                        frame.offer().cargo(), frame.offer().shipMemberIds());
+                case "LOCK" -> activeTradeSession.lock(remoteId);
+                case "CONFIRM" -> activeTradeSession.confirm(remoteId, this::settleTradeTransfer);
+                case "CANCEL" -> activeTradeSession.cancel("partner-cancelled");
+                default -> {
+                }
+            }
+            coop.ui.CoopFeed.post("Co-op trade [" + frame.action() + "] updated by "
+                            + sessionState.guestDisplayName(remoteId) + ".",
+                    null, coop.ui.CoopFeed.Severity.IMPORTANT);
         } catch (RuntimeException | LinkageError ex) {
             CoopLog.warn(CoopNetPump.class, "Failed to handle TRADE_SYNC", ex);
+        }
+    }
+
+    /** Host or guest: nearby partner offers to reinforce a battle within {@code coop.allyJoinRange}. */
+    private void handleAllyJoinOffer(CoopMessages.Message message) {
+        if (droppedBeforeTheSession(message.type())) {
+            return;
+        }
+        try {
+            coop.combat.CoopAllyReinforceCoordinator.JoinOffer offer =
+                    coop.combat.CoopAllyReinforceCoordinator.decodeOffer(CoopMessages.parseBody(message));
+            if (offer == null) {
+                return;
+            }
+            if (!allyJoinMayRequest()) {
+                return;
+            }
+            coop.ui.CoopAllyJoinDialogPlugin plugin = new coop.ui.CoopAllyJoinDialogPlugin(
+                    offer, choice -> onLocalAllyJoinDecision(offer, choice));
+            allyJoinDialogs.request(plugin);
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to handle ALLY_JOIN_OFFER", ex);
+        }
+    }
+
+    private void onLocalAllyJoinDecision(coop.combat.CoopAllyReinforceCoordinator.JoinOffer offer,
+                                         coop.combat.CoopAllyReinforceCoordinator.JoinChoice choice) {
+        allyReinforce.noteLocalChoice(choice);
+        String localId = sessionState.localPlayerId();
+        coop.combat.CoopAllyReinforceCoordinator.JoinReply reply =
+                new coop.combat.CoopAllyReinforceCoordinator.JoinReply(offer.offerId(), localId, choice);
+        String encoded = coop.combat.CoopAllyReinforceCoordinator.encodeReply(reply);
+        CoopMessages.Message msg = CoopMessages.allyJoinReply(
+                sessionState.sessionId(), service.nextSeq(), clockMillis.getAsLong(), encoded);
+        if (service.role() == CoopConnectionRole.HOST && !offer.fighterPlayerId().isEmpty()) {
+            service.sendTo(offer.fighterPlayerId(), msg);
+        } else {
+            service.send(msg);
+        }
+        switch (choice) {
+            case JOIN_TACTICAL -> coop.ui.CoopFeed.post(
+                    "Co-op: joining " + offer.fighterName() + "'s battle — Tactical Map will open when combat starts.",
+                    null, coop.ui.CoopFeed.Severity.IMPORTANT);
+            case JOIN_WINGMAN -> coop.ui.CoopFeed.post(
+                    "Co-op: joining " + offer.fighterName() + "'s battle with Wingman direct piloting.",
+                    null, coop.ui.CoopFeed.Severity.IMPORTANT);
+            case JOIN_AI -> coop.ui.CoopFeed.post(
+                    "Co-op: joining " + offer.fighterName() + "'s battle with AI officers.",
+                    null, coop.ui.CoopFeed.Severity.IMPORTANT);
+            case DECLINE -> coop.ui.CoopFeed.post(
+                    "Co-op: declined battle reinforcement.",
+                    null, coop.ui.CoopFeed.Severity.INFO);
+        }
+    }
+
+    /** Fighting side receives the partner's choice and pulls their mirror into the battle if accepted. */
+    private void handleAllyJoinReply(CoopMessages.Message message) {
+        if (droppedBeforeTheSession(message.type())) {
+            return;
+        }
+        try {
+            coop.combat.CoopAllyReinforceCoordinator.JoinReply reply =
+                    coop.combat.CoopAllyReinforceCoordinator.decodeReply(CoopMessages.parseBody(message));
+            if (reply == null) {
+                return;
+            }
+            allyReinforce.consumeOutgoingOffer(reply.offerId());
+            if (!reply.choice().joinsBattle()) {
+                coop.ui.CoopFeed.post("Co-op: partner declined to join this battle.",
+                        null, coop.ui.CoopFeed.Severity.INFO);
+                return;
+            }
+            com.fs.starfarer.api.campaign.SectorAPI sector = com.fs.starfarer.api.Global.getSector();
+            com.fs.starfarer.api.campaign.CampaignFleetAPI player =
+                    sector == null ? null : sector.getPlayerFleet();
+            com.fs.starfarer.api.campaign.BattleAPI battle = player == null ? null : player.getBattle();
+            if (battle == null || player.getContainingLocation() == null) {
+                return;
+            }
+            for (com.fs.starfarer.api.campaign.CampaignFleetAPI fleet
+                    : player.getContainingLocation().getFleets()) {
+                if (fleet == null || fleet.getMemoryWithoutUpdate() == null) {
+                    continue;
+                }
+                if (!fleet.getMemoryWithoutUpdate().getBoolean(coop.fleet.CoopMirrorTags.PLAYER_MIRROR_TAG)) {
+                    continue;
+                }
+                if (coop.combat.CoopAllyReinforceCoordinator.joinMirrorIntoBattle(battle, fleet)) {
+                    coop.ui.CoopFeed.post("Co-op: " + fleet.getName() + " joined your battle ("
+                                    + reply.choice().name() + ")!",
+                            null, coop.ui.CoopFeed.Severity.IMPORTANT);
+                    break;
+                }
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to handle ALLY_JOIN_REPLY", ex);
         }
     }
 
@@ -10541,12 +10671,196 @@ public class CoopNetPump implements EveryFrameScript {
     }
 
     private void tickTacticalMapDialog() {
+        if (battleBridge.isRemoteBattleActive()
+                && !tacticalMapDialogs.isRequested()
+                && allyReinforce.consumeAutoOpenTacticalMap()) {
+            requestTacticalMapDialog();
+        }
         if (tacticalMapDialogs.isRequested()
                 && (!battleBridge.isRemoteBattleActive() || !tacticalMapMayRequest())) {
             closeTacticalMapDialog();
             return;
         }
         tacticalMapDialogs.tick();
+    }
+
+    private boolean allyJoinMayRequest() {
+        return coop.ui.CoopDialogArbiter.mayRequest(coop.ui.CoopDialogArbiter.ALLY_JOIN,
+                reconnectDialogs.isRequested() ? coop.ui.CoopDialogArbiter.RECONNECT : null,
+                desyncDialogs.isRequested() ? coop.ui.CoopDialogArbiter.DESYNC : null,
+                lobbyDialogs.isRequested() ? coop.ui.CoopDialogArbiter.LOBBY : null,
+                connectingDialogs.isRequested() ? coop.ui.CoopDialogArbiter.CONNECTING : null,
+                markDialogs.isRequested() ? coop.ui.CoopDialogArbiter.MARK : null);
+    }
+
+    /**
+     * Detects when the local player enters a pre-battle encounter and prompts any partner in the
+     * same system within {@code coop.allyJoinRange} (default 3,000 su) to join interactively.
+     */
+    private void tickAllyReinforce() {
+        long now = clockMillis.getAsLong();
+        allyReinforce.expireStaleOffers(now);
+        if (allyJoinDialogs.isRequested() && !allyJoinMayRequest()) {
+            allyJoinDialogs.close();
+        } else {
+            allyJoinDialogs.tick();
+        }
+        if (!isGameplaySessionActive()) {
+            lastOfferedBattle = null;
+            return;
+        }
+        try {
+            com.fs.starfarer.api.campaign.SectorAPI sector = com.fs.starfarer.api.Global.getSector();
+            com.fs.starfarer.api.campaign.CampaignFleetAPI player =
+                    sector == null ? null : sector.getPlayerFleet();
+            if (player == null) {
+                return;
+            }
+            com.fs.starfarer.api.campaign.BattleAPI battle = player.getBattle();
+            if (battle == null) {
+                lastOfferedBattle = null;
+                return;
+            }
+            if (battle == lastOfferedBattle) {
+                return;
+            }
+            lastOfferedBattle = battle;
+            com.fs.starfarer.api.campaign.LocationAPI loc = player.getContainingLocation();
+            if (loc == null) {
+                return;
+            }
+            int rangeSu = coop.combat.CoopAllyReinforceCoordinator.configuredJoinRangeSu();
+            String enemySummary = battle.getNonPlayerSide() != null && !battle.getNonPlayerSide().isEmpty()
+                    ? String.valueOf(battle.getNonPlayerSide().get(0).getNameWithFaction())
+                    : "hostile fleet";
+            boolean wingmanOk = service.role() == CoopConnectionRole.HOST
+                    && wingmanIntegration().isEnabledAndAvailable();
+            String fighterId = sessionState.localPlayerId();
+            String fighterName = sessionState.localName();
+
+            for (com.fs.starfarer.api.campaign.CampaignFleetAPI fleet : loc.getFleets()) {
+                if (fleet == null || fleet == player || fleet.getBattle() != null) {
+                    continue;
+                }
+                if (fleet.getMemoryWithoutUpdate() == null
+                        || !fleet.getMemoryWithoutUpdate().getBoolean(coop.fleet.CoopMirrorTags.PLAYER_MIRROR_TAG)) {
+                    continue;
+                }
+                float dist = com.fs.starfarer.api.util.Misc.getDistance(
+                        player.getLocation(), fleet.getLocation());
+                if (!coop.combat.CoopAllyReinforceCoordinator.isWithinJoinRange(dist, rangeSu)) {
+                    continue;
+                }
+                coop.combat.CoopAllyReinforceCoordinator.JoinOffer offer = allyReinforce.createOffer(
+                        fighterId, fighterName, enemySummary, dist, wingmanOk, now);
+                CoopMessages.Message msg = CoopMessages.allyJoinOffer(
+                        sessionState.sessionId(), service.nextSeq(), now,
+                        coop.combat.CoopAllyReinforceCoordinator.encodeOffer(offer));
+                service.send(msg);
+                coop.ui.CoopFeed.post("Co-op: sent battle join prompt to nearby partner ("
+                                + Math.round(dist) + " su).",
+                        null, coop.ui.CoopFeed.Severity.INFO);
+                break;
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Coop ally reinforcement check failed", ex);
+        }
+    }
+
+    /** Opens the in-game co-op chat dialog from Intel or Partner Comm Link. */
+    private void requestChatDialog() {
+        if (!isGameplaySessionActive()) {
+            return;
+        }
+        chatDialogs.request(new coop.ui.CoopChatDialog(chatService, this::sendLocalChatMessage));
+    }
+
+    private void sendLocalChatMessage(String text) {
+        if (!isGameplaySessionActive()) {
+            return;
+        }
+        long now = clockMillis.getAsLong();
+        coop.chat.CoopChatService.ChatMessage accepted = chatService.accept(
+                sessionState.localPlayerId(), sessionState.localName(), text, now);
+        if (accepted == null) {
+            return;
+        }
+        coop.ui.CoopFeed.post("[Chat] " + accepted.senderName() + ": " + accepted.text(),
+                null, coop.ui.CoopFeed.Severity.IMPORTANT);
+        service.send(CoopMessages.chatMsg(
+                sessionState.sessionId(), service.nextSeq(), now,
+                coop.chat.CoopChatService.encode(accepted)));
+    }
+
+    /** Opens the direct player-to-player trade dialog from Intel or Partner Comm Link. */
+    private void requestTradeDialog() {
+        if (!isGameplaySessionActive()) {
+            return;
+        }
+        String localId = sessionState.localPlayerId();
+        String partnerId = sessionState.remotePlayerId();
+        if (partnerId == null || partnerId.isBlank()) {
+            partnerId = "partner";
+        }
+        if (activeTradeSession == null
+                || activeTradeSession.state() == coop.trade.CoopTradeSession.State.COMMITTED
+                || activeTradeSession.state() == coop.trade.CoopTradeSession.State.CANCELLED) {
+            activeTradeSession = new coop.trade.CoopTradeSession(
+                    "trade-" + clockMillis.getAsLong(), localId, partnerId);
+        }
+        String partnerName = sessionState.guestDisplayName(partnerId);
+        coop.ui.CoopTradeDialogPlugin plugin = new coop.ui.CoopTradeDialogPlugin(
+                activeTradeSession,
+                localId,
+                partnerName,
+                wire -> service.send(CoopMessages.tradeSync(
+                        sessionState.sessionId(), service.nextSeq(), clockMillis.getAsLong(), wire)),
+                this::settleTradeTransfer);
+        tradeDialogs.request(plugin);
+    }
+
+    private boolean settleTradeTransfer(String fromPlayerId, String toPlayerId,
+                                        coop.trade.CoopTradeSession.Offer offer) {
+        try {
+            com.fs.starfarer.api.campaign.SectorAPI sector = com.fs.starfarer.api.Global.getSector();
+            com.fs.starfarer.api.campaign.CampaignFleetAPI fleet =
+                    sector == null ? null : sector.getPlayerFleet();
+            if (fleet == null || fleet.getCargo() == null) {
+                return true;
+            }
+            String localId = sessionState.localPlayerId();
+            if (localId.equals(fromPlayerId)) {
+                if (offer.credits() > 0L) {
+                    if (fleet.getCargo().getCredits().get() < offer.credits()) {
+                        return false;
+                    }
+                    fleet.getCargo().getCredits().subtract(offer.credits());
+                }
+                for (coop.trade.CoopTradeSession.CargoItem item : offer.cargo()) {
+                    if (item.quantity() > 0) {
+                        fleet.getCargo().removeCommodity(item.commodityId(), item.quantity());
+                    }
+                }
+            } else if (localId.equals(toPlayerId)) {
+                if (offer.credits() > 0L) {
+                    fleet.getCargo().getCredits().add(offer.credits());
+                }
+                for (coop.trade.CoopTradeSession.CargoItem item : offer.cargo()) {
+                    if (item.quantity() > 0) {
+                        fleet.getCargo().addCommodity(item.commodityId(), item.quantity());
+                    }
+                }
+            }
+            return true;
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Coop trade settlement failed", ex);
+            return false;
+        }
+    }
+
+    private void tickCommsDialogs() {
+        chatDialogs.tick();
+        tradeDialogs.tick();
     }
 
     /** Test read: whether the marker note box is being asked for. */

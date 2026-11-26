@@ -134,6 +134,12 @@
 	# true|false | applies: next connection attempt | Phase 34
 	"coop.wingmanBattles":true,
 
+	# Maximum distance in space units (700..10000 su, default 3000) at which a partner in the same
+	# star system is prompted to join a player's battle as an ally (tactical map, Wingman, or AI)
+	# without increasing the vanilla 500/700 su join radius for enemy NPCs.
+	# integer 700..10000 | applies: immediately | Phase 22 / 33
+	"coop.allyJoinRange":3000,
+
 	# How salvage from a jointly fought battle is divided: equal splits evenly among participants;
 	# pilot-keeps leaves salvage with the engaging pilot.
 	# equal|pilot-keeps | applies: next battle result | Phase 22

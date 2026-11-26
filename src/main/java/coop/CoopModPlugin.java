@@ -384,6 +384,15 @@ public class CoopModPlugin extends BaseModPlugin {
         // it edits live in the campaign's persistent data (policy) and in saves/common (local
         // preferences); the page itself is pure UI and holds nothing.
         CoopOptionsPage.ensureRegistered(Global.getSector());
+        // Transient Partner Comm Link plugin: clicking a partner's mirror fleet on the campaign map
+        // opens CoopPartnerCommPlugin (Direct Trade, Chat, Fight Alongside toggle).
+        try {
+            if (Global.getSector() != null) {
+                Global.getSector().registerPlugin(new coop.ui.CoopPartnerCampaignPlugin());
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopModPlugin.class, "Coop could not register partner comm plugin", ex);
+        }
         // Phase 30 dev tooling, dormant unless -Dcoop.debug.bridge=<port> is set: no socket, no log
         // line and no script when it is absent. Installed here rather than inside the pump because it
         // has to answer before and without a coop session, and always as a TRANSIENT script — it owns

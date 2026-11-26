@@ -401,7 +401,7 @@ Owns: every wire type, since the enum lives here.
 
 ## Wire Protocol
 
-Types are declared in `coop/net/CoopMessages.java` as `CoopMessages.Type`: **100 constants**. The
+Types are declared in `coop/net/CoopMessages.java` as `CoopMessages.Type`: **102 constants**. The
 envelope is flat JSON with six fields (optionally wrapped in `ENC1:<iv>:<ciphertext>` when
 `coop.encryption=aes-gcm` with `coop.password`). Structured payloads travel as primitive text using
 their record codec, including delimiter or length-prefixed formats:

@@ -251,6 +251,8 @@ public final class CoopOptionsRegistry {
     public static final String PAUSE_ON_GUEST_SCREENS = "coop.pauseOnGuestScreens";
     /** Phase 34: let The Wingman Project serve battles inside a coop campaign session. */
     public static final String WINGMAN_BATTLES = "coop.wingmanBattles";
+    /** Interactive partner battle reinforcement radius in space units (700..10000 su, default 3000). */
+    public static final String ALLY_JOIN_RANGE = "coop.allyJoinRange";
     public static final String ALLOW_MID_SESSION_JOIN = "coop.allowMidSessionJoin";
     public static final String LOOT_SPLIT = "coop.lootSplit";
     public static final String INCOME_SPLIT = "coop.incomeSplit";
@@ -366,6 +368,11 @@ public final class CoopOptionsRegistry {
                         + " of a coop session: the host opens Wingman from the campaign map, the guest"
                         + " connects Wingman to the host's PC and flies in the host's battles. off = the"
                         + " classic solo own-fleet model (the partner watches from the paused campaign)."));
+        options.add(intOption(ALLY_JOIN_RANGE, Tier.POLICY, "3000", false, 700, 10000, "Phase 22 / 33",
+                "immediately", ApplyBoundary.IMMEDIATE,
+                "Maximum distance in space units (700..10000 su, default 3000) at which a partner"
+                        + " in the same star system is offered to join a player's battle as an ally"
+                        + " (tactical map, Wingman, or AI) without enlarging NPC enemy join range."));
         options.add(enumOption(LOOT_SPLIT, Tier.POLICY, "equal", List.of("equal", "pilot-keeps"),
                 "Phase 22", "next battle result", ApplyBoundary.NEXT_BATTLE_RESULT,
                 "How salvage credit value from a battle joined by an ally is divided:"
