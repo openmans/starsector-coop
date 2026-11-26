@@ -26,6 +26,56 @@ public final class CoopVmparamsText {
     /** The entry that has to come first, semicolon included. Mirrors INSTALL.md section 3. */
     public static final String FORKS_ENTRY = "..\\mods\\coop\\jars\\coop-forks.jar;";
 
+    /** Default main class launched by a stock Starsector {@code vmparams}. */
+    public static final String DEFAULT_MAIN_CLASS = "com.fs.starfarer.StarfarerLauncher";
+
+    /**
+     * Canonical stock Starsector 0.98.5a-RC9 classpath jars (relative to {@code starsector-core}),
+     * in installer order. Used by {@link CoopInstallFixer#repairClasspath(String)} to rebuild a
+     * classpath corrupted by third-party {@code vmparams} tuning packs.
+     */
+    public static final List<String> CANONICAL_STOCK_JARS = List.of(
+            "janino.jar",
+            "commons-compiler.jar",
+            "commons-compiler-jdk.jar",
+            "starfarer.api.jar",
+            "starfarer_obf.jar",
+            "jogg-0.0.7.jar",
+            "jorbis-0.0.15.jar",
+            "json.jar",
+            "lwjgl.jar",
+            "jinput.jar",
+            "log4j-1.2.9.jar",
+            "lwjgl_util.jar",
+            "fs.sound_obf.jar",
+            "fs.common_obf.jar",
+            "xstream-1.4.10.jar",
+            "txw2-3.0.2.jar",
+            "jaxb-api-2.4.0-b180830.0359.jar",
+            "webp-imageio-0.1.6.jar");
+
+    /**
+     * Bare jar filenames that must be present on a valid Starsector classpath; missing any of them
+     * causes immediate startup crashes (e.g. {@code NoClassDefFoundError: janino} in ScriptStore).
+     */
+    public static final List<String> REQUIRED_STOCK_JARS = List.of(
+            "janino.jar",
+            "commons-compiler.jar",
+            "commons-compiler-jdk.jar",
+            "starfarer.api.jar",
+            "lwjgl.jar",
+            "lwjgl_util.jar",
+            "log4j-1.2.9.jar");
+
+    /** Verdict of {@link #classpathSanity(String)}. */
+    public record ClasspathSanity(boolean ok, String reason) {
+        public static final ClasspathSanity OK = new ClasspathSanity(true, "");
+
+        public static ClasspathSanity fail(String reason) {
+            return new ClasspathSanity(false, reason == null ? "broken classpath" : reason);
+        }
+    }
+
     private static final Pattern COOP_PROPERTY = Pattern.compile("-Dcoop\\.\\S+");
 
     private CoopVmparamsText() {
@@ -63,8 +113,8 @@ public final class CoopVmparamsText {
      * install.
      */
     public static boolean hasForksFirstOnClasspath(String text) {
-        List<String> entries = classpathEntries(text);
-        return !entries.isEmpty() && isForksEntry(entries.get(0));
+        String first = firstClasspathEntry(text);
+        return first != null && isForksEntry(first);
     }
 
     /**
@@ -97,7 +147,112 @@ public final class CoopVmparamsText {
         if (entries.isEmpty()) {
             return null;
         }
-        return unquote(entries.get(0).trim());
+        String first = entries.get(0).trim();
+        // A tuning pack can emit `"G:\...\coop-forks.jar" janino.jar` with a space instead of `;`.
+        // Extract the leading quoted token so forks detection still recognises the first entry while
+        // classpathSanity() flags the broken quoting/space.
+        if (first.startsWith("\"")) {
+            int closing = first.indexOf('"', 1);
+            if (closing > 1) {
+                first = first.substring(0, closing + 1);
+            }
+        }
+        return unquote(first);
+    }
+
+    /**
+     * Structural integrity check for the {@code -classpath} segment of {@code vmparams}. Catches
+     * corruption left by third-party tuning packs: embedded double quotes, whitespace splitting the
+     * classpath before the main class, absolute drive/UNC paths, non-{@code .jar} entries (such as
+     * a path to {@code vmparams} itself), and missing required stock jars.
+     */
+    public static ClasspathSanity classpathSanity(String text) {
+        String raw = classpathValue(text);
+        if (raw == null) {
+            return ClasspathSanity.fail("vmparams has no \" -classpath \" entry");
+        }
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) {
+            return ClasspathSanity.fail("classpath value is empty");
+        }
+        // Strip the trailing main-class token (last whitespace-separated token if it is not a .jar).
+        int lastSpace = trimmed.lastIndexOf(' ');
+        String cpPart = lastSpace > 0 ? trimmed.substring(0, lastSpace).trim() : trimmed;
+        String tailToken = lastSpace > 0 ? trimmed.substring(lastSpace + 1).trim() : "";
+        if (!tailToken.isEmpty() && tailToken.toLowerCase(java.util.Locale.ROOT).endsWith(".jar")) {
+            cpPart = trimmed;
+        }
+
+        if (cpPart.indexOf('"') >= 0) {
+            return ClasspathSanity.fail(
+                    "classpath contains double quotes (breaks launch when install path has spaces)");
+        }
+        for (int i = 0; i < cpPart.length(); i++) {
+            if (Character.isWhitespace(cpPart.charAt(i))) {
+                return ClasspathSanity.fail(
+                        "classpath contains whitespace before the main class (splits JVM arguments)");
+            }
+        }
+
+        String[] tokens = cpPart.split(";", -1);
+        java.util.Set<String> bareNames = new java.util.HashSet<>();
+        for (String token : tokens) {
+            String entry = token.trim();
+            if (entry.isEmpty()) {
+                return ClasspathSanity.fail("classpath contains an empty entry");
+            }
+            if (isAbsolutePathEntry(entry)) {
+                return ClasspathSanity.fail("classpath contains an absolute path: " + entry);
+            }
+            String norm = normalise(entry);
+            if (!norm.endsWith(".jar")) {
+                return ClasspathSanity.fail("classpath contains a non-jar entry: " + entry);
+            }
+            int slash = norm.lastIndexOf('\\');
+            bareNames.add(slash >= 0 ? norm.substring(slash + 1) : norm);
+        }
+
+        List<String> missing = new ArrayList<>();
+        for (String required : REQUIRED_STOCK_JARS) {
+            if (!bareNames.contains(required.toLowerCase(java.util.Locale.ROOT))) {
+                missing.add(required);
+            }
+        }
+        if (!missing.isEmpty()) {
+            return ClasspathSanity.fail("classpath is missing required stock jar(s): "
+                    + String.join(", ", missing));
+        }
+        return ClasspathSanity.OK;
+    }
+
+    /** Extracts the main-class token at the end of {@code vmparams}, or {@link #DEFAULT_MAIN_CLASS}. */
+    static String extractMainClass(String text) {
+        String raw = classpathValue(text);
+        if (raw == null) {
+            return DEFAULT_MAIN_CLASS;
+        }
+        String trimmed = raw.trim();
+        int lastSpace = trimmed.lastIndexOf(' ');
+        if (lastSpace > 0 && lastSpace < trimmed.length() - 1) {
+            String candidate = trimmed.substring(lastSpace + 1).trim();
+            if (!candidate.isEmpty()
+                    && !candidate.contains(";")
+                    && !candidate.contains("\"")
+                    && !candidate.toLowerCase(java.util.Locale.ROOT).endsWith(".jar")) {
+                return candidate;
+            }
+        }
+        return DEFAULT_MAIN_CLASS;
+    }
+
+    private static boolean isAbsolutePathEntry(String entry) {
+        if (entry.startsWith("\\\\") || entry.startsWith("//")) {
+            return true;
+        }
+        return entry.length() >= 3
+                && Character.isLetter(entry.charAt(0))
+                && entry.charAt(1) == ':'
+                && (entry.charAt(2) == '\\' || entry.charAt(2) == '/');
     }
 
     /**

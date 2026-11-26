@@ -143,6 +143,30 @@ public final class CoopInstallFixer {
         return head + CoopVmparamsText.FORKS_ENTRY + String.join(";", entries);
     }
 
+    /**
+     * Rebuilds a corrupted {@code -classpath} segment (for example one broken by a third-party
+     * {@code vmparams} tuning pack that injected quoted absolute paths or non-jar files) into the
+     * canonical relative list with {@link CoopVmparamsText#FORKS_ENTRY} first, while keeping all JVM
+     * tuning flags, {@code -D} properties (including {@code -Dcoop.*}), and the main class intact.
+     *
+     * <p>Idempotent: running {@code repairClasspath} twice yields the exact same string.
+     *
+     * @throws IllegalArgumentException when {@link #vmparamsRefusal} would refuse the text
+     */
+    public static String repairClasspath(String text) {
+        String refusal = vmparamsRefusal(text);
+        if (refusal != null) {
+            throw new IllegalArgumentException(refusal);
+        }
+        String body = stripTrailingNewlines(text);
+        int marker = body.indexOf(CoopVmparamsText.CLASSPATH_MARKER);
+        int valueStart = marker + CoopVmparamsText.CLASSPATH_MARKER.length();
+        String head = body.substring(0, valueStart);
+        String mainClass = CoopVmparamsText.extractMainClass(body);
+        String canonicalJars = String.join(";", CoopVmparamsText.CANONICAL_STOCK_JARS);
+        return head + CoopVmparamsText.FORKS_ENTRY + canonicalJars + " " + mainClass;
+    }
+
     /** Trailing newlines an editor may have added. Nothing else about the text is normalised. */
     private static String stripTrailingNewlines(String text) {
         int end = text.length();
@@ -293,7 +317,8 @@ public final class CoopInstallFixer {
             LOG.warn("Refusing to patch " + file + ": " + refusal);
             return refused(refusal + " " + CoopVmparamsText.forksFixText());
         }
-        String patched = patchVmparams(text);
+        boolean classpathBroken = !CoopVmparamsText.classpathSanity(text).ok();
+        String patched = classpathBroken ? repairClasspath(text) : patchVmparams(text);
         if (patched.equals(stripTrailingNewlines(text))) {
             return new Result(false, false, "vmparams already has " + CoopVmparamsText.FORKS_ENTRY
                     + " first on the classpath; nothing to change.");

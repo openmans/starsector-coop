@@ -34,8 +34,8 @@ class CoopInstallFixerTest {
                     + " -Dcom.fs.starfarer.settings.paths.logs=.";
 
     private static final String STOCK_CLASSPATH =
-            "janino.jar;commons-compiler.jar;starfarer.api.jar;starfarer_obf.jar;json.jar;lwjgl.jar;"
-                    + "log4j-1.2.9.jar;xstream-1.4.10.jar com.fs.starfarer.StarfarerLauncher";
+            String.join(";", CoopVmparamsText.CANONICAL_STOCK_JARS)
+                    + " com.fs.starfarer.StarfarerLauncher";
 
     private static final String STOCK = FLAGS_TAIL + CoopVmparamsText.CLASSPATH_MARKER
             + STOCK_CLASSPATH;
@@ -344,6 +344,47 @@ class CoopInstallFixerTest {
         for (CoopInstallCheck.Row row : CoopInstallCheck.rows(inputs)) {
             assertNull(row.fixable(), row.toString());
         }
+    }
+
+    @Test
+    void repairClasspathFixesBothIncidentSamplesPreservesFlagsAndIsIdempotent() {
+        String sample1 = CoopVmparamsTextTest.INCIDENT_SAMPLE_1;
+        String sample2 = CoopVmparamsTextTest.INCIDENT_SAMPLE_2;
+
+        String fixed1 = CoopInstallFixer.repairClasspath(sample1);
+        String fixed2 = CoopInstallFixer.repairClasspath(sample2);
+
+        assertEquals(fixed1, fixed2, "both samples share the same flags and must converge to identical canonical text");
+        assertTrue(CoopVmparamsText.hasForksFirstOnClasspath(fixed1));
+        assertTrue(CoopVmparamsText.classpathSanity(fixed1).ok(), CoopVmparamsText.classpathSanity(fixed1).reason());
+        assertTrue(fixed1.contains("-XX:+UseAVX=3"), "tuning flags must be preserved");
+        assertTrue(fixed1.contains("-XX:+UseShenandoahGC"), "GC flags must be preserved");
+        assertTrue(fixed1.endsWith(" com.fs.starfarer.StarfarerLauncher"), fixed1);
+        assertFalse(fixed1.contains("G:\\Starsector"), "quoted/absolute junk must be removed");
+        assertEquals(fixed1, CoopInstallFixer.repairClasspath(fixed1), "repairClasspath must be idempotent");
+    }
+
+    @Test
+    void repairClasspathPreservesCoopPropertiesAndApplyWritesBackupOnce() throws IOException {
+        String brokenWithCoopProp = CoopVmparamsTextTest.INCIDENT_SAMPLE_1.replace(
+                CoopVmparamsText.CLASSPATH_MARKER,
+                " -Dcoop.hostPort=7777" + CoopVmparamsText.CLASSPATH_MARKER);
+        writeVmparams(brokenWithCoopProp);
+
+        CoopInstallFixer.Result first = CoopInstallFixer.apply(layout, CoopInstallFixer.Target.VMPARAMS);
+        assertTrue(first.changed(), first.message());
+
+        String onDisk = readVmparams();
+        assertTrue(CoopVmparamsText.classpathSanity(onDisk).ok());
+        assertTrue(CoopVmparamsText.hasForksFirstOnClasspath(onDisk));
+        assertEquals(java.util.List.of("-Dcoop.hostPort=7777"),
+                CoopVmparamsText.staleCoopProperties(onDisk));
+        assertEquals(brokenWithCoopProp, Files.readString(
+                CoopInstallFixer.vmparamsBackup(layout.vmparams()).toPath(),
+                StandardCharsets.ISO_8859_1));
+
+        CoopInstallFixer.Result second = CoopInstallFixer.apply(layout, CoopInstallFixer.Target.VMPARAMS);
+        assertFalse(second.changed(), "second apply must be a no-op");
     }
 
     private void writeVmparams(String text) throws IOException {

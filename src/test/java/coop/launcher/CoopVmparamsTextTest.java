@@ -26,8 +26,24 @@ class CoopVmparamsTextTest {
                     + " -Dcom.fs.starfarer.settings.paths.logs=.";
 
     private static final String STOCK_CLASSPATH =
-            "janino.jar;commons-compiler.jar;starfarer.api.jar;starfarer_obf.jar;json.jar;lwjgl.jar;"
-                    + "log4j-1.2.9.jar;xstream-1.4.10.jar com.fs.starfarer.StarfarerLauncher";
+            String.join(";", CoopVmparamsText.CANONICAL_STOCK_JARS)
+                    + " com.fs.starfarer.StarfarerLauncher";
+
+    private static final String TUNING_FLAGS =
+            "java.exe -noverify -XX:+UseAVX=3 -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu"
+                    + " -XX:+ZeroTLAB -Xmx2048m -Xms2048m"
+                    + " -Dcom.fs.starfarer.settings.paths.saves=..\\\\saves"
+                    + " -Dcom.fs.starfarer.settings.paths.logs=.";
+
+    /** Incident sample 1: RU tuning pack injected quoted absolute path to vmparams itself. */
+    static final String INCIDENT_SAMPLE_1 = TUNING_FLAGS + CoopVmparamsText.CLASSPATH_MARKER
+            + "..\\mods\\coop\\jars\\coop-forks.jar;\"G:\\Starsector 0.98.5\\Starsector\\vmparams\" "
+            + STOCK_CLASSPATH;
+
+    /** Incident sample 2: tuning pack template put quoted absolute forks path with space before janino. */
+    static final String INCIDENT_SAMPLE_2 = TUNING_FLAGS + CoopVmparamsText.CLASSPATH_MARKER
+            + "\"G:\\Starsector 0.98.5\\Starsector\\mods\\coop\\jars\\coop-forks.jar\" "
+            + STOCK_CLASSPATH;
 
     /** A stock install: no coop entry, no coop properties. */
     private static final String STOCK =
@@ -159,5 +175,47 @@ class CoopVmparamsTextTest {
 
         assertTrue(fix.contains("-Dcoop.hostPort=7777"), fix);
         assertTrue(fix.contains("-Dcoop.debug.bridge=7801"), fix);
+    }
+
+    @Test
+    void classpathSanityPassesOnStockAndPatchedCanonicalLines() {
+        assertTrue(CoopVmparamsText.classpathSanity(STOCK).ok());
+        assertTrue(CoopVmparamsText.classpathSanity(PATCHED).ok());
+        assertTrue(CoopVmparamsText.classpathSanity(LAUNCH_SCRIPT_PATCHED).ok());
+    }
+
+    @Test
+    void incidentSamplesKeepForksFirstTrueButFailClasspathSanity() {
+        assertTrue(CoopVmparamsText.hasForksFirstOnClasspath(INCIDENT_SAMPLE_1));
+        assertTrue(CoopVmparamsText.hasForksFirstOnClasspath(INCIDENT_SAMPLE_2));
+
+        CoopVmparamsText.ClasspathSanity s1 = CoopVmparamsText.classpathSanity(INCIDENT_SAMPLE_1);
+        assertFalse(s1.ok(), "sample 1 must fail sanity");
+        assertTrue(s1.reason().contains("quote"), s1.reason());
+
+        CoopVmparamsText.ClasspathSanity s2 = CoopVmparamsText.classpathSanity(INCIDENT_SAMPLE_2);
+        assertFalse(s2.ok(), "sample 2 must fail sanity");
+        assertTrue(s2.reason().contains("quote"), s2.reason());
+    }
+
+    @Test
+    void classpathSanityRejectsAbsolutePathsNonJarEntriesAndMissingStockJars() {
+        String abs = FLAGS_TAIL + CoopVmparamsText.CLASSPATH_MARKER
+                + "K:\\Starsector\\mods\\coop\\jars\\coop-forks.jar;" + STOCK_CLASSPATH;
+        assertFalse(CoopVmparamsText.classpathSanity(abs).ok());
+
+        String unc = FLAGS_TAIL + CoopVmparamsText.CLASSPATH_MARKER
+                + "\\\\server\\share\\coop-forks.jar;" + STOCK_CLASSPATH;
+        assertFalse(CoopVmparamsText.classpathSanity(unc).ok());
+
+        String nonJar = FLAGS_TAIL + CoopVmparamsText.CLASSPATH_MARKER
+                + CoopVmparamsText.FORKS_ENTRY + "..\\vmparams;" + STOCK_CLASSPATH;
+        assertFalse(CoopVmparamsText.classpathSanity(nonJar).ok());
+
+        String missingJanino = FLAGS_TAIL + CoopVmparamsText.CLASSPATH_MARKER
+                + CoopVmparamsText.FORKS_ENTRY + "starfarer.api.jar;lwjgl.jar com.fs.starfarer.StarfarerLauncher";
+        CoopVmparamsText.ClasspathSanity missing = CoopVmparamsText.classpathSanity(missingJanino);
+        assertFalse(missing.ok());
+        assertTrue(missing.reason().contains("janino.jar"), missing.reason());
     }
 }

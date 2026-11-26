@@ -762,6 +762,8 @@ public class CoopNetPump implements EveryFrameScript {
     private CoopWingmanIntegration wingmanIntegration;
     private coop.campaign.CoopBountyAuthority bountyAuthority;
     private boolean bountyReplicationStreaming;
+    private coop.campaign.CoopStorySyncAuthority storyAuthority;
+    private boolean storyReplicationStreaming;
     private final CoopNpcThreatWatcher npcThreatWatcher;
     private final CoopBattleResultReconciler battleResultReconciler;
     /**
@@ -3681,6 +3683,7 @@ public class CoopNetPump implements EveryFrameScript {
         t = profiler.split(SECTION_NPC_THREAT_WATCHER, t);
         syncBaseReplication();
         syncBountyReplication();
+        syncStoryReplication();
         t = profiler.split(SECTION_BASE_REPLICATION, t);
         syncBarGeneration();
         t = profiler.split(SECTION_BAR_SUPPRESSOR, t);
@@ -4962,6 +4965,9 @@ public class CoopNetPump implements EveryFrameScript {
         if (bountyAuthority != null) {
             bountyAuthority.rearmBroadcast();
         }
+        if (storyAuthority != null) {
+            storyAuthority.rearmBroadcast();
+        }
         datagramWatermark.reset();
         datagramRedundancy.reset();
         // Phase 20 M4: the returning peer holds no roster, so this side owes it one before its next
@@ -5061,6 +5067,9 @@ public class CoopNetPump implements EveryFrameScript {
                 stormAuthority.rearmFullBroadcast();
         if (bountyAuthority != null) {
             bountyAuthority.rearmBroadcast();
+        }
+        if (storyAuthority != null) {
+            storyAuthority.rearmBroadcast();
         }
                 latestTimeSnapshot = null;
                 lastReconciledTimeSnapshot = null;
@@ -9827,15 +9836,55 @@ public class CoopNetPump implements EveryFrameScript {
             return;
         }
         try {
-            com.fs.starfarer.api.campaign.SectorAPI sector = com.fs.starfarer.api.Global.getSector();
-            if (sector != null && sector.getMemoryWithoutUpdate() != null) {
-                java.util.Map<String, coop.campaign.CoopStorySyncFramework.StoryFlag> flags =
-                        coop.campaign.CoopStorySyncFramework.decode(CoopMessages.parseBody(message));
-                coop.campaign.CoopStorySyncFramework.applyAuthoritative(
-                        flags, coop.campaign.CoopStorySyncFramework.wrapMemory(sector.getMemoryWithoutUpdate()));
-            }
+            storyAuthority().applyGuestBody(CoopMessages.parseBody(message));
         } catch (RuntimeException | LinkageError ex) {
             CoopLog.warn(CoopNetPump.class, "Failed to apply STORY_STATE", ex);
+        }
+    }
+
+    /** Lazily created story-flag sync authority; mirrors {@link #bountyAuthority()}. */
+    private coop.campaign.CoopStorySyncAuthority storyAuthority() {
+        if (storyAuthority == null) {
+            storyAuthority = new coop.campaign.CoopStorySyncAuthority(
+                    clockMillis,
+                    body -> {
+                        if (service.role() != CoopConnectionRole.HOST || !service.isConnected()
+                                || !isGameplaySessionActive()) {
+                            return;
+                        }
+                        CoopMessages.Message msg = CoopMessages.storyState(
+                                sessionState.sessionId(), service.nextSeq(),
+                                clockMillis.getAsLong(), body);
+                        service.send(msg);
+                        log("outbound", msg);
+                    });
+        }
+        return storyAuthority;
+    }
+
+    private void syncStoryReplication() {
+        boolean streaming = shouldStreamFleet();
+        boolean sessionHeld = streaming || reconnect.active();
+        if (!sessionHeld) {
+            if (storyReplicationStreaming) {
+                if (storyAuthority != null) {
+                    storyAuthority.dispose();
+                }
+                storyReplicationStreaming = false;
+            }
+            return;
+        }
+        if (!storyReplicationStreaming) {
+            storyReplicationStreaming = true;
+            if (storyAuthority != null) {
+                storyAuthority.rearmBroadcast();
+            }
+        }
+        if (!streaming) {
+            return;
+        }
+        if (service.role() == CoopConnectionRole.HOST && peerProvenForOutbound()) {
+            storyAuthority().tickHost();
         }
     }
 

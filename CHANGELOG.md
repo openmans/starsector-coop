@@ -87,6 +87,12 @@ battle-result path.
     (`CoopCipher`, `coop.encryption`), standalone CGNAT TCP relay (`CoopRelayProtocol` +
     `CoopRelayServer`, `coop.relayAddress`, `coop-launcher.jar --relay <port>`), and optional
     Nexerelin diplomacy/invasion sync adapter (`CoopNexerelinAdapter`, `NEX_EVENT`).
+  - **Launcher `vmparams` classpath integrity guard & repair:** added `CoopVmparamsText.classpathSanity`
+    and a blocking red `vmparams classpath integrity` check in `CoopInstallCheck` that catches
+    third-party tuning-pack corruption (double quotes, embedded spaces, absolute drive/UNC paths,
+    non-`.jar` entries, missing required stock jars such as `janino.jar`), paired with idempotent
+    `CoopInstallFixer.repairClasspath` (preserving all JVM tuning flags, `-Dcoop.*` properties, and
+    the main class, with one-time `vmparams.backup`).
 
 ## 0.2.2 (community port to 0.98.5a-RC9)
 

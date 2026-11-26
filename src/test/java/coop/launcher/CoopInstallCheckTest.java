@@ -28,7 +28,8 @@ class CoopInstallCheckTest {
             "17   [main] INFO  com.fs.starfarer.settings.StarfarerSettings  - Reading settings");
 
     private static final String CLASSPATH_TAIL =
-            "janino.jar;starfarer.api.jar;json.jar com.fs.starfarer.StarfarerLauncher";
+            String.join(";", CoopVmparamsText.CANONICAL_STOCK_JARS)
+                    + " com.fs.starfarer.StarfarerLauncher";
 
     private static final String GOOD_VMPARAMS =
             "java.exe -Xmx2048m" + CoopVmparamsText.CLASSPATH_MARKER
@@ -534,5 +535,36 @@ class CoopInstallCheckTest {
                 CoopInstallCheck.enabledModsContains("{\"enabledMods\":[\"nex\"]}", "coop"));
         assertEquals(Boolean.FALSE, CoopInstallCheck.enabledModsContains("{}", "coop"));
         assertNull(CoopInstallCheck.enabledModsContains("nonsense", "coop"));
+    }
+
+    @Test
+    void brokenTunerClasspathProducesRedFailRowThatDisappearsAfterRepair() {
+        for (String broken : List.of(
+                CoopVmparamsTextTest.INCIDENT_SAMPLE_1,
+                CoopVmparamsTextTest.INCIDENT_SAMPLE_2)) {
+            CoopInstallCheck.Inputs brokenIn = new CoopInstallCheck.Inputs(
+                    "G:\\Starsector 0.98.5\\Starsector", true, true, true, true, true,
+                    broken, "{\"enabledMods\":[\"coop\"]}", "0.2.4", "0.2.4", null,
+                    MOD_GAME_VERSION, MOD_GAME_VERSION, false, COMMIT, "0.2.4", COMMIT,
+                    true, "", true, "", "");
+            List<CoopInstallCheck.Row> beforeRows = CoopInstallCheck.rows(brokenIn);
+            CoopInstallCheck.Row sanityRow = row(beforeRows, "vmparams classpath integrity");
+            assertNotNull(sanityRow);
+            assertEquals(CoopInstallCheck.Status.FAIL, sanityRow.status(), sanityRow.toString());
+            assertEquals(CoopInstallFixer.Target.VMPARAMS, sanityRow.fixable());
+            assertTrue(CoopInstallCheck.blocked(beforeRows));
+
+            String repaired = CoopInstallFixer.repairClasspath(broken);
+            CoopInstallCheck.Inputs fixedIn = new CoopInstallCheck.Inputs(
+                    "G:\\Starsector 0.98.5\\Starsector", true, true, true, true, true,
+                    repaired, "{\"enabledMods\":[\"coop\"]}", "0.2.4", "0.2.4", null,
+                    MOD_GAME_VERSION, MOD_GAME_VERSION, false, COMMIT, "0.2.4", COMMIT,
+                    true, "", true, "", "");
+            List<CoopInstallCheck.Row> afterRows = CoopInstallCheck.rows(fixedIn);
+            CoopInstallCheck.Row afterSanity = row(afterRows, "vmparams classpath integrity");
+            assertNotNull(afterSanity);
+            assertEquals(CoopInstallCheck.Status.OK, afterSanity.status(), afterSanity.toString());
+            assertFalse(CoopInstallCheck.blocked(afterRows));
+        }
     }
 }

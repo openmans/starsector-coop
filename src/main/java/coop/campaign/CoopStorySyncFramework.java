@@ -1,6 +1,7 @@
 package coop.campaign;
 
 import com.fs.starfarer.api.campaign.rules.MemoryAPI;
+import coop.handshake.CoopChecksum;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -9,6 +10,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 
 /**
@@ -17,7 +19,18 @@ import java.util.TreeMap;
  * ({@code $sd*}, {@code $usurpers*}, {@code $lionsGuard*}).
  *
  * <p>Provides both the live wire codec ({@code STORY_STATE}) and a pure diff/divergence verifier
- * so functional tests and in-game sync share the exact same prefix whitelist and type preservation.
+ * so functional tests and in-game sync share the exact same prefix whitelist, primitive-value
+ * filter, and type preservation.
+ *
+ * <p><b>Safety filters:</b>
+ * <ul>
+ *   <li>Only scalar primitive values ({@code Boolean}, {@code Integer}, {@code Long}, finite
+ *       {@code Float}/{@code Double}, {@code String}) are ever captured or overwritten. Starsector
+ *       stores live Java mission/entity handles under keys such as {@code $gaATG_ref} and
+ *       {@code $sdtu_ref}; serializing those as strings would corrupt guest memory.</li>
+ *   <li>Keys ending with {@code _ref} (case-insensitive) and keys owned by dedicated sync paths
+ *       ({@code $gatesActive}, owned by {@code GATE_ACTIVATED}) are excluded explicitly.</li>
+ * </ul>
  */
 public final class CoopStorySyncFramework {
 
@@ -29,9 +42,16 @@ public final class CoopStorySyncFramework {
             "$usurpers",
             "$lionsGuard");
 
+    /** Lowercased keys owned by other sync authorities and therefore excluded from STORY_STATE. */
+    public static final Set<String> EXCLUDED_KEYS = Set.of("$gatesactive");
+
+    /** Hard upper bound on captured flags so a rogue mod cannot blow up TCP framing. */
+    public static final int MAX_FLAGS = 2048;
+
     public enum ValueKind {
         BOOL,
         INT,
+        LONG,
         FLOAT,
         STRING
     }
@@ -47,23 +67,43 @@ public final class CoopStorySyncFramework {
             return switch (kind) {
                 case BOOL -> Boolean.parseBoolean(encodedValue);
                 case INT -> Integer.parseInt(encodedValue);
+                case LONG -> Long.parseLong(encodedValue);
                 case FLOAT -> Float.parseFloat(encodedValue);
                 case STRING -> encodedValue;
             };
         }
 
-        public static StoryFlag of(String key, Object value) {
+        /**
+         * Converts a syncable scalar value into a {@link StoryFlag}, or returns {@code null} when
+         * {@code value} is not a safe primitive/scalar (for example a {@code HubMission} or entity
+         * object handle stored in Starsector's {@link MemoryAPI}).
+         */
+        public static StoryFlag tryOf(String key, Object value) {
+            if (!isSyncableValue(value)) {
+                return null;
+            }
             if (value instanceof Boolean b) {
                 return new StoryFlag(key, ValueKind.BOOL, Boolean.toString(b));
             }
             if (value instanceof Integer i) {
                 return new StoryFlag(key, ValueKind.INT, Integer.toString(i));
             }
+            if (value instanceof Long l) {
+                return new StoryFlag(key, ValueKind.LONG, Long.toString(l));
+            }
             if (value instanceof Float f) {
                 return new StoryFlag(key, ValueKind.FLOAT, Float.toString(f));
             }
             if (value instanceof Double d) {
                 return new StoryFlag(key, ValueKind.FLOAT, Float.toString(d.floatValue()));
+            }
+            return new StoryFlag(key, ValueKind.STRING, (String) value);
+        }
+
+        public static StoryFlag of(String key, Object value) {
+            StoryFlag scalar = tryOf(key, value);
+            if (scalar != null) {
+                return scalar;
             }
             return new StoryFlag(key, ValueKind.STRING, String.valueOf(value));
         }
@@ -89,6 +129,28 @@ public final class CoopStorySyncFramework {
     private CoopStorySyncFramework() {
     }
 
+    /**
+     * Returns {@code true} only for scalar values that are safe to serialize over {@code STORY_STATE}
+     * and write back into Starsector's {@link MemoryAPI}. Arbitrary Java objects (such as
+     * {@code HubMission}, {@code PersonAPI}, or entity references) return {@code false}.
+     */
+    public static boolean isSyncableValue(Object value) {
+        if (value == null) {
+            return false;
+        }
+        if (value instanceof Boolean || value instanceof Integer || value instanceof Long
+                || value instanceof String) {
+            return true;
+        }
+        if (value instanceof Float f) {
+            return Float.isFinite(f);
+        }
+        if (value instanceof Double d) {
+            return Double.isFinite(d);
+        }
+        return false;
+    }
+
     public static boolean isTrackedKey(String key) {
         return isTrackedKey(key, DEFAULT_PREFIXES);
     }
@@ -98,6 +160,9 @@ public final class CoopStorySyncFramework {
             return false;
         }
         String lower = key.toLowerCase(Locale.ROOT);
+        if (EXCLUDED_KEYS.contains(lower) || lower.endsWith("_ref")) {
+            return false;
+        }
         for (String prefix : prefixes) {
             if (lower.startsWith(prefix.toLowerCase(Locale.ROOT))) {
                 return true;
@@ -106,7 +171,7 @@ public final class CoopStorySyncFramework {
         return false;
     }
 
-    /** Captures all whitelisted storyline flags from {@code memory} in deterministic key order. */
+    /** Captures all whitelisted scalar storyline flags from {@code memory} in deterministic key order. */
     public static Map<String, StoryFlag> capture(FlagMemory memory) {
         return capture(memory, DEFAULT_PREFIXES);
     }
@@ -117,11 +182,24 @@ public final class CoopStorySyncFramework {
         }
         TreeMap<String, StoryFlag> out = new TreeMap<>();
         for (Map.Entry<String, Object> e : memory.entries().entrySet()) {
-            if (e.getValue() != null && isTrackedKey(e.getKey(), prefixes)) {
-                out.put(e.getKey(), StoryFlag.of(e.getKey(), e.getValue()));
+            if (!isTrackedKey(e.getKey(), prefixes)) {
+                continue;
+            }
+            StoryFlag flag = StoryFlag.tryOf(e.getKey(), e.getValue());
+            if (flag == null) {
+                continue;
+            }
+            out.put(e.getKey(), flag);
+            if (out.size() >= MAX_FLAGS) {
+                break;
             }
         }
         return Collections.unmodifiableMap(out);
+    }
+
+    /** Deterministic SHA-256 digest of the encoded flag map, used for change-only broadcasting. */
+    public static String contentHash(Map<String, StoryFlag> flags) {
+        return CoopChecksum.sha256Text(encode(flags));
     }
 
     /**
@@ -214,11 +292,23 @@ public final class CoopStorySyncFramework {
             }
             try {
                 String key = f.get(0);
+                if (!isTrackedKey(key)) {
+                    continue;
+                }
                 ValueKind kind = ValueKind.valueOf(f.get(1));
                 String val = f.get(2);
-                out.put(key, new StoryFlag(key, kind, val));
+                StoryFlag flag = new StoryFlag(key, kind, val);
+                // Validate numeric parsing upfront so applyAuthoritative never throws on a bad frame.
+                Object parsed = flag.toJavaValue();
+                if (!isSyncableValue(parsed)) {
+                    continue;
+                }
+                out.put(key, flag);
+                if (out.size() >= MAX_FLAGS) {
+                    break;
+                }
             } catch (IllegalArgumentException ignored) {
-                // skip unknown kind
+                // skip unknown kind or malformed numeric value
             }
         }
         return Collections.unmodifiableMap(out);
@@ -234,7 +324,7 @@ public final class CoopStorySyncFramework {
                 for (String key : memory.getKeys()) {
                     if (isTrackedKey(key)) {
                         Object v = memory.get(key);
-                        if (v != null) {
+                        if (isSyncableValue(v)) {
                             copy.put(key, v);
                         }
                     }

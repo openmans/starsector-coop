@@ -121,6 +121,14 @@ Rules for the edit:
   anything else on it. A `vmparams` that arrives split over several lines is one the launcher's Fix
   button will refuse, because it cannot tell which line the JVM reads.
 - Redo the edit after any Starsector update; the installer overwrites `vmparams`.
+- **Third-party `vmparams` tuning packs (optimization packs):** some external tuning packs rewrite
+  `-classpath` with quoted absolute paths (for example `"G:\Starsector 0.98.5\Starsector\vmparams"`
+  or `"G:\...\coop-forks.jar" janino.jar;...`). When the game is installed in a folder containing
+  spaces, `starsector.exe` splits `-classpath` at the space so `janino.jar` and the rest of the
+  stock jars drop off the classpath (`NoClassDefFoundError: org/codehaus/janino/JavaSourceClassLoader`).
+  After applying any tuning pack, open **Coop Launcher** and press **Fix** on the red
+  `vmparams classpath integrity` row: the launcher restores the canonical jar list with
+  `coop-forks.jar` first while keeping all of your JVM performance flags untouched.
 - On a modded JRE setup where the launcher is a `.bat` file instead, put the same entry at the front
   of that file's `-classpath`.
 
