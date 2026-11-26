@@ -172,6 +172,8 @@ public final class CoopNpcFleetReplicator {
     /** Earliest wall-clock time a soft-only change may cause a send; see the interval constant. */
     private long nextSoftResendAtMillis;
     private int lastFleetCount;
+    /** S4-C: fleet ids actually sent in the previous {@code NPC_FLEET_SET}; empty before the first send. */
+    private Set<String> lastSentFleetIds = Set.of();
     /** Per-fleet {@code fleetHash} last printed by the {@link CoopDebug} roster diagnostic. */
     private final Map<String, String> loggedFleetHashes = new HashMap<>();
 
@@ -312,6 +314,7 @@ public final class CoopNpcFleetReplicator {
         lastSoftHash = "";
         nextSoftResendAtMillis = 0L;
         lastFleetCount = 0;
+        lastSentFleetIds = Set.of();
         previousChunks.clear();
     }
 
@@ -356,22 +359,22 @@ public final class CoopNpcFleetReplicator {
         // rewrite (see CoopNpcActionTextCapture's observer-rewrite section) plus the label the guest
         // has painted on its mirror of the host player.
         CampaignFleetAPI hostPlayerFleet = sector.getPlayerFleet();
-        CampaignFleetAPI guestMirror = CoopGuestMirrorHandle.current();
+        List<CampaignFleetAPI> guestMirrors = CoopGuestMirrorHandle.all();
+        CampaignFleetAPI guestMirror = guestMirrors.isEmpty() ? null : guestMirrors.get(0);
         String hostPlayerLabel = CoopPresenceIndicator.presenceLabel(sessionState.localName());
         // 2026-09-13: inflate before capture, not after. See inflateForGuestIfNeeded.
-        List<CampaignFleetAPI> guestObservers =
-                guestMirror == null ? List.of() : List.of(guestMirror);
         int[] inflationBudget = {MAX_GUEST_INFLATIONS_PER_SET};
         expireRadiusCache(now);
         forEachReplicatedFleet(sector, fleet -> {
-            inflateForGuestIfNeeded(fleet, guestObservers, inflationBudget);
+            inflateForGuestIfNeeded(fleet, guestMirrors, inflationBudget);
             fleets.add(toSnapshot(fleet, hostLocation, hostPlayerFleet, guestMirror, hostPlayerLabel));
         });
         CoopNpcFleetSetSnapshot set = CoopNpcFleetSetSnapshot.create(fleets);
         // 2026-09-14 (S4-C remainder): the send decision is scoped to where the players are, not to
         // the whole sector. Same observer resolution the motion filter uses.
         SetTriggers triggers = computeTriggers(fleets,
-                observerLocationIds(playerObservers(sector, guestMirror)));
+                observerLocationIds(playerObservers(sector, guestMirrors)),
+                lastNearHash.isEmpty() ? null : lastSentFleetIds);
         boolean structuralChanged = !triggers.nearHash().equals(lastNearHash);
         boolean softChanged = !triggers.softHash().equals(lastSoftHash);
         if (!shouldSendSet(structuralChanged, softChanged, now, nextSoftResendAtMillis)) {
@@ -381,6 +384,11 @@ public final class CoopNpcFleetReplicator {
                 sessionState.sessionId(), service.nextSeq(), now,
                 streamClock.gameTimeMillis(), set.encode()));
         lastSetHash = set.setHash();
+        Set<String> sentIds = new HashSet<>(fleets.size());
+        for (CoopNpcFleetSnapshot fleet : fleets) {
+            sentIds.add(fleet.coopFleetId());
+        }
+        lastSentFleetIds = sentIds;
         lastNearHash = triggers.nearHash();
         lastSoftHash = triggers.softHash();
         // Every send resets the floor, structural or not: the set that just went out carried the
@@ -429,8 +437,14 @@ public final class CoopNpcFleetReplicator {
      */
     static SetTriggers computeTriggers(List<CoopNpcFleetSnapshot> fleets,
                                        Set<String> observerLocationIds) {
+        return computeTriggers(fleets, observerLocationIds, null);
+    }
+
+    static SetTriggers computeTriggers(List<CoopNpcFleetSnapshot> fleets,
+                                       Set<String> observerLocationIds,
+                                       Set<String> previouslySentIds) {
         return new SetTriggers(
-                CoopNpcFleetSetSnapshot.computeNearHash(fleets, observerLocationIds),
+                CoopNpcFleetSetSnapshot.computeNearHash(fleets, observerLocationIds, previouslySentIds),
                 CoopNpcFleetSetSnapshot.computeSoftHash(fleets, observerLocationIds));
     }
 
@@ -470,10 +484,10 @@ public final class CoopNpcFleetReplicator {
     }
 
     private void sendMotion(SectorAPI sector, long now) {
-        // O(1) handle, not a sector scan: this runs at 10 Hz and wants the same fleet the presence
+        // O(1) handle, not a sector scan: this runs at 10 Hz and wants the same fleets the presence
         // pass already resolved (see CoopGuestMirrorHandle).
-        CampaignFleetAPI guestMirror = CoopGuestMirrorHandle.current();
-        List<CampaignFleetAPI> observers = playerObservers(sector, guestMirror);
+        List<CampaignFleetAPI> guestMirrors = CoopGuestMirrorHandle.all();
+        List<CampaignFleetAPI> observers = playerObservers(sector, guestMirrors);
         if (observers.isEmpty()) {
             return;
         }
@@ -931,8 +945,8 @@ public final class CoopNpcFleetReplicator {
      * detection math.
      */
     private static List<CampaignFleetAPI> playerObservers(SectorAPI sector,
-                                                          CampaignFleetAPI guestMirror) {
-        List<CampaignFleetAPI> observers = new ArrayList<>(2);
+                                                          List<CampaignFleetAPI> guestMirrors) {
+        List<CampaignFleetAPI> observers = new ArrayList<>(1 + (guestMirrors == null ? 0 : guestMirrors.size()));
         try {
             CampaignFleetAPI player = sector.getPlayerFleet();
             if (player != null) {
@@ -941,8 +955,12 @@ public final class CoopNpcFleetReplicator {
         } catch (RuntimeException | LinkageError ignored) {
             // best-effort
         }
-        if (guestMirror != null) {
-            observers.add(guestMirror);
+        if (guestMirrors != null) {
+            for (CampaignFleetAPI mirror : guestMirrors) {
+                if (mirror != null) {
+                    observers.add(mirror);
+                }
+            }
         }
         return observers;
     }

@@ -118,8 +118,8 @@ import java.util.function.LongSupplier;
  */
 public final class CoopBattleBridge {
 
-    /** 2.5 Hz: inside the plan's 300-500 ms window, cheap on a 64 KB TCP frame budget. */
-    static final long STATUS_INTERVAL_MILLIS = 400L;
+    /** 5 Hz: Phase 22 tactical-map cadence (inside the 100-200 ms spec window). */
+    static final long STATUS_INTERVAL_MILLIS = 200L;
     /**
      * Hard cap on ships in one {@code BATTLE_STATUS}. A 200-ship line-item body is ~14 KB, well under
      * the 64 KB frame limit; anything past this is a runaway and is truncated rather than dropped.
@@ -249,6 +249,10 @@ public final class CoopBattleBridge {
     private Consumer<CoopBattleResult> battleResultSink;
     /** The battle-lifecycle listener the mirror layer and the threat watcher hang off. */
     private BattleFleetListener battleFleetSink;
+    /** Phase 22: combat-frame inbound drain callback wired by CoopNetPump. */
+    private Consumer<CombatEngineAPI> combatInboundDrainer;
+    /** Phase 22: partner-side listener notified when a BATTLE_ORDER_ACK lands. */
+    private Consumer<CoopBattleOrder.Ack> orderAckListener;
 
     /**
      * Lifecycle of the host {@code coopFleetId}s a battle involves, so the rest of the mod can act on
@@ -297,6 +301,93 @@ public final class CoopBattleBridge {
 
     public void setBattleFleetSink(BattleFleetListener sink) {
         this.battleFleetSink = sink;
+    }
+
+    /** Phase 22: registers the pump's combat-frame inbound whitelist drainer. */
+    public void setCombatInboundDrainer(Consumer<CombatEngineAPI> drainer) {
+        this.combatInboundDrainer = drainer;
+    }
+
+    /** Phase 22: registers a UI listener for incoming {@code BATTLE_ORDER_ACK} replies. */
+    public void setOrderAckListener(Consumer<CoopBattleOrder.Ack> listener) {
+        this.orderAckListener = listener;
+    }
+
+    /** Phase 22: latest remote battle snapshot for the tactical map panel, or null. */
+    public CoopBattleStatus remoteStatus() {
+        return remoteStatus;
+    }
+
+    /** Phase 22: partner sends a tactical order for one of its joined allied ships. */
+    public void sendBattleOrder(CoopBattleOrder.Order order) {
+        if (order == null || !isSessionActive() || !service.isConnected()) {
+            return;
+        }
+        service.send(CoopMessages.battleOrder(
+                session.sessionId(), service.nextSeq(), clock.getAsLong(),
+                order.orderId(), order.battleId(), order.shipId(), order.kind().name(),
+                order.targetId(), order.targetX(), order.targetY(), order.directRetreat()));
+        service.flushOutbound();
+    }
+
+    /** Phase 22: fighting engine applies a partner's tactical order and answers with an ack. */
+    public void handleCombatOrder(CombatEngineAPI engine, CoopMessages.Message message) {
+        if (!localBattleActive || engine == null || message == null) {
+            return;
+        }
+        try {
+            CoopMessages.Payload payload = CoopMessages.payload(message);
+            CoopBattleOrder.Order order = new CoopBattleOrder.Order(
+                    payload.requiredString("orderId"),
+                    payload.requiredString("battleId"),
+                    payload.requiredString("shipId"),
+                    CoopBattleOrder.parseKind(payload.requiredString("kind")),
+                    payload.optionalString("targetId", ""),
+                    parseFloatOrZero(payload.optionalString("targetX", "0")),
+                    parseFloatOrZero(payload.optionalString("targetY", "0")),
+                    Boolean.parseBoolean(payload.optionalString("directRetreat", "false")));
+            java.util.Set<String> owned = collectAlliedShipIds(engine);
+            CoopBattleOrder.Ack ack = CoopBattleOrder.apply(engine, localBattleId, order, owned);
+            service.send(CoopMessages.battleOrderAck(
+                    session.sessionId(), service.nextSeq(), clock.getAsLong(),
+                    ack.orderId(), ack.battleId(), ack.shipId(),
+                    ack.accepted(), ack.activeAssignment(), ack.reason()));
+            service.flushOutbound();
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopBattleBridge.class, "Failed to handle BATTLE_ORDER", ex);
+        }
+    }
+
+    private static java.util.Set<String> collectAlliedShipIds(CombatEngineAPI engine) {
+        java.util.Set<String> ids = new LinkedHashSet<>();
+        try {
+            com.fs.starfarer.api.combat.CombatFleetManagerAPI fm = engine.getFleetManager(0);
+            if (fm == null || fm.getDeployedCopyDFM() == null) {
+                return ids;
+            }
+            for (com.fs.starfarer.api.combat.DeployedFleetMemberAPI dfm : fm.getDeployedCopyDFM()) {
+                if (dfm == null || !dfm.isAlly()) {
+                    continue;
+                }
+                if (dfm.getShip() != null && dfm.getShip().getId() != null) {
+                    ids.add(dfm.getShip().getId());
+                }
+                if (dfm.getMember() != null && dfm.getMember().getId() != null) {
+                    ids.add(dfm.getMember().getId());
+                }
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // degraded mock engine
+        }
+        return ids;
+    }
+
+    private static float parseFloatOrZero(String raw) {
+        try {
+            return Float.parseFloat(raw.trim());
+        } catch (RuntimeException ex) {
+            return 0f;
+        }
     }
 
     // ---- pure decision helpers (unit-tested) -----------------------------------------------------
@@ -364,35 +455,47 @@ public final class CoopBattleBridge {
             if (!isCampaignBattle(engine)) {
                 return;
             }
-            // Phase 34: a campaign battle on the guest while the host's battle is known and this
-            // client is joined to a Wingman host is the Wingman join battle, not the guest's own
+            // Phase 34: a campaign battle on the guest while the host's battle is known (or while
+            // Wingman transitioned the guest into a synthetic join battle before the coop TCP
+            // channel delivered BATTLE_BEGIN) is the Wingman join battle, not the guest's own
             // engagement. Latch it: the guest stays a spectator (remote battle semantics) for the
             // whole battle, including the end screen after BATTLE_END has already cleared
             // remoteBattleActive.
-            if (!localBattleActive) {
+            boolean fromHandoff = !engageDialogFleetId.isEmpty();
+            List<String> opponents = null;
+            if (!localBattleActive && !guestInWingmanJoinBattle) {
+                boolean wingmanJoined = service.role() == CoopConnectionRole.GUEST
+                        && guestInWingmanCombat();
+                boolean syntheticNonLocal = false;
+                if (wingmanJoined && !remoteBattleActive && !fromHandoff
+                        && customsDialogFleetId.isEmpty()) {
+                    opponents = opponentCoopFleetIds(engine, false);
+                    syntheticNonLocal = opponents.isEmpty() && !hasDwellerEncounterOpponent(engine);
+                }
                 boolean wingmanJoin = CoopWingmanIntegration.classifyGuestWingmanJoin(false,
                         remoteBattleActive,
                         service.role() == CoopConnectionRole.GUEST,
-                        guestInWingmanCombat());
+                        wingmanJoined,
+                        syntheticNonLocal);
                 if (wingmanJoin) {
                     guestInWingmanJoinBattle = true;
                 }
             }
             if (guestInWingmanJoinBattle) {
-                sawCombatFrame = true;
                 return;
             }
             if (!localBattleActive) {
                 // The kind cannot be read off the engine — a handoff battle and a right-click battle
                 // enter combat through the identical dialog seam — so it is carried in from the
                 // encounter this client was pushed into, if any.
-                boolean fromHandoff = !engageDialogFleetId.isEmpty();
                 String enemy = describeEnemy(engine);
                 // Phase 15: the opposing host-owned fleets have to be identified now, while the
                 // battle still exists. After it, a destroyed fleet is simply gone and there is
                 // nothing left to name.
-                List<String> opponents = opponentCoopFleetIds(engine,
-                        service.role() == CoopConnectionRole.HOST);
+                if (opponents == null) {
+                    opponents = opponentCoopFleetIds(engine,
+                            service.role() == CoopConnectionRole.HOST);
+                }
                 if (opponents.isEmpty() && fromHandoff) {
                     opponents = List.of(engageDialogFleetId);
                 }
@@ -403,6 +506,13 @@ public final class CoopBattleBridge {
                 engageDialogBecameBattle |= fromHandoff;
             }
             sawCombatFrame = true;
+            // Phase 22: reset the transport's per-frame inbound budget (latent long-battle bug)
+            // and drain whitelisted combat messages (BATTLE_ORDER, PING, PONG).
+            service.beginFrame();
+            Consumer<CombatEngineAPI> drainer = combatInboundDrainer;
+            if (drainer != null) {
+                drainer.accept(engine);
+            }
             if (nowMillis < nextStatusAtMillis) {
                 return;
             }
@@ -553,6 +663,7 @@ public final class CoopBattleBridge {
             case BATTLE_BEGIN -> handleBattleBegin(message);
             case BATTLE_STATUS -> handleBattleStatus(message);
             case BATTLE_END -> handleBattleEnd(message);
+            case BATTLE_ORDER_ACK -> handleBattleOrderAck(message);
             case ENGAGE_GUEST -> handleEngageGuest(message);
             case DIALOG_BEGIN -> handleDialogBegin(message);
             default -> {
@@ -653,6 +764,21 @@ public final class CoopBattleBridge {
         notifyBattleConcluded(concluded, false);
         CoopLog.info(CoopBattleBridge.class, "Coop BATTLE_END received battleId=" + battleId
                 + " outcome=" + outcome + " npcFleetIds=" + joinIds(concluded));
+    }
+
+    private void handleBattleOrderAck(CoopMessages.Message message) {
+        CoopMessages.Payload payload = CoopMessages.payload(message);
+        CoopBattleOrder.Ack ack = new CoopBattleOrder.Ack(
+                payload.requiredString("orderId"),
+                payload.requiredString("battleId"),
+                payload.requiredString("shipId"),
+                Boolean.parseBoolean(payload.requiredString("accepted")),
+                payload.optionalString("activeAssignment", ""),
+                payload.optionalString("reason", ""));
+        Consumer<CoopBattleOrder.Ack> listener = orderAckListener;
+        if (listener != null) {
+            listener.accept(ack);
+        }
     }
 
     private void handleEngageGuest(CoopMessages.Message message) {
@@ -939,6 +1065,8 @@ public final class CoopBattleBridge {
         List<CoopBattleStatus.ShipRecord> ships = new ArrayList<>();
         Map<String, String> seen = new LinkedHashMap<>();
         boolean truncated = false;
+        com.fs.starfarer.api.combat.FogOfWarAPI fog = safeFogOfWar(engine);
+        com.fs.starfarer.api.combat.CombatTaskManagerAPI allyTasks = safeAllyTaskManager(engine);
         for (ShipAPI ship : engine.getShips()) {
             if (ship == null || ship.isFighter() || ship.isDrone() || ship.isShuttlePod()) {
                 continue;
@@ -948,9 +1076,16 @@ public final class CoopBattleBridge {
                 break;
             }
             boolean enemy = ship.getOwner() != 0;
+            // Phase 22: filter enemies through the fighting side's fog of war.
+            if (enemy && fog != null && !safeFogVisible(fog, ship)) {
+                continue;
+            }
             String name = shipDisplayName(ship);
             String id = safeShipId(ship);
             seen.put(id, (enemy ? "Enemy " : "") + name);
+            org.lwjgl.util.vector.Vector2f loc = safeShipLocation(ship);
+            boolean ally = !enemy && safeIsAlly(ship);
+            String assignment = ally && allyTasks != null ? safeAssignmentName(allyTasks, ship) : "";
             ships.add(new CoopBattleStatus.ShipRecord(
                     id,
                     hullIdOf(ship),
@@ -958,7 +1093,14 @@ public final class CoopBattleBridge {
                     enemy,
                     safeHullLevel(ship),
                     safeFluxLevel(ship),
-                    stateOf(ship)));
+                    stateOf(ship),
+                    loc == null ? 0f : loc.x,
+                    loc == null ? 0f : loc.y,
+                    safeFacing(ship),
+                    safeCr(ship),
+                    ally,
+                    assignment,
+                    safeRetreating(ship)));
         }
         if (truncated) {
             CoopLog.warn(CoopBattleBridge.class, "Coop BATTLE_STATUS truncated at "
@@ -967,11 +1109,122 @@ public final class CoopBattleBridge {
         updateKillFeed(seen);
 
         CoopBattleStatus status = new CoopBattleStatus(localBattleId, ++localStatusSeq,
-                elapsedMillis(engine), ships, tailOfKillFeed());
+                elapsedMillis(engine), ships, tailOfKillFeed(),
+                captureObjectives(engine), captureBounds(engine));
         service.send(CoopMessages.battleStatus(session.sessionId(), service.nextSeq(), clock.getAsLong(),
                 status.battleId(), status.statusSeq(), status.elapsedMillis(), status.encodeBody()));
         // The pump is frozen for the whole battle, so nothing else will push these bytes out.
         service.flushOutbound();
+    }
+
+    private static com.fs.starfarer.api.combat.FogOfWarAPI safeFogOfWar(CombatEngineAPI engine) {
+        try {
+            return engine.getFogOfWar(0);
+        } catch (RuntimeException | LinkageError ex) {
+            return null;
+        }
+    }
+
+    private static boolean safeFogVisible(com.fs.starfarer.api.combat.FogOfWarAPI fog, ShipAPI ship) {
+        try {
+            return fog.isVisible(ship);
+        } catch (RuntimeException | LinkageError ex) {
+            return true;
+        }
+    }
+
+    private static com.fs.starfarer.api.combat.CombatTaskManagerAPI safeAllyTaskManager(CombatEngineAPI engine) {
+        try {
+            com.fs.starfarer.api.combat.CombatFleetManagerAPI fm = engine.getFleetManager(0);
+            return fm == null ? null : fm.getTaskManager(true);
+        } catch (RuntimeException | LinkageError ex) {
+            return null;
+        }
+    }
+
+    private static org.lwjgl.util.vector.Vector2f safeShipLocation(ShipAPI ship) {
+        try {
+            return ship.getLocation();
+        } catch (RuntimeException | LinkageError ex) {
+            return null;
+        }
+    }
+
+    private static float safeFacing(ShipAPI ship) {
+        try {
+            return ship.getFacing();
+        } catch (RuntimeException | LinkageError ex) {
+            return 0f;
+        }
+    }
+
+    private static float safeCr(ShipAPI ship) {
+        try {
+            return ship.getCurrentCR();
+        } catch (RuntimeException | LinkageError ex) {
+            return 1f;
+        }
+    }
+
+    private static boolean safeIsAlly(ShipAPI ship) {
+        try {
+            return ship.isAlly();
+        } catch (RuntimeException | LinkageError ex) {
+            return false;
+        }
+    }
+
+    private static boolean safeRetreating(ShipAPI ship) {
+        try {
+            return ship.isRetreating();
+        } catch (RuntimeException | LinkageError ex) {
+            return false;
+        }
+    }
+
+    private static String safeAssignmentName(com.fs.starfarer.api.combat.CombatTaskManagerAPI tasks, ShipAPI ship) {
+        try {
+            com.fs.starfarer.api.combat.CombatFleetManagerAPI.AssignmentInfo info = tasks.getAssignmentFor(ship);
+            return info == null || info.getType() == null ? "" : info.getType().name();
+        } catch (RuntimeException | LinkageError ex) {
+            return "";
+        }
+    }
+
+    private static List<CoopBattleStatus.ObjectiveRecord> captureObjectives(CombatEngineAPI engine) {
+        try {
+            List<com.fs.starfarer.api.combat.BattleObjectiveAPI> objectives = engine.getObjectives();
+            if (objectives == null || objectives.isEmpty()) {
+                return List.of();
+            }
+            List<CoopBattleStatus.ObjectiveRecord> out = new ArrayList<>(objectives.size());
+            int idx = 0;
+            for (com.fs.starfarer.api.combat.BattleObjectiveAPI obj : objectives) {
+                if (obj == null) {
+                    continue;
+                }
+                org.lwjgl.util.vector.Vector2f loc = obj.getLocation();
+                out.add(new CoopBattleStatus.ObjectiveRecord(
+                        CoopBattleOrder.objectiveKey(obj, idx++),
+                        obj.getType(),
+                        obj.getDisplayName(),
+                        obj.getOwner(),
+                        loc == null ? 0f : loc.x,
+                        loc == null ? 0f : loc.y));
+            }
+            return out;
+        } catch (RuntimeException | LinkageError ex) {
+            return List.of();
+        }
+    }
+
+    private static CoopBattleStatus.MapBounds captureBounds(CombatEngineAPI engine) {
+        try {
+            return new CoopBattleStatus.MapBounds(
+                    engine.getMapWidth(), engine.getMapHeight(), engine.isPaused());
+        } catch (RuntimeException | LinkageError ex) {
+            return CoopBattleStatus.MapBounds.DEFAULT;
+        }
     }
 
     /**
@@ -1473,6 +1726,36 @@ public final class CoopBattleBridge {
             }
         }
         return new ArrayList<>(ids);
+    }
+
+    /**
+     * True when any opposing fleet in this combat is a managed Dweller light encounter fleet.
+     * Used alongside {@link #opponentCoopFleetIds} so a guest connected to Wingman who starts a
+     * local Dweller fight is not mistaken for a synthetic Wingman join battle.
+     */
+    private static boolean hasDwellerEncounterOpponent(CombatEngineAPI engine) {
+        try {
+            BattleCreationContext context = engine.getContext();
+            CampaignFleetAPI other = context == null ? null : context.getOtherFleet();
+            if (other == null) {
+                return false;
+            }
+            if (coop.ambient.CoopLightBridge.isEncounterFleet(other)) {
+                return true;
+            }
+            BattleAPI battle = other.getBattle();
+            List<CampaignFleetAPI> nonPlayer = battle == null ? null : battle.getNonPlayerSide();
+            if (nonPlayer != null) {
+                for (CampaignFleetAPI fleet : nonPlayer) {
+                    if (coop.ambient.CoopLightBridge.isEncounterFleet(fleet)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        } catch (RuntimeException | LinkageError ex) {
+            return false;
+        }
     }
 
     /**

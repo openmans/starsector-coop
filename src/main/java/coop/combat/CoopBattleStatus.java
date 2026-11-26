@@ -9,34 +9,22 @@ import java.util.Locale;
 import java.util.Objects;
 
 /**
- * One 2-5 Hz snapshot of a coop battle as seen by the <em>engaging</em> client, plus its codec
- * (Phase 14).
+ * Snapshot of a coop battle as seen by the <em>engaging</em> client, plus its codec (Phase 14 +
+ * Phase 22 tactical-map extension).
  *
- * <p><b>Why a delimited body.</b> The reliable-TCP {@link coop.net.CoopMessages} envelope parser is
- * flat: no JSON arrays. The ship list and the kill feed therefore ride as a single string field,
- * newline-separated records with {@code |}-separated fields escaped through
- * {@link CoopDelimited#field(String)} — the same pattern as {@code CoopBaseRecord} and
- * {@code CoopMarketSync}.
- *
- * <p><b>Forward compatibility (Phase 22 hook).</b> Each record line starts with a one-letter type
- * token ({@code S} = ship, {@code K} = kill-feed entry). {@link #decode} ignores unknown tokens and
- * ignores extra trailing fields on a known one, so a later phase can append optional position/facing
- * fields to {@code S} lines, or add a new record type, without breaking an older peer. (Older peers
- * are impossible inside a session — the Phase 5 handshake pins the exact build — but the tolerance
- * costs nothing and keeps the codec honest for the tactical-map upgrade.)
- *
- * <p><b>Latest-wins.</b> {@code BATTLE_STATUS} is stateless: {@link #isNewer} decides whether an
- * arriving snapshot supersedes the one on screen. A snapshot for a <em>different</em> battle id
- * always supersedes (a new battle started), otherwise the strictly-higher {@code statusSeq} wins, so
- * a reordered or duplicated frame costs nothing.
- *
- * <p>Fighters, drones and shuttle pods are deliberately not captured (see
- * {@link CoopBattleBridge}): they are numerous, short-lived, and would dominate the payload.
+ * <p>Format lines:
+ * <ul>
+ *   <li>{@code S|shipId|hullId|name|enemy|hull|flux|state[|x|y|facing|cr|ally|assignment|retreating]}</li>
+ *   <li>{@code K|killFeedEntry}</li>
+ *   <li>{@code O|id|type|name|owner|x|y} (Phase 22 battle objectives)</li>
+ *   <li>{@code B|width|height|paused} (Phase 22 map bounds and tactical pause state)</li>
+ * </ul>
  */
 public record CoopBattleStatus(String battleId, long statusSeq, long elapsedMillis,
-                               List<ShipRecord> ships, List<String> killFeed) {
+                               List<ShipRecord> ships, List<String> killFeed,
+                               List<ObjectiveRecord> objectives, MapBounds bounds) {
 
-    /** Per-ship liveness as the spectator panel renders it. */
+    /** Per-ship liveness as the spectator panel / tactical map renders it. */
     public enum ShipState {
         ALIVE,
         DISABLED,
@@ -44,11 +32,13 @@ public record CoopBattleStatus(String battleId, long statusSeq, long elapsedMill
     }
 
     /**
-     * One ship in the battle. {@code enemy} is the side <em>relative to the engaging player</em>
-     * (owner 0 = the engaging player's side, anything else = the opposing side).
+     * One ship in the battle. {@code enemy} is relative to the engaging player (owner 0 = own side).
+     * Phase 22 adds world position, facing, CR, ally flag, active assignment and retreat state.
      */
     public record ShipRecord(String shipId, String hullId, String name, boolean enemy,
-                             float hullFraction, float fluxLevel, ShipState state) {
+                             float hullFraction, float fluxLevel, ShipState state,
+                             float x, float y, float facing, float cr,
+                             boolean ally, String assignment, boolean retreating) {
         public ShipRecord {
             shipId = CoopDelimited.normalize(shipId);
             hullId = CoopDelimited.normalize(hullId);
@@ -56,6 +46,34 @@ public record CoopBattleStatus(String battleId, long statusSeq, long elapsedMill
             state = state == null ? ShipState.ALIVE : state;
             hullFraction = clamp(hullFraction);
             fluxLevel = clamp(fluxLevel);
+            cr = clamp(cr);
+            assignment = CoopDelimited.normalize(assignment);
+        }
+
+        /** Phase 14 compatibility constructor (no tactical coordinates). */
+        public ShipRecord(String shipId, String hullId, String name, boolean enemy,
+                          float hullFraction, float fluxLevel, ShipState state) {
+            this(shipId, hullId, name, enemy, hullFraction, fluxLevel, state,
+                    0f, 0f, 0f, 1f, false, "", false);
+        }
+    }
+
+    /** Phase 22 battle objective (nav buoy, sensor array, comm relay). */
+    public record ObjectiveRecord(String id, String type, String name, int owner, float x, float y) {
+        public ObjectiveRecord {
+            id = CoopDelimited.normalize(id);
+            type = CoopDelimited.normalize(type);
+            name = CoopDelimited.normalize(name);
+        }
+    }
+
+    /** Phase 22 combat map bounds and tactical-pause flag. */
+    public record MapBounds(float width, float height, boolean paused) {
+        public static final MapBounds DEFAULT = new MapBounds(14_000f, 14_000f, false);
+
+        public MapBounds {
+            width = width <= 0f ? 14_000f : width;
+            height = height <= 0f ? 14_000f : height;
         }
     }
 
@@ -63,19 +81,24 @@ public record CoopBattleStatus(String battleId, long statusSeq, long elapsedMill
     private static final String RECORD_SEPARATOR = "\n";
     private static final String SHIP_TOKEN = "S";
     private static final String KILL_TOKEN = "K";
-    /** Minimum field count of an {@code S} line; extra trailing fields are tolerated (see class doc). */
+    private static final String OBJECTIVE_TOKEN = "O";
+    private static final String BOUNDS_TOKEN = "B";
     private static final int SHIP_FIELD_COUNT = 8;
 
     public CoopBattleStatus {
         battleId = CoopDelimited.normalize(battleId);
         ships = ships == null ? List.of() : Collections.unmodifiableList(new ArrayList<>(ships));
         killFeed = killFeed == null ? List.of() : Collections.unmodifiableList(new ArrayList<>(killFeed));
+        objectives = objectives == null ? List.of() : Collections.unmodifiableList(new ArrayList<>(objectives));
+        bounds = bounds == null ? MapBounds.DEFAULT : bounds;
     }
 
-    /**
-     * True when {@code incoming} (identified by battle id + seq) should replace {@code current} on the
-     * spectator's screen. A different battle id always wins; within one battle, a strictly higher seq.
-     */
+    /** Phase 14 compatibility constructor (no objectives or bounds). */
+    public CoopBattleStatus(String battleId, long statusSeq, long elapsedMillis,
+                            List<ShipRecord> ships, List<String> killFeed) {
+        this(battleId, statusSeq, elapsedMillis, ships, killFeed, List.of(), MapBounds.DEFAULT);
+    }
+
     public static boolean isNewer(String incomingBattleId, long incomingSeq, CoopBattleStatus current) {
         if (current == null) {
             return true;
@@ -91,14 +114,22 @@ public record CoopBattleStatus(String battleId, long statusSeq, long elapsedMill
         return isNewer(battleId, statusSeq, current);
     }
 
-    /** Ships on the engaging player's own side, in capture order. */
     public List<ShipRecord> ownShips() {
         return sideShips(false);
     }
 
-    /** Ships on the side the engaging player is fighting, in capture order. */
     public List<ShipRecord> enemyShips() {
         return sideShips(true);
+    }
+
+    public List<ShipRecord> alliedShips() {
+        List<ShipRecord> out = new ArrayList<>();
+        for (ShipRecord ship : ships) {
+            if (!ship.enemy() && ship.ally()) {
+                out.add(ship);
+            }
+        }
+        return out;
     }
 
     private List<ShipRecord> sideShips(boolean enemy) {
@@ -111,9 +142,27 @@ public record CoopBattleStatus(String battleId, long statusSeq, long elapsedMill
         return out;
     }
 
-    /** The self-contained delimited body that rides in the {@code ships} payload field. */
     public String encodeBody() {
-        List<String> lines = new ArrayList<>(ships.size() + killFeed.size());
+        boolean includeBounds = !MapBounds.DEFAULT.equals(bounds);
+        if (ships.isEmpty() && killFeed.isEmpty() && objectives.isEmpty() && !includeBounds) {
+            return "";
+        }
+        List<String> lines = new ArrayList<>(ships.size() + killFeed.size() + objectives.size() + (includeBounds ? 1 : 0));
+        if (includeBounds) {
+            lines.add(BOUNDS_TOKEN
+                    + FIELD_SEPARATOR + bounds.width()
+                    + FIELD_SEPARATOR + bounds.height()
+                    + FIELD_SEPARATOR + (bounds.paused() ? "1" : "0"));
+        }
+        for (ObjectiveRecord obj : objectives) {
+            lines.add(OBJECTIVE_TOKEN
+                    + FIELD_SEPARATOR + CoopDelimited.field(obj.id())
+                    + FIELD_SEPARATOR + CoopDelimited.field(obj.type())
+                    + FIELD_SEPARATOR + CoopDelimited.field(obj.name())
+                    + FIELD_SEPARATOR + obj.owner()
+                    + FIELD_SEPARATOR + obj.x()
+                    + FIELD_SEPARATOR + obj.y());
+        }
         for (ShipRecord ship : ships) {
             lines.add(SHIP_TOKEN
                     + FIELD_SEPARATOR + CoopDelimited.field(ship.shipId())
@@ -122,7 +171,14 @@ public record CoopBattleStatus(String battleId, long statusSeq, long elapsedMill
                     + FIELD_SEPARATOR + (ship.enemy() ? "1" : "0")
                     + FIELD_SEPARATOR + ship.hullFraction()
                     + FIELD_SEPARATOR + ship.fluxLevel()
-                    + FIELD_SEPARATOR + ship.state().name());
+                    + FIELD_SEPARATOR + ship.state().name()
+                    + FIELD_SEPARATOR + ship.x()
+                    + FIELD_SEPARATOR + ship.y()
+                    + FIELD_SEPARATOR + ship.facing()
+                    + FIELD_SEPARATOR + ship.cr()
+                    + FIELD_SEPARATOR + (ship.ally() ? "1" : "0")
+                    + FIELD_SEPARATOR + CoopDelimited.field(ship.assignment())
+                    + FIELD_SEPARATOR + (ship.retreating() ? "1" : "0"));
         }
         for (String kill : killFeed) {
             lines.add(KILL_TOKEN + FIELD_SEPARATOR + CoopDelimited.field(CoopDelimited.normalize(kill)));
@@ -130,11 +186,12 @@ public record CoopBattleStatus(String battleId, long statusSeq, long elapsedMill
         return String.join(RECORD_SEPARATOR, lines);
     }
 
-    /** Reverses {@link #encodeBody()}. Unknown record types and extra fields are ignored. */
     public static CoopBattleStatus decode(String battleId, long statusSeq, long elapsedMillis, String body) {
         Objects.requireNonNull(body, "body");
         List<ShipRecord> ships = new ArrayList<>();
         List<String> killFeed = new ArrayList<>();
+        List<ObjectiveRecord> objectives = new ArrayList<>();
+        MapBounds bounds = MapBounds.DEFAULT;
         if (!body.isEmpty()) {
             for (String line : body.split(RECORD_SEPARATOR, -1)) {
                 if (line.isEmpty()) {
@@ -147,6 +204,13 @@ public record CoopBattleStatus(String battleId, long statusSeq, long elapsedMill
                         throw new IllegalArgumentException("Expected at least " + SHIP_FIELD_COUNT
                                 + " battle-status ship fields, got " + fields.size());
                     }
+                    float x = fields.size() > 8 ? parseFloat(fields.get(8)) : 0f;
+                    float y = fields.size() > 9 ? parseFloat(fields.get(9)) : 0f;
+                    float facing = fields.size() > 10 ? parseFloat(fields.get(10)) : 0f;
+                    float cr = fields.size() > 11 ? parseFloat(fields.get(11)) : 1f;
+                    boolean ally = fields.size() > 12 && "1".equals(fields.get(12));
+                    String assignment = fields.size() > 13 ? fields.get(13) : "";
+                    boolean retreating = fields.size() > 14 && "1".equals(fields.get(14));
                     ships.add(new ShipRecord(
                             fields.get(1),
                             fields.get(2),
@@ -154,22 +218,33 @@ public record CoopBattleStatus(String battleId, long statusSeq, long elapsedMill
                             "1".equals(fields.get(4)),
                             parseFloat(fields.get(5)),
                             parseFloat(fields.get(6)),
-                            parseState(fields.get(7))));
+                            parseState(fields.get(7)),
+                            x, y, facing, cr, ally, assignment, retreating));
                 } else if (KILL_TOKEN.equals(token)) {
                     killFeed.add(fields.size() > 1 ? fields.get(1) : "");
+                } else if (OBJECTIVE_TOKEN.equals(token) && fields.size() >= 7) {
+                    objectives.add(new ObjectiveRecord(
+                            fields.get(1),
+                            fields.get(2),
+                            fields.get(3),
+                            parseInt(fields.get(4)),
+                            parseFloat(fields.get(5)),
+                            parseFloat(fields.get(6))));
+                } else if (BOUNDS_TOKEN.equals(token) && fields.size() >= 4) {
+                    bounds = new MapBounds(
+                            parseFloat(fields.get(1)),
+                            parseFloat(fields.get(2)),
+                            "1".equals(fields.get(3)));
                 }
-                // Any other token is a record type this build does not know: ignore it.
             }
         }
-        return new CoopBattleStatus(battleId, statusSeq, elapsedMillis, ships, killFeed);
+        return new CoopBattleStatus(battleId, statusSeq, elapsedMillis, ships, killFeed, objectives, bounds);
     }
 
     private static ShipState parseState(String raw) {
         try {
             return ShipState.valueOf(raw.trim().toUpperCase(Locale.ROOT));
         } catch (RuntimeException ex) {
-            // An unknown state from a future build is still a live ship as far as this one is
-            // concerned; never fail the whole snapshot over one enum value.
             return ShipState.ALIVE;
         }
     }
@@ -179,6 +254,14 @@ public record CoopBattleStatus(String battleId, long statusSeq, long elapsedMill
             return Float.parseFloat(raw.trim());
         } catch (RuntimeException ex) {
             return 0f;
+        }
+    }
+
+    private static int parseInt(String raw) {
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (RuntimeException ex) {
+            return 0;
         }
     }
 

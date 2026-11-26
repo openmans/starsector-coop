@@ -369,6 +369,15 @@ public class CoopNetPump implements EveryFrameScript {
      * UDP tick into the full snapshot the mirror consumes. See {@link coop.fleet.CoopRosterCache}.
      */
     private final coop.fleet.CoopRosterCache rosterCache = new coop.fleet.CoopRosterCache();
+    /** Phase 27: additional player mirrors and roster caches keyed by playerId (2nd/3rd guests). */
+    private final java.util.Map<String, CoopFleetMirror> extraPlayerMirrors = new java.util.LinkedHashMap<>();
+    private final java.util.Map<String, coop.fleet.CoopRosterCache> extraRosterCaches = new java.util.LinkedHashMap<>();
+    /** Phase 27: known peer names keyed by playerId (populated from LOBBY_STATUS on guests). */
+    private final java.util.Map<String, String> peerPlayerNames = new java.util.LinkedHashMap<>();
+    /** Phase 27: per-guest reported join phase and ready state on the host. */
+    private final java.util.Map<String, coop.session.CoopJoinPhase> guestReportedPhases = new java.util.LinkedHashMap<>();
+    private final java.util.Map<String, Boolean> guestReportedReadies = new java.util.LinkedHashMap<>();
+    private final java.util.Set<String> guestReadyPendingIds = new java.util.LinkedHashSet<>();
     /** The 16-hex fleet hash of the last roster this side put on the wire; "" means "send one". */
     private String lastSentRosterHash = "";
     /** Types already warned about for exceeding the UDP budget; a 10 Hz stream may log once. */
@@ -561,6 +570,10 @@ public class CoopNetPump implements EveryFrameScript {
      */
     private final coop.ui.CoopDialogController markDialogs =
             new coop.ui.CoopDialogController("mark", this::nowMillis);
+    /** Phase 22: opt-in tactical map dialog shown while the partner is in combat. */
+    private final coop.ui.CoopDialogController tacticalMapDialogs =
+            new coop.ui.CoopDialogController("tacticalMap", this::nowMillis);
+    private coop.ui.CoopTacticalMapDialogPlugin activeTacticalMapDialog;
     /**
      * The marker itself: the per-session counter, both log lines, the partner's copy and the HUD
      * acknowledgement. Every seam is a bound {@code this::} reference rather than a lambda over a
@@ -634,6 +647,9 @@ public class CoopNetPump implements EveryFrameScript {
     /** Host: the router mapping negotiated for this session's port, or null when not hosting. */
     private CoopPortMapper portMapper;
     private boolean portMapperReportLogged;
+    /** Host: optional router mapping for Wingman's combat port (24816) when Wingman battles are active. */
+    private CoopPortMapper wingmanPortMapper;
+    private boolean wingmanPortMapperReportLogged;
     private java.util.function.IntFunction<CoopPortMapper> portMapperFactory;
     /** Guest: what it dialled, so the connection-doctor block can name it. */
     private String guestConnectHost = "";
@@ -744,6 +760,8 @@ public class CoopNetPump implements EveryFrameScript {
     private final CoopBattleBridge battleBridge;
     /** Phase 34: Wingman battles integration; created lazily so a missing Wingman costs nothing. */
     private CoopWingmanIntegration wingmanIntegration;
+    private coop.campaign.CoopBountyAuthority bountyAuthority;
+    private boolean bountyReplicationStreaming;
     private final CoopNpcThreatWatcher npcThreatWatcher;
     private final CoopBattleResultReconciler battleResultReconciler;
     /**
@@ -958,6 +976,7 @@ public class CoopNetPump implements EveryFrameScript {
         this.npcFleetRegistry = new CoopFleetMirrorRegistry(CoopFleetMirror::new, clockMillis);
         this.campaignReplicator = new CoopCampaignReplicator(service, sessionState, clockMillis);
         this.battleBridge = new CoopBattleBridge(service, sessionState, clockMillis, pauseCoordinator);
+        this.battleBridge.setCombatInboundDrainer(this::drainCombatInbound);
         // S5-A: a PING answered across a battle times a stopped pump, not the link. The bridge is the
         // only thing that knows a battle is open on either side, so it supplies that state here rather
         // than the measurement reaching into it.
@@ -1046,6 +1065,9 @@ public class CoopNetPump implements EveryFrameScript {
         // Phase 20.6: the intel page is constructed by XStream on load and holds no state, so the
         // static handle is how it reaches this pump's feed. Newest pump wins, exactly like the save
         // checkpoint above — a game load replaces the previous session's feed.
+        this.intelFeed.setTacticalMapHook(battleBridge::isRemoteBattleActive,
+                this::requestTacticalMapDialog);
+        this.sessionState.setMaxGuests(this.service.peerCapacity());
         coop.ui.CoopSessionIntelFeed.install(this.intelFeed);
         // Phase 28: same static-handle argument. The options page is constructed by the intel screen
         // and has no way to be handed this pump's policy, so the newest pump publishes it.
@@ -1291,7 +1313,7 @@ public class CoopNetPump implements EveryFrameScript {
      */
     public java.util.List<coop.ui.CoopDialogController> coopDialogsForBridge() {
         return java.util.List.of(reconnectDialogs, desyncDialogs, lobbyDialogs, connectingDialogs,
-                markDialogs);
+                markDialogs, tacticalMapDialogs);
     }
 
     /** Bridge-only: the same predicate the pump gates gameplay replication on. */
@@ -2449,33 +2471,29 @@ public class CoopNetPump implements EveryFrameScript {
         }
         lobbyRoster.setHost(hostId, sessionState.localName(), now);
 
-        String guestId = sessionState.remotePlayerId();
-        if (guestId != null) {
-            boolean fresh = lobbyRoster.row(guestId) == null;
-            if (lobbyRoster.admit(guestId, sessionState.remoteName(), now) && fresh) {
-                postFeed(FEED_LOBBY_JOINED, now,
-                        "Co-op: " + remoteDisplayName() + " joined the lobby.", FEED_GOOD_COLOR);
-            }
-            applyDerivedGuestPhase(guestId, now);
-            applyReportedGuestReady(guestId, now);
-            if (reconnect.hostWaiting()) {
-                // Phase 21 red-team blocker 1. The countdown used to run straight through a drop, so
-                // a link that died two seconds into it released the host alone -- into a session with
-                // no guest, with the LOBBY_STATUS(released) dropped on the floor by the dead socket
-                // and no later one to replace it, and with the pause hold promoted to a host pause
-                // intent nobody could explain. The drop is the countdown's answer: cancel it.
-                if (lobbyRoster.cancelCountdown()) {
-                    CoopLog.info(CoopNetPump.class, "Coop lobby countdown cancelled: "
-                            + remoteDisplayName() + " dropped mid-countdown");
-                    postFeed(FEED_LOBBY_CANCELLED, now, "Co-op: countdown cancelled - "
-                            + remoteDisplayName() + " dropped.", FEED_WARN_COLOR);
+        java.util.List<coop.session.CoopSessionState.PeerSession> activeGuests = sessionState.guests();
+        if (!activeGuests.isEmpty()) {
+            for (coop.session.CoopSessionState.PeerSession peer : activeGuests) {
+                String guestId = peer.playerId();
+                boolean fresh = lobbyRoster.row(guestId) == null;
+                if (lobbyRoster.admit(guestId, peer.name(), now) && fresh) {
+                    postFeed(FEED_LOBBY_JOINED, now,
+                            "Co-op: " + peer.name() + " joined the lobby.", FEED_GOOD_COLOR);
                 }
-                lobbyStartAnyway = false;
-                // The number on the row is the window's remaining, read from the coordinator every
-                // frame: the roster has no window of its own and must not invent one.
-                lobbyRoster.markReconnecting(guestId, now, reconnect.remainingMillis(now));
-            } else {
-                lobbyRoster.markReconnected(guestId, now);
+                applyDerivedGuestPhase(guestId, now);
+                applyReportedGuestReady(guestId, now);
+                if (reconnect.hostWaiting() && guestId.equals(sessionState.remotePlayerId())) {
+                    if (lobbyRoster.cancelCountdown()) {
+                        CoopLog.info(CoopNetPump.class, "Coop lobby countdown cancelled: "
+                                + peer.name() + " dropped mid-countdown");
+                        postFeed(FEED_LOBBY_CANCELLED, now, "Co-op: countdown cancelled - "
+                                + peer.name() + " dropped.", FEED_WARN_COLOR);
+                    }
+                    lobbyStartAnyway = false;
+                    lobbyRoster.markReconnecting(guestId, now, reconnect.remainingMillis(now));
+                } else {
+                    lobbyRoster.markReconnected(guestId, now);
+                }
             }
         } else {
             dropDepartedGuestRows(now);
@@ -2501,19 +2519,20 @@ public class CoopNetPump implements EveryFrameScript {
      */
     private void applyDerivedGuestPhase(String guestId, long now) {
         coop.session.CoopJoinPhase derived = coop.session.CoopJoinPhase.LINK_ESTABLISHED;
-        if (sessionState.handshakeValidated()) {
+        coop.session.CoopSessionState.PeerSession peer = sessionState.guest(guestId);
+        boolean peerHandshake = peer != null ? peer.handshakeValidated() : sessionState.handshakeValidated();
+        boolean peerSeedLocked = peer != null ? peer.seedLocked() : sessionState.seedLong() != null;
+        if (peerHandshake) {
             derived = coop.session.CoopJoinPhase.VERSIONS_MATCHED;
         }
-        if (sessionState.seedLong() != null) {
+        if (peerSeedLocked || (sessionState.seedLong() != null && guestId.equals(sessionState.remotePlayerId()))) {
             derived = coop.session.CoopJoinPhase.SEED_LOCKED;
         }
-        coop.session.CoopJoinPhase target = coop.session.CoopJoinPhase.max(derived, guestReportedPhase);
+        coop.session.CoopJoinPhase reported = guestReportedPhases.getOrDefault(guestId,
+                guestId.equals(sessionState.remotePlayerId())
+                        ? guestReportedPhase : coop.session.CoopJoinPhase.LINK_ESTABLISHED);
+        coop.session.CoopJoinPhase target = coop.session.CoopJoinPhase.max(derived, reported);
         if (target == coop.session.CoopJoinPhase.READY) {
-            // The roster refuses READY as a phase on purpose - readying is a player action carried by
-            // the row's ready flag, not by the protocol. Clamped rather than dropped: a guest whose
-            // SNAPSHOT_APPLIED and READY reports arrive in the same drain leaves only the READY one
-            // behind, and dropping it stranded the row at SEED_LOCKED with the ready report then
-            // refused for being too early (Phase 21 red-team, item 4).
             target = coop.session.CoopJoinPhase.SNAPSHOT_APPLIED;
         }
         coop.session.CoopLobbyRoster.Row row = lobbyRoster.row(guestId);
@@ -2523,16 +2542,10 @@ public class CoopNetPump implements EveryFrameScript {
         lobbyRoster.setPhase(guestId, target, now);
     }
 
-    /**
-     * Applies the ready value the guest last reported, once there is a row to apply it to.
-     *
-     * <p>Deferred rather than applied on arrival because the inbound drain runs before the roster is
-     * built: a {@code READY_STATE} that lands on the same frame the guest is admitted would otherwise
-     * be written into a row that does not exist yet and silently lost. Applied exactly once per
-     * report, so a stale "not ready" cannot cancel a countdown the host armed afterwards.
-     */
     private void applyReportedGuestReady(String guestId, long now) {
-        if (!guestReadyStatePending) {
+        boolean pending = guestReadyPendingIds.contains(guestId)
+                || (guestReadyStatePending && guestId.equals(sessionState.remotePlayerId()));
+        if (!pending) {
             return;
         }
         coop.session.CoopLobbyRoster.Row row = lobbyRoster.row(guestId);
@@ -2540,14 +2553,16 @@ public class CoopNetPump implements EveryFrameScript {
             return;
         }
         if (!row.phase().atLeast(coop.session.CoopJoinPhase.SNAPSHOT_APPLIED)) {
-            // Nothing to be ready for yet. The flag stays pending: clearing it here consumed the only
-            // Ready the guest ever sends whenever the phase floor had not caught up on that frame.
             return;
         }
-        guestReadyStatePending = false;
-        boolean changed = lobbyRoster.setReady(guestId, guestReportedReady, now);
-        String name = remoteDisplayName();
-        if (!guestReportedReady && lobbyRoster.cancelCountdown()) {
+        guestReadyPendingIds.remove(guestId);
+        if (guestId.equals(sessionState.remotePlayerId())) {
+            guestReadyStatePending = false;
+        }
+        boolean ready = guestReportedReadies.getOrDefault(guestId, guestReportedReady);
+        boolean changed = lobbyRoster.setReady(guestId, ready, now);
+        String name = sessionState.guestDisplayName(guestId);
+        if (!ready && lobbyRoster.cancelCountdown()) {
             lobbyStartAnyway = false;
             CoopLog.info(CoopNetPump.class, "Coop lobby countdown cancelled by " + name);
             postFeed(FEED_LOBBY_CANCELLED, now, "Co-op: countdown cancelled by " + name + ".",
@@ -2556,7 +2571,7 @@ public class CoopNetPump implements EveryFrameScript {
         if (!changed) {
             return;
         }
-        if (guestReportedReady) {
+        if (ready) {
             postFeed(FEED_LOBBY_READY, now, "Co-op: " + name + " is ready.", FEED_GOOD_COLOR);
         } else {
             postFeed(FEED_LOBBY_UNREADY, now, "Co-op: " + name + " is no longer ready.",
@@ -3199,17 +3214,24 @@ public class CoopNetPump implements EveryFrameScript {
         if (service.role() != CoopConnectionRole.HOST || !isGameplaySessionActive()) {
             return;
         }
-        String guestId = sessionState.remotePlayerId();
+        String senderId = message.senderId();
+        String guestId = (senderId != null && sessionState.hasGuest(senderId))
+                ? senderId : sessionState.remotePlayerId();
         if (guestId == null) {
             return;
         }
         CoopMessages.ReadyState state = CoopMessages.parseReadyState(message);
         coop.session.CoopJoinPhase phase = coop.session.CoopJoinPhase.parse(
                 state.phase(), coop.session.CoopJoinPhase.LINK_ESTABLISHED);
-        guestReportedPhase = phase;
-        guestReportedReady = state.ready();
-        guestReadyStatePending = true;
-        CoopLog.info(CoopNetPump.class, "Coop lobby ready-state " + remoteDisplayName()
+        guestReportedPhases.put(guestId, phase);
+        guestReportedReadies.put(guestId, state.ready());
+        guestReadyPendingIds.add(guestId);
+        if (guestId.equals(sessionState.remotePlayerId())) {
+            guestReportedPhase = phase;
+            guestReportedReady = state.ready();
+            guestReadyStatePending = true;
+        }
+        CoopLog.info(CoopNetPump.class, "Coop lobby ready-state " + sessionState.guestDisplayName(guestId)
                 + " ready=" + state.ready() + " phase=" + phase);
     }
 
@@ -3222,6 +3244,7 @@ public class CoopNetPump implements EveryFrameScript {
         long now = clockMillis.getAsLong();
         java.util.List<coop.session.CoopLobbyRoster.Row> rows = new java.util.ArrayList<>();
         boolean first = true;
+        String localId = sessionState.localPlayerId();
         for (CoopMessages.LobbyPlayer player : status.players()) {
             rows.add(coop.session.CoopLobbyRoster.mirroredRow(player.playerId(), player.name(), first,
                     coop.session.CoopJoinPhase.parse(player.phase(),
@@ -3229,7 +3252,13 @@ public class CoopNetPump implements EveryFrameScript {
                     player.ready(),
                     player.reconnectingMillis() < 0L ? null : now + player.reconnectingMillis(),
                     player.reason(), now));
+            if (player.playerId() != null && !player.playerId().equals(localId)) {
+                peerPlayerNames.put(player.playerId(), player.name());
+            }
             first = false;
+        }
+        if (status.players().size() >= 2) {
+            sessionState.setKnownTotalPlayers(status.players().size());
         }
         lobbyRoster.replaceAll(rows, now);
         lobbyRoster.applyElapsed(status.elapsedMillis(), now);
@@ -3437,7 +3466,7 @@ public class CoopNetPump implements EveryFrameScript {
         if (pauseCoordinator.hostPauseIntent()) {
             return CoopHudState.HOLDER_HOST;
         }
-        if (pauseCoordinator.guestKeyPauseIntent()) {
+        if (pauseCoordinator.allowGuestPause() && pauseCoordinator.guestKeyPauseIntent()) {
             return CoopHudState.HOLDER_GUEST;
         }
         if (pauseCoordinator.guestScreenPauseIntent()) {
@@ -3513,9 +3542,13 @@ public class CoopNetPump implements EveryFrameScript {
         coop.debug.CoopOwnFleetProbe.INSTANCE.tickFromGlobal(clockMillis.getAsLong());
         // Same again for the datagram wiretap, which also emits its size summary from this poll.
         CoopWiretap.pollFrame();
-        // Phase 34: Wingman battles. First thing after instrumentation; the integration's own
-        // per-frame work is tiny when enabled and a single boolean read when not.
-        wingmanIntegration().tick();
+        // Phase 34: Wingman battles. Only tick once a gameplay session is live so solo / unconnected
+        // frames never touch Wingman or lazily construct the integration.
+        if (isGameplaySessionActive()) {
+            wingmanIntegration().tick();
+        } else if (wingmanIntegration != null) {
+            wingmanIntegration.reset();
+        }
         // Phase 29 M1: stream time advances by campaign dt, frozen while paused, before anything
         // this frame stamps an outbound datagram with it.
         streamClock.advance(amount, isSectorPausedForStream());
@@ -3578,6 +3611,7 @@ public class CoopNetPump implements EveryFrameScript {
         // Last of the dialog controllers: it yields to every other coop dialog, and it has
         // anything to do only on the handful of frames after the marker key was pressed.
         tickMarkDialog();
+        tickTacticalMapDialog();
         t = profiler.split(SECTION_LOBBY, t);
         // Phase 21: after the lobby, so the release that starts the session is already visible and
         // isSessionPlayable() is true on the very frame the first sample is taken.
@@ -3646,6 +3680,7 @@ public class CoopNetPump implements EveryFrameScript {
         tickNpcThreatWatcher();
         t = profiler.split(SECTION_NPC_THREAT_WATCHER, t);
         syncBaseReplication();
+        syncBountyReplication();
         t = profiler.split(SECTION_BASE_REPLICATION, t);
         syncBarGeneration();
         t = profiler.split(SECTION_BAR_SUPPRESSOR, t);
@@ -3761,6 +3796,73 @@ public class CoopNetPump implements EveryFrameScript {
             portMapper = null;
             CoopLog.warn(CoopNetPump.class, "Coop port mapper failed; giving up on automatic mapping", ex);
         }
+        tickWingmanPortMapper();
+    }
+
+    /**
+     * Phase 34: optionally forwards Wingman's combat port (24816 TCP+UDP) on the host's router when
+     * automatic port mapping is on and Wingman battles are enabled and installed. Never blocks a
+     * session; failures log one clear line telling the host to forward 24816 manually if needed.
+     */
+    private void tickWingmanPortMapper() {
+        if (service.role() != CoopConnectionRole.HOST || portMapper == null) {
+            return;
+        }
+        if (wingmanPortMapper == null) {
+            if (!isGameplaySessionActive() || !wingmanIntegration().isEnabledAndAvailable()) {
+                return;
+            }
+            if (portMapper.port() == CoopWingmanIntegration.DEFAULT_WINGMAN_PORT) {
+                return;
+            }
+            boolean enabled = true;
+            try {
+                enabled = CoopNetStartupConfig.fromSystemProperties().portMappingEnabled();
+            } catch (RuntimeException ignored) {
+                // default true matches startPortMapper
+            }
+            if (!enabled) {
+                return;
+            }
+            try {
+                wingmanPortMapper = portMapperFactory == null
+                        ? CoopPortMapper.start(CoopWingmanIntegration.DEFAULT_WINGMAN_PORT, true, clockMillis)
+                        : portMapperFactory.apply(CoopWingmanIntegration.DEFAULT_WINGMAN_PORT);
+                wingmanPortMapperReportLogged = false;
+            } catch (RuntimeException | LinkageError ex) {
+                wingmanPortMapper = null;
+                CoopLog.warn(CoopNetPump.class,
+                        "Coop wingman port mapping could not start for port "
+                                + CoopWingmanIntegration.DEFAULT_WINGMAN_PORT, ex);
+                return;
+            }
+        }
+        CoopPortMapper mapper = wingmanPortMapper;
+        if (mapper == null) {
+            return;
+        }
+        try {
+            mapper.tick(clockMillis.getAsLong());
+            if (mapper.result().finished() && !wingmanPortMapperReportLogged) {
+                wingmanPortMapperReportLogged = true;
+                CoopPortMapper.Result result = mapper.result();
+                if (result.mapped()) {
+                    CoopLog.info(CoopNetPump.class,
+                            "Coop wingman port mapping active: " + result.externalEndpoint()
+                                    + " (TCP+UDP via " + CoopPortMapper.describeTier(result.tier()) + ")");
+                } else {
+                    CoopLog.info(CoopNetPump.class,
+                            "Coop wingman automatic port mapping for " + mapper.port()
+                                    + " did not succeed (" + result.failureText()
+                                    + "); forward TCP+UDP " + mapper.port()
+                                    + " manually or use a VPN for Wingman battles over the Internet");
+                }
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            wingmanPortMapper = null;
+            CoopLog.warn(CoopNetPump.class,
+                    "Coop wingman port mapper failed; giving up on automatic Wingman mapping", ex);
+        }
     }
 
     /**
@@ -3792,13 +3894,23 @@ public class CoopNetPump implements EveryFrameScript {
         CoopPortMapper mapper = portMapper;
         portMapper = null;
         portMapperReportLogged = false;
-        if (mapper == null) {
-            return;
+        if (mapper != null) {
+            try {
+                mapper.shutdown();
+            } catch (RuntimeException | LinkageError ex) {
+                CoopLog.warn(CoopNetPump.class, "Coop port mapper did not shut down cleanly", ex);
+            }
         }
-        try {
-            mapper.shutdown();
-        } catch (RuntimeException | LinkageError ex) {
-            CoopLog.warn(CoopNetPump.class, "Coop port mapper did not shut down cleanly", ex);
+        CoopPortMapper wingmanMapper = wingmanPortMapper;
+        wingmanPortMapper = null;
+        wingmanPortMapperReportLogged = false;
+        if (wingmanMapper != null) {
+            try {
+                wingmanMapper.shutdown();
+            } catch (RuntimeException | LinkageError ex) {
+                CoopLog.warn(CoopNetPump.class,
+                        "Coop wingman port mapper did not shut down cleanly", ex);
+            }
         }
     }
 
@@ -4437,6 +4549,11 @@ public class CoopNetPump implements EveryFrameScript {
         // Phase 20.6: drop every live reading but keep the event log, so the page still explains what
         // happened after the session it described is gone.
         intelFeed.endSession();
+        closeTacticalMapDialog();
+        // Phase 34: release any Wingman flagship reservation and per-session flags.
+        if (wingmanIntegration != null) {
+            wingmanIntegration.reset();
+        }
         if (changed) {
             CoopLog.warn(CoopNetPump.class, "Coop peer disconnected; session reset, awaiting reconnect as "
                     + service.role());
@@ -4698,6 +4815,7 @@ public class CoopNetPump implements EveryFrameScript {
             case WORLD_DELTA, MARKET_OPEN, MARKET_SNAPSHOT, MARKET_TXN,
                  RAID_RESULT, SHIP_LOST,
                  COLONY_FOUNDED, COLONY_ABANDONED, COLONY_MGMT, COLONY_INCOME, EXPEDITION_WARNING,
+                 BOUNTY_SET,
                  MISSION_POOL_SNAPSHOT, MISSION_CLAIM_REQUEST, MISSION_CLAIM_ACCEPT,
                  MISSION_CLAIM_REJECT,
                  REP_DELTA, GUEST_REP_DELTA, PLAYER_REP_SNAPSHOT, FACTION_REL_DELTA,
@@ -4722,7 +4840,7 @@ public class CoopNetPump implements EveryFrameScript {
                  LIGHT_SET, LIGHT_REQUEST, LIGHT_RESULT,
                  STORM_SET, STORM_GRID,
                  FLEET_ROSTER, GUEST_SNAPSHOT, SESSION_STATS, STATE_DATAGRAM,
-                 TIME_SNAPSHOT, PAUSE_INTENT,
+                 TIME_SNAPSHOT, PAUSE_INTENT, FF_INTENT,
                  OPTIONS_SNAPSHOT, OPTIONS_APPLIED,
                  // A marker records a moment that has already happened; the drop edge does not
                  // undo it, and a marker the partner pressed a frame before its router died is
@@ -4736,13 +4854,16 @@ public class CoopNetPump implements EveryFrameScript {
                  // Phase 34: the guest's Wingman name is a fact about the guest, not the socket;
                  // and it is reliable, so the cross-table rule requires it to survive anyway.
                  WINGMAN_HELLO,
+                 // Extended sync: guest restore, contacts, story flags, chat, Nexerelin events.
+                 GUEST_SNAPSHOT_RESTORE, CONTACT_SET, STORY_STATE, CHAT_MSG, NEX_EVENT,
                  // 0.1.1, and the one member of isConnectionScopedControl that survives: a pre-drop
                  // ack is the partner saying it applied those seqs, which stays true after the drop.
                  // Honouring it is what stops the resume replaying messages that already landed.
                  RELIABLE_ACK -> true;
             // Scoped to the connection the drop edge just tore down, or to state it just reset.
-            case STORM_CONTROL, INTERACTION_CLAIM, INTERACTION_ACCEPT, INTERACTION_REJECT, INTERACTION_RELEASE,
-                 DIALOG_BEGIN,
+            case STORM_CONTROL, AMBIENT_CALL, COLONY_CONSENT_REQ, COLONY_CONSENT_RES, TRADE_SYNC,
+                 INTERACTION_CLAIM, INTERACTION_ACCEPT, INTERACTION_REJECT, INTERACTION_RELEASE,
+                 DIALOG_BEGIN, BATTLE_ORDER, BATTLE_ORDER_ACK,
                  LOBBY_HELLO, LOBBY_CHALLENGE, LOBBY_ACCEPT, LOBBY_REJECT, LOBBY_STATUS,
                  HANDSHAKE_MANIFEST, HANDSHAKE_RESULT,
                  SEED_LOCK_REQUEST, SEED_LOCK_ACK, SEED_LOCK_REJECT,
@@ -4838,6 +4959,9 @@ public class CoopNetPump implements EveryFrameScript {
         encounterAuthority.rearmFullBroadcast();
         lightAuthority.rearmFullBroadcast();
         stormAuthority.rearmFullBroadcast();
+        if (bountyAuthority != null) {
+            bountyAuthority.rearmBroadcast();
+        }
         datagramWatermark.reset();
         datagramRedundancy.reset();
         // Phase 20 M4: the returning peer holds no roster, so this side owes it one before its next
@@ -4935,6 +5059,9 @@ public class CoopNetPump implements EveryFrameScript {
             } else {
                 // Drop the synthesized hold snapshot; the host's next real one is the truth.
                 stormAuthority.rearmFullBroadcast();
+        if (bountyAuthority != null) {
+            bountyAuthority.rearmBroadcast();
+        }
                 latestTimeSnapshot = null;
                 lastReconciledTimeSnapshot = null;
             }
@@ -5054,6 +5181,36 @@ public class CoopNetPump implements EveryFrameScript {
     static boolean isTerminalRejectType(CoopMessages.Type type) {
         return type == CoopMessages.Type.SEED_LOCK_REJECT
                 || type == CoopMessages.Type.HANDSHAKE_RESULT;
+    }
+
+    private static final int MAX_COMBAT_DEFERRED_INBOUND = 2048;
+
+    /**
+     * Phase 22: combat-frame inbound whitelist drain. Dispatches {@code BATTLE_ORDER}, {@code PING}
+     * and {@code PONG} while inside a battle, and parks all other inbound campaign messages onto
+     * {@link #deferredInbound} with their original connection-generation stamp intact (bounded so a
+     * long battle cannot accumulate an unbounded backlog).
+     */
+    private void drainCombatInbound(com.fs.starfarer.api.combat.CombatEngineAPI engine) {
+        CoopNetService.Inbound entry;
+        while ((entry = service.pollInboundEntry()) != null) {
+            CoopMessages.Message msg = entry.message();
+            CoopMessages.Type type = msg.type();
+            if (type == CoopMessages.Type.BATTLE_ORDER) {
+                battleBridge.handleCombatOrder(engine, msg);
+            } else if (type == CoopMessages.Type.PING) {
+                if (mayAnswerUnprovenPeer(type)) {
+                    sendPong(msg);
+                }
+            } else if (type == CoopMessages.Type.PONG) {
+                handlePong(msg);
+            } else {
+                if (deferredInbound.size() >= MAX_COMBAT_DEFERRED_INBOUND) {
+                    deferredInbound.pollFirst();
+                }
+                deferredInbound.addLast(new DeferredInbound(msg, entry.connectionGeneration()));
+            }
+        }
     }
 
     private void drainInbound() {
@@ -5445,23 +5602,34 @@ public class CoopNetPump implements EveryFrameScript {
             case SEED_LOCK_REJECT -> handleSeedLockReject(message);
             case TIME_SNAPSHOT -> handleTimeSnapshot(message);
             case PAUSE_INTENT -> handlePauseIntent(message);
+            case FF_INTENT -> handleFfIntent(message);
             case INTERACTION_CLAIM -> handleInteractionClaim(message);
             case INTERACTION_ACCEPT -> handleInteractionAccept(message);
             case INTERACTION_REJECT -> handleInteractionReject(message);
             case INTERACTION_RELEASE -> handleInteractionRelease(message);
             case NPC_FLEET_SET -> handleNpcFleetSet(message);
             case BASE_SET -> handleBaseSet(message);
+            case BOUNTY_SET -> handleBountySet(message);
             case STREAM_SET, STREAM_ADD, STREAM_DESPAWN, STREAM_REMOVE -> handleStream(message);
             case WRECK_SET, WRECK_ADD, WRECK_REMOVE, WRECK_CONSUME, WRECK_MUTATION, WRECK_MUTATION_ACK -> handleWreck(message);
             case ENC_SET -> handleEncounterSet(message);
             case LIGHT_SET, LIGHT_REQUEST, LIGHT_RESULT -> handleLight(message);
             case STORM_SET, STORM_GRID, STORM_CONTROL -> handleStorm(message);
-            case BATTLE_BEGIN, BATTLE_STATUS, BATTLE_END, ENGAGE_GUEST, DIALOG_BEGIN ->
+            case BATTLE_BEGIN, BATTLE_STATUS, BATTLE_END, BATTLE_ORDER, BATTLE_ORDER_ACK,
+                 ENGAGE_GUEST, DIALOG_BEGIN ->
                     handleBattleMessage(message);
             case BATTLE_RESULT -> handleBattleResult(message);
             case ALLY_BATTLE_JOIN -> handleAllyBattleJoin(message);
             case ALLY_BATTLE_RESULT -> handleAllyBattleResult(message);
             case WINGMAN_HELLO -> handleWingmanHello(message);
+            case AMBIENT_CALL -> handleAmbientCall(message);
+            case GUEST_SNAPSHOT_RESTORE -> handleGuestSnapshotRestore(message);
+            case COLONY_CONSENT_REQ, COLONY_CONSENT_RES -> handleColonyConsent(message);
+            case CONTACT_SET -> handleContactSet(message);
+            case STORY_STATE -> handleStoryState(message);
+            case TRADE_SYNC -> handleTradeSync(message);
+            case CHAT_MSG -> handleChatMsg(message);
+            case NEX_EVENT -> handleNexEvent(message);
             case GUEST_SNAPSHOT -> handleGuestSnapshot(message);
             case SAVE_CHECKPOINT -> handleSaveCheckpoint(message);
             case SAVE_CHECKPOINT_RESULT -> handleSaveCheckpointResult(message);
@@ -5613,6 +5781,9 @@ public class CoopNetPump implements EveryFrameScript {
             endHostWaitForReturningPartner();
         }
 
+        sessionState.setMaxGuests(service.peerCapacity());
+        sessionState.setAllowMidSessionJoin(
+                optionsPolicy.appliedBool(coop.config.CoopOptionsRegistry.ALLOW_MID_SESSION_JOIN));
         CoopMessages.Payload payload = CoopMessages.payload(message);
         CoopPlayerInfo guest = new CoopPlayerInfo(
                 payload.requiredString("playerId"),
@@ -5629,12 +5800,13 @@ public class CoopNetPump implements EveryFrameScript {
             return;
         }
 
-        // Defence in depth for the same finding: whatever put a second guest row in this roster,
-        // the peer being admitted is the only guest this build can have, so anybody else's row is
-        // stale by definition and must not be left to block the Start gate.
-        forgetDepartedGuestLobbyRows(guest.playerId(),
-                "a new guest was accepted into the single v1 guest slot");
+        if (sessionState.maxGuests() == 1) {
+            // Defence in depth for single-guest mode: clear any stale row before admitting.
+            forgetDepartedGuestLobbyRows(guest.playerId(),
+                    "a new guest was accepted into the single v1 guest slot");
+        }
         sessionState.hostAcceptGuest(guest);
+        peerPlayerNames.put(guest.playerId(), guest.name());
         CoopMessages.Message accept = CoopMessages.lobbyAccept(
                 service.nextSeq(),
                 clockMillis.getAsLong(),
@@ -6005,7 +6177,7 @@ public class CoopNetPump implements EveryFrameScript {
             return;
         }
 
-        String sessionId = sessionState.hostAcceptHandshake();
+        String sessionId = sessionState.hostAcceptHandshake(message.senderId());
         // The transport drops every datagram until it knows what this session's token looks like, so
         // it has to learn it at the same instant the session id exists — not a frame later.
         service.setExpectedSessionToken(CoopMessages.wireToken(sessionId));
@@ -6015,7 +6187,24 @@ public class CoopNetPump implements EveryFrameScript {
                 sessionId);
         service.sendTo(message.senderId(), accept);
         log("outbound", accept);
-        CoopLog.info(CoopNetPump.class, "Coop handshake accepted sessionId=" + sessionId);
+        CoopLog.info(CoopNetPump.class, "Coop handshake accepted sessionId=" + sessionId
+                + " guest=" + message.senderId());
+        // Phase 27: if a 2nd/3rd guest joins after the session is already seed-locked, send it
+        // a unicast SEED_LOCK_REQUEST right away without disturbing the already-running peers.
+        if (seedLockRequestSent && sessionState.seedLong() != null) {
+            CampaignIdResolution campaignId = resolveHostCampaignId();
+            CoopMessages.Message seedReq = CoopMessages.seedLockRequest(
+                    sessionId,
+                    service.nextSeq(),
+                    clockMillis.getAsLong(),
+                    sessionState.seedLong(),
+                    sessionState.seedString(),
+                    sessionState.sectorFingerprint(),
+                    campaignId.id(),
+                    campaignId.minted());
+            service.sendTo(message.senderId(), seedReq);
+            log("outbound", seedReq);
+        }
     }
 
     private void maybeSendSeedLockRequest() {
@@ -6414,10 +6603,33 @@ public class CoopNetPump implements EveryFrameScript {
         // endSessionAfterDrop. Not cleared on a drop: a session held through a grace window is still
         // a session whose guest passed the seed lock.
         guestSeedLockAcked = true;
+        if (sessionState.seedLong() != null) {
+            sessionState.recordSeedLockForGuest(message.senderId(),
+                    sessionState.seedLong(), sessionState.seedString(), sessionState.sectorFingerprint());
+        }
         // The campaign's birth is only real now that somebody else has accepted the id.
         commitMintedCampaignId();
         CoopLog.info(CoopNetPump.class,
-                "Coop seed lock accepted by guest sectorFingerprint=" + guestFingerprint);
+                "Coop seed lock accepted by guest " + message.senderId()
+                        + " sectorFingerprint=" + guestFingerprint);
+        if (sessionState.lobbyReleased()) {
+            // Phase 27 mid-session join: this guest joined after the host released the lobby.
+            // Push the current player roster + released=true directly to it and rebroadcast world state.
+            java.util.List<CoopMessages.LobbyPlayer> players = new java.util.ArrayList<>();
+            players.add(new CoopMessages.LobbyPlayer(
+                    sessionState.localPlayerId(), sessionState.localName(),
+                    coop.session.CoopJoinPhase.READY.name(), true, -1L, ""));
+            for (coop.session.CoopSessionState.PeerSession peer : sessionState.guests()) {
+                players.add(new CoopMessages.LobbyPlayer(
+                        peer.playerId(), peer.name(),
+                        coop.session.CoopJoinPhase.READY.name(), true, -1L, ""));
+            }
+            CoopMessages.Message statusMsg = CoopMessages.lobbyStatus(
+                    sessionState.sessionId(), service.nextSeq(), clockMillis.getAsLong(),
+                    players, -1L, true, "", 0L);
+            service.send(statusMsg);
+            forceFullRebroadcast();
+        }
         if (CoopDebug.diagnosticsEnabled()) {
             dumpCanonicalFingerprint("host seed lock accepted");
         }
@@ -6659,6 +6871,8 @@ public class CoopNetPump implements EveryFrameScript {
                 // auto-pause (combat/messages); treat it as the host's own pause intent.
                 pauseCoordinator.setHostPauseIntent(observed);
             }
+            pauseCoordinator.setAllowGuestPause(optionsPolicy.appliedBool(
+                    coop.config.CoopOptionsRegistry.ALLOW_GUEST_PAUSE));
             boolean effective = pauseCoordinator.effectivePaused();
             if (observed != effective) {
                 sector.setPaused(effective);
@@ -6666,6 +6880,15 @@ public class CoopNetPump implements EveryFrameScript {
             hostEffectivePauseApplied = effective;
             // Record what the host clock now shows so the host pause key resolves against it.
             pauseCoordinator.setObservedPaused(effective);
+            // Phase 25: drive the host's fastForward field from the coordinator (any player may toggle).
+            boolean desiredFf = fastForwardLock.isAvailable() && pauseCoordinator.effectiveFastForward();
+            if (!fastForwardLock.isAvailable() && pauseCoordinator.effectiveFastForward()) {
+                pauseCoordinator.setEffectiveFastForward(false);
+            }
+            if (fastForwardLock.isAvailable()) {
+                fastForwardLock.writeFastForward(desiredFf);
+            }
+            pauseCoordinator.setObservedFastForward(desiredFf);
         } catch (RuntimeException | LinkageError ex) {
             CoopLog.warn(CoopNetPump.class, "Failed to apply host shared pause", ex);
         }
@@ -6712,8 +6935,27 @@ public class CoopNetPump implements EveryFrameScript {
         // Manual pause: forwarded on every key press (resolved against the observed pause state) so a
         // host force-clear can never leave the two out of sync.
         if (pauseCoordinator.consumeGuestKeyPress()) {
+            boolean allowed = optionsPolicy.appliedBool(coop.config.CoopOptionsRegistry.ALLOW_GUEST_PAUSE);
+            if (!allowed) {
+                coop.ui.CoopFeed.post("Coop: Host has disabled manual guest pause.", null);
+            }
             sendPauseIntent(CoopMessages.PauseSource.KEY, pauseCoordinator.desiredKeyPause());
         }
+        // Phase 25: guest Shift press toggles global fast-forward immediately.
+        if (pauseCoordinator.consumeGuestFastForwardKeyPress()) {
+            sendFfIntent(pauseCoordinator.desiredFastForward());
+        }
+    }
+
+    private void sendFfIntent(boolean fastForward) {
+        CoopMessages.Message message = CoopMessages.ffIntent(
+                sessionState.sessionId(),
+                service.nextSeq(),
+                clockMillis.getAsLong(),
+                fastForward,
+                pauseCoordinator.nextLocalSeq());
+        service.send(message);
+        log("outbound", message);
     }
 
     private void sendPauseIntent(CoopMessages.PauseSource source, boolean paused) {
@@ -6793,11 +7035,38 @@ public class CoopNetPump implements EveryFrameScript {
         boolean paused = Boolean.parseBoolean(payload.requiredString("paused"));
         long intentSeq = payload.requiredLong("intentSeq");
         boolean applied = source == CoopMessages.PauseSource.SCREEN
-                ? pauseCoordinator.applyGuestScreenPauseIntent(paused, intentSeq)
-                : pauseCoordinator.applyGuestKeyPauseIntent(paused, intentSeq);
+                ? pauseCoordinator.applyGuestScreenPauseIntent(message.senderId(), paused, intentSeq)
+                : pauseCoordinator.applyGuestKeyPauseToggle(message.senderId(), paused, intentSeq);
         if (applied) {
             CoopLog.info(CoopNetPump.class, "Coop guest pause intent applied source=" + source
                     + " paused=" + paused + " intentSeq=" + intentSeq);
+        }
+    }
+
+    private void handleFfIntent(CoopMessages.Message message) {
+        if (service.role() != CoopConnectionRole.HOST || !isGameplaySessionActive()) {
+            return;
+        }
+        int delayMillis = CoopDebug.interactionClaimDelayMillis();
+        if (delayMillis > 0 && queueDelayedGuestMessage(message, delayMillis)) {
+            return;
+        }
+        applyFfIntent(message);
+    }
+
+    private void applyFfIntent(CoopMessages.Message message) {
+        CoopMessages.Payload payload = CoopMessages.payload(message);
+        boolean fastForward = Boolean.parseBoolean(payload.requiredString("fastForward"));
+        long intentSeq = payload.requiredLong("intentSeq");
+        if (pauseCoordinator.applyGuestFastForwardIntent(message.senderId(), fastForward, intentSeq)) {
+            boolean desired = fastForwardLock.isAvailable() && pauseCoordinator.effectiveFastForward();
+            if (fastForwardLock.isAvailable()) {
+                fastForwardLock.writeFastForward(desired);
+            }
+            pauseCoordinator.setObservedFastForward(desired);
+            nextTimeSnapshotAtMillis = 0L;
+            CoopLog.info(CoopNetPump.class, "Coop guest fast-forward intent applied fastForward="
+                    + desired + " intentSeq=" + intentSeq);
         }
     }
 
@@ -6853,6 +7122,7 @@ public class CoopNetPump implements EveryFrameScript {
             // The guest's clock mirrors the host snapshot; record it so the guest pause key resolves
             // against the observed state instead of blindly toggling a private intent.
             pauseCoordinator.setObservedPaused(latestTimeSnapshot.paused());
+            pauseCoordinator.setObservedFastForward(latestTimeSnapshot.fastForward());
             // The snapshot is re-applied every frame, but it is one measurement: feed it to the
             // reconciler once, or the ring fills at frame rate with one stale host stamp against an
             // advancing guest clock and the estimate biases negative by up to a snapshot interval.
@@ -6963,6 +7233,9 @@ public class CoopNetPump implements EveryFrameScript {
         // noEngaging fader lasts ~1 s, so refreshing it every frame per mirror was pure allocation).
         long now = clockMillis.getAsLong();
         fleetMirror.assertEngagementShield(now);
+        for (CoopFleetMirror extra : extraPlayerMirrors.values()) {
+            extra.assertEngagementShield(now);
+        }
         // Phase 14b: the remote player's sensor identity has to be re-pinned every frame — the engine
         // rewrites sensor strength from the roster each frame and local terrain re-applies its own
         // detectability mods each frame. See CoopSensorSync.
@@ -7041,16 +7314,25 @@ public class CoopNetPump implements EveryFrameScript {
             // on its own, so resetting these on every link drop costs nothing extra.
             lastSentRosterHash = "";
             rosterCache.reset();
+            for (coop.fleet.CoopRosterCache extraCache : extraRosterCaches.values()) {
+                extraCache.reset();
+            }
             nextRosterRequestAtMillis = 0L;
-            // The mirror itself is disposed only on a real session end (b2c1988's sessionHeld rule),
-            // not on a drop inside a reconnect grace window. Live evidence 2026-09-19: the partner's
-            // player mirror was disposed on every blip alongside the NPC mirrors that fix already
-            // covers, so the host's CoopGuestPresence logged "released (no guest mirror)" and every
-            // vanilla disposable-fleet manager despawned the guest's fleets, which respawned under new
-            // ids on resume. reconnect.end() and a SESSION_LEAVE both still run this dispose, because
-            // reconnect.active() is false by then while shouldStreamFleet() still is too.
-            if (fleetMirror.hasMirrorFleet() && !reconnect.active()) {
-                fleetMirror.dispose();
+            if (!reconnect.active()) {
+                if (fleetMirror.hasMirrorFleet()) {
+                    fleetMirror.dispose();
+                }
+                for (CoopFleetMirror extra : extraPlayerMirrors.values()) {
+                    if (extra.hasMirrorFleet()) {
+                        extra.dispose();
+                    }
+                }
+                extraPlayerMirrors.clear();
+                extraRosterCaches.clear();
+                peerPlayerNames.clear();
+                guestReportedPhases.clear();
+                guestReportedReadies.clear();
+                guestReadyPendingIds.clear();
             }
         }
     }
@@ -7112,7 +7394,7 @@ public class CoopNetPump implements EveryFrameScript {
         return true;
     }
 
-    /** Host or guest: the peer's roster, cached until its hash changes. */
+    /** Host or guest: a peer's roster, cached until its hash changes (Phase 27: multi-guest relay). */
     private void handleFleetRoster(CoopMessages.Message message) {
         if (!isGameplaySessionActive()) {
             return;
@@ -7124,12 +7406,24 @@ public class CoopNetPump implements EveryFrameScript {
             CoopLog.warn(CoopNetPump.class, "Failed to decode coop FLEET_ROSTER", ex);
             return;
         }
-        if (!roster.playerId().equals(sessionState.remotePlayerId())) {
+        String peerId = roster.playerId();
+        boolean knownPeer = peerId.equals(sessionState.remotePlayerId())
+                || (service.role() == CoopConnectionRole.HOST && sessionState.hasGuest(peerId))
+                || (service.role() == CoopConnectionRole.GUEST && peerPlayerNames.containsKey(peerId));
+        if (!knownPeer) {
             return;
         }
-        rosterCache.accept(roster);
-        CoopLog.info(CoopNetPump.class, "Coop cached FLEET_ROSTER from " + roster.playerId()
+        rosterCacheFor(peerId).accept(roster);
+        CoopLog.info(CoopNetPump.class, "Coop cached FLEET_ROSTER from " + peerId
                 + " ships=" + roster.members().size() + " fleetHash16=" + roster.fleetHash16());
+        // Phase 27: host relays a guest's roster to all other connected guests so they render each other.
+        if (service.role() == CoopConnectionRole.HOST && sessionState.guestCount() > 1) {
+            for (String otherGuestId : sessionState.guestIds()) {
+                if (!otherGuestId.equals(peerId)) {
+                    service.sendTo(otherGuestId, message);
+                }
+            }
+        }
     }
 
     /**
@@ -7578,8 +7872,17 @@ public class CoopNetPump implements EveryFrameScript {
             return;
         }
         String reason = CoopMessages.parseSessionLeaveReason(message);
-        String name = remoteDisplayName();
         long now = clockMillis.getAsLong();
+        // Phase 27: in a multi-guest session, one guest leaving removes ONLY that guest and keeps
+        // the session running for the host and remaining guests.
+        if (service.role() == CoopConnectionRole.HOST && sessionState.guestCount() > 1
+                && message.senderId() != null && sessionState.hasGuest(message.senderId())) {
+            String departingId = message.senderId();
+            String departingName = sessionState.guestDisplayName(departingId);
+            removeSingleGuestFromHostSession(departingId, departingName, reason, now);
+            return;
+        }
+        String name = remoteDisplayName();
         CoopLog.warn(CoopNetPump.class, "Coop partner left the game on purpose (" + reason
                 + ") as " + service.role() + "; ending the session now rather than holding the world"
                 + " for a reconnect that is not coming");
@@ -7601,6 +7904,47 @@ public class CoopNetPump implements EveryFrameScript {
         endSessionAfterDrop();
         noteDesync(CoopReconnectCoordinator.REASON_PARTNER_LEFT,
                 coop.ui.CoopDesyncReason.Source.SESSION_RESUME, correlationId);
+    }
+
+    /** Phase 27: removes one departing guest without interrupting the rest of a multi-guest session. */
+    private void removeSingleGuestFromHostSession(String guestId, String guestName,
+                                                  String reason, long now) {
+        boolean wasPrimary = guestId.equals(sessionState.remotePlayerId());
+        sessionState.hostRemoveGuest(guestId);
+        pauseCoordinator.removeGuest(guestId);
+        interactionGate.releaseAllForPlayer(guestId);
+        lobbyRoster.remove(guestId);
+        peerPlayerNames.remove(guestId);
+        guestReportedPhases.remove(guestId);
+        guestReportedReadies.remove(guestId);
+        guestReadyPendingIds.remove(guestId);
+        extraRosterCaches.remove(guestId);
+        coop.fleet.CoopGuestMirrorHandle.clearForPlayer(guestId);
+        if (wasPrimary) {
+            if (fleetMirror.hasMirrorFleet()) {
+                fleetMirror.dispose();
+            }
+            rosterCache.reset();
+            String nextPrimary = sessionState.remotePlayerId();
+            if (nextPrimary != null) {
+                CoopFleetMirror promoted = extraPlayerMirrors.remove(nextPrimary);
+                if (promoted != null) {
+                    fleetMirror = promoted;
+                }
+            }
+        } else {
+            CoopFleetMirror departingMirror = extraPlayerMirrors.remove(guestId);
+            if (departingMirror != null && departingMirror.hasMirrorFleet()) {
+                departingMirror.dispose();
+            }
+        }
+        if (wingmanIntegration != null) {
+            wingmanIntegration.removeGuest(guestId);
+        }
+        CoopLog.info(CoopNetPump.class, "Coop guest " + guestName + " (" + guestId
+                + ") left multi-guest session (" + reason + "); " + sessionState.guestCount()
+                + " guest(s) remain");
+        postFeed(FEED_PARTNER_LEFT, now, "Co-op: " + guestName + " left the session.", FEED_WARN_COLOR);
     }
 
     private void drainFleetDatagrams() {
@@ -7690,10 +8034,59 @@ public class CoopNetPump implements EveryFrameScript {
         }
     }
 
-    /** Whether {@code senderId} is the remote coop player's wire token (red-team A6/A9). */
+    /** Whether {@code senderId} is a known remote coop player's wire token (Phase 27: multi-guest). */
     private boolean isRemoteSender(String senderId) {
+        return resolvePlayerIdForSenderToken(senderId) != null;
+    }
+
+    private String resolvePlayerIdForSenderToken(String senderToken) {
+        if (senderToken == null || senderToken.isEmpty()) {
+            return null;
+        }
         String expected = remoteSenderToken();
-        return !expected.isEmpty() && expected.equals(senderId);
+        if (!expected.isEmpty() && expected.equals(senderToken)) {
+            return sessionState.remotePlayerId();
+        }
+        if (service.role() == CoopConnectionRole.HOST) {
+            for (coop.session.CoopSessionState.PeerSession peer : sessionState.guests()) {
+                if (senderToken.equals(peer.playerId())
+                        || senderToken.equals(CoopMessages.wireToken(peer.playerId()))) {
+                    return peer.playerId();
+                }
+            }
+        } else if (service.role() == CoopConnectionRole.GUEST) {
+            for (String peerId : peerPlayerNames.keySet()) {
+                if (senderToken.equals(peerId)
+                        || senderToken.equals(CoopMessages.wireToken(peerId))) {
+                    return peerId;
+                }
+            }
+        }
+        return null;
+    }
+
+    private CoopFleetMirror playerMirrorFor(String playerId) {
+        if (playerId == null || playerId.equals(sessionState.remotePlayerId())) {
+            return fleetMirror;
+        }
+        return extraPlayerMirrors.computeIfAbsent(playerId, ignored -> new CoopFleetMirror());
+    }
+
+    private coop.fleet.CoopRosterCache rosterCacheFor(String playerId) {
+        if (playerId == null || playerId.equals(sessionState.remotePlayerId())) {
+            return rosterCache;
+        }
+        return extraRosterCaches.computeIfAbsent(playerId, ignored -> new coop.fleet.CoopRosterCache());
+    }
+
+    private String displayNameForPeer(String playerId) {
+        if (playerId == null || playerId.equals(sessionState.remotePlayerId())) {
+            return sessionState.remoteName();
+        }
+        if (service.role() == CoopConnectionRole.HOST) {
+            return sessionState.guestDisplayName(playerId);
+        }
+        return peerPlayerNames.getOrDefault(playerId, "Guest");
     }
 
     private void noteSenderMismatch(String senderId) {
@@ -7846,22 +8239,34 @@ public class CoopNetPump implements EveryFrameScript {
      * taken; mirror semantics are unchanged by this phase.
      */
     private void applyFleetSnapshotSection(String senderId, CoopMessages.DatagramSection section) {
-        // The sender check that used to live here is now in ingestStateDatagram, ahead of the
-        // watermark and the loss estimate (red-team A6/A9); by this point the senderId has been
-        // matched against the remote player's token for every datagram type.
-        String remoteId = sessionState.remotePlayerId();
-        if (remoteId == null) {
+        String peerId = resolvePlayerIdForSenderToken(senderId);
+        if (peerId == null) {
             return;
         }
         if (!acceptSampleStamp(section.sentGameTimeMillis())) {
             return;
         }
         CoopFleetSnapshot.Tick tick = CoopFleetSnapshot.Tick.decode(section.body());
-        CoopFleetSnapshot snapshot = rosterCache.compose(tick, remoteId, sessionState.remoteName(),
-                clockMillis.getAsLong());
+        CoopFleetSnapshot snapshot = rosterCacheFor(peerId).compose(
+                tick, peerId, displayNameForPeer(peerId), clockMillis.getAsLong());
         double sampleTimeSeconds = section.sentGameTimeMillis() / 1000.0;
         motionTimeline.noteSample(sampleTimeSeconds);
-        fleetMirror.apply(snapshot, localPlayerFactionId(), sampleTimeSeconds);
+        playerMirrorFor(peerId).apply(snapshot, localPlayerFactionId(), sampleTimeSeconds);
+        // Phase 27: host relays guest A's fleet tick to all other connected guests so they see each other.
+        if (service.role() == CoopConnectionRole.HOST && sessionState.guestCount() > 1) {
+            String relayedDatagram = CoopMessages.datagram(
+                    CoopMessages.wireToken(sessionState.sessionId()),
+                    senderId,
+                    CoopMessages.Type.FLEET_SNAPSHOT,
+                    java.util.List.of(section));
+            CoopMessages.Message relayMsg = CoopMessages.stateDatagram(
+                    sessionState.sessionId(), service.nextSeq(), clockMillis.getAsLong(), relayedDatagram);
+            for (String otherGuestId : sessionState.guestIds()) {
+                if (!otherGuestId.equals(peerId)) {
+                    service.sendTo(otherGuestId, relayMsg);
+                }
+            }
+        }
     }
 
     private void handleNpcFleetMotion(CoopMessages.DatagramSection section,
@@ -7889,6 +8294,9 @@ public class CoopNetPump implements EveryFrameScript {
             return;
         }
         fleetMirror.advanceMotion(cursor);
+        for (CoopFleetMirror extra : extraPlayerMirrors.values()) {
+            extra.advanceMotion(cursor);
+        }
         npcFleetRegistry.advanceMotion(cursor);
         if (CoopDebug.diagnosticsEnabled()) {
             String report = coop.fleet.CoopMotionSpeedProbe.INSTANCE.maybeReport(clockMillis.getAsLong());
@@ -8570,6 +8978,7 @@ public class CoopNetPump implements EveryFrameScript {
             try {
                 switch (due.message().type()) {
                     case PAUSE_INTENT -> applyPauseIntent(due.message());
+                case FF_INTENT -> applyFfIntent(due.message());
                     case INTERACTION_RELEASE -> applyInteractionRelease(due.message());
                     default -> arbitrateInteractionClaim(due.message());
                 }
@@ -9222,6 +9631,12 @@ public class CoopNetPump implements EveryFrameScript {
                     payload.requiredString("outcome"),
                     (int) payload.requiredLong("engagingFleetSize"),
                     payload.requiredString("body"));
+            // Phase 34: evaluate and settle host person/system bounties BEFORE the reconciler
+            // despawns the destroyed fleets, or PersonBountyIntel ends as END_OTHER with no payout.
+            bountyAuthority().onGuestBattleResultPreReconcile(
+                    result, sessionState.sessionId(),
+                    message.senderId() != null && !message.senderId().isBlank()
+                            ? message.senderId() : result.engagingPlayerId());
             // Dedup guarantee: apply() is the battle-id ledger and returns false for a repeat, so a
             // resent BATTLE_RESULT cannot double-count the guest's battle.
             if (battleResultReconciler.apply(result)) {
@@ -9305,19 +9720,263 @@ public class CoopNetPump implements EveryFrameScript {
                 + (outcome.isEmpty() ? " (nothing to apply; the owner still gets its banner)" : ""));
     }
 
-    /**
-     * Owner side: the partner's engine has this player's fleet in a fight. One HUD line, because the
-     * campaign is about to stop and the owner deserves to know whose battle stopped it.
-     */
     /** Phase 34: guest &rarr; host, the guest's Wingman panel name for flagship reservation. */
     private void handleWingmanHello(CoopMessages.Message message) {
+        if (droppedBeforeTheSession(message.type())) {
+            return;
+        }
         if (service.role() != CoopConnectionRole.HOST) {
             return;
         }
-        wingmanIntegration().onGuestWingmanName(CoopMessages.parseWingmanHelloName(message));
+        try {
+            wingmanIntegration().onGuestWingmanName(message.senderId(),
+                    CoopMessages.parseWingmanHelloName(message));
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to read a WINGMAN_HELLO", ex);
+        }
+    }
+
+    private final coop.chat.CoopChatService chatService = new coop.chat.CoopChatService();
+    private final coop.campaign.CoopContactAuthority contactAuthority = new coop.campaign.CoopContactAuthority();
+    private final coop.colony.CoopColonizationConsent colonizationConsent = new coop.colony.CoopColonizationConsent();
+
+    /** Phase 26: guest &rarr; host ambient system-call request (slipsurge / abyssal trigger). */
+    private void handleAmbientCall(CoopMessages.Message message) {
+        if (droppedBeforeTheSession(message.type()) || service.role() != CoopConnectionRole.HOST) {
+            return;
+        }
+        try {
+            coop.campaign.CoopAmbientSystemSync.AmbientAction action =
+                    coop.campaign.CoopAmbientSystemSync.AmbientAction.decode(CoopMessages.parseBody(message));
+            if (action != null) {
+                CoopLog.info(CoopNetPump.class, "Coop host accepted AMBIENT_CALL kind=" + action.kind()
+                        + " actor=" + action.actorId() + " pos=(" + action.x() + "," + action.y() + ")");
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to handle AMBIENT_CALL", ex);
+        }
+    }
+
+    /** Host &rarr; guest fleet/cargo/credits/officer restore from {@code coop.guestFleetSnapshots}. */
+    private void handleGuestSnapshotRestore(CoopMessages.Message message) {
+        if (droppedBeforeTheSession(message.type()) || service.role() != CoopConnectionRole.GUEST) {
+            return;
+        }
+        try {
+            coop.save.CoopGuestSnapshot snapshot =
+                    coop.save.CoopGuestSnapshot.decodeBody(CoopMessages.parseBody(message));
+            com.fs.starfarer.api.campaign.SectorAPI sector = com.fs.starfarer.api.Global.getSector();
+            if (snapshot != null && sector != null) {
+                coop.save.CoopGuestSnapshotRestorer.RestoreReport report =
+                        coop.save.CoopGuestSnapshotRestorer.restore(
+                                snapshot, coop.save.CoopGuestSnapshotRestorer.liveTarget(sector));
+                if (report.applied()) {
+                    coop.ui.CoopFeed.post("Co-op: restored your saved fleet (" + report.shipsRestored()
+                                    + " ships, " + Math.round(report.creditsRestored()) + " credits).",
+                            null, coop.ui.CoopFeed.Severity.IMPORTANT);
+                }
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to apply GUEST_SNAPSHOT_RESTORE", ex);
+        }
+    }
+
+    /** Guest colonization consent request/response when {@code coop.guestColonizationConsent=true}. */
+    private void handleColonyConsent(CoopMessages.Message message) {
+        if (droppedBeforeTheSession(message.type())) {
+            return;
+        }
+        String body = CoopMessages.parseBody(message);
+        List<String> fields = coop.campaign.CoopDelimited.split(body);
+        if (message.type() == CoopMessages.Type.COLONY_CONSENT_REQ
+                && service.role() == CoopConnectionRole.HOST && fields.size() >= 4) {
+            colonizationConsent.submit(new coop.colony.CoopColonizationConsent.Request(
+                    fields.get(0),
+                    message.senderId() == null ? "guest" : message.senderId(),
+                    fields.get(1),
+                    fields.get(2),
+                    fields.get(3),
+                    clockMillis.getAsLong()));
+            coop.ui.CoopFeed.post("Co-op: " + fields.get(1) + " requests permission to colonize "
+                    + fields.get(3) + ".", null, coop.ui.CoopFeed.Severity.IMPORTANT);
+        } else if (message.type() == CoopMessages.Type.COLONY_CONSENT_RES
+                && service.role() == CoopConnectionRole.GUEST && fields.size() >= 2) {
+            boolean approved = Boolean.parseBoolean(fields.get(1));
+            coop.ui.CoopFeed.post(approved
+                    ? "Co-op: host approved colonization."
+                    : "Co-op: host declined colonization.", null, coop.ui.CoopFeed.Severity.IMPORTANT);
+        }
+    }
+
+    /** Host &rarr; guest contacts and contact missions replication. */
+    private void handleContactSet(CoopMessages.Message message) {
+        if (droppedBeforeTheSession(message.type()) || service.role() != CoopConnectionRole.GUEST) {
+            return;
+        }
+        try {
+            contactAuthority.replaceAll(
+                    coop.campaign.CoopContactAuthority.decode(CoopMessages.parseBody(message)));
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to apply CONTACT_SET", ex);
+        }
+    }
+
+    /** Host &rarr; guest whitelisted Galatia ({@code $ga*}) and Sindrian Diktat ({@code $sd*}) flags. */
+    private void handleStoryState(CoopMessages.Message message) {
+        if (droppedBeforeTheSession(message.type()) || service.role() != CoopConnectionRole.GUEST) {
+            return;
+        }
+        try {
+            com.fs.starfarer.api.campaign.SectorAPI sector = com.fs.starfarer.api.Global.getSector();
+            if (sector != null && sector.getMemoryWithoutUpdate() != null) {
+                java.util.Map<String, coop.campaign.CoopStorySyncFramework.StoryFlag> flags =
+                        coop.campaign.CoopStorySyncFramework.decode(CoopMessages.parseBody(message));
+                coop.campaign.CoopStorySyncFramework.applyAuthoritative(
+                        flags, coop.campaign.CoopStorySyncFramework.wrapMemory(sector.getMemoryWithoutUpdate()));
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to apply STORY_STATE", ex);
+        }
+    }
+
+    /** Bidirectional direct player-to-player trade frame. */
+    private void handleTradeSync(CoopMessages.Message message) {
+        if (droppedBeforeTheSession(message.type())) {
+            return;
+        }
+        try {
+            coop.trade.CoopTradeSession.WireFrame frame =
+                    coop.trade.CoopTradeSession.decodeOffer(CoopMessages.parseBody(message));
+            if (frame != null) {
+                coop.ui.CoopFeed.post("Co-op trade [" + frame.action() + "] updated by partner.",
+                        null, coop.ui.CoopFeed.Severity.IMPORTANT);
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to handle TRADE_SYNC", ex);
+        }
+    }
+
+    /** Bidirectional in-game co-op text chat message (host relays to other guests). */
+    private void handleChatMsg(CoopMessages.Message message) {
+        if (droppedBeforeTheSession(message.type())) {
+            return;
+        }
+        try {
+            coop.chat.CoopChatService.ChatMessage decoded =
+                    coop.chat.CoopChatService.decode(CoopMessages.parseBody(message));
+            if (decoded == null) {
+                return;
+            }
+            coop.chat.CoopChatService.ChatMessage accepted = chatService.accept(
+                    decoded.senderId(), decoded.senderName(), decoded.text(), clockMillis.getAsLong());
+            if (accepted != null) {
+                coop.ui.CoopFeed.post("[Chat] " + accepted.senderName() + ": " + accepted.text(),
+                        null, coop.ui.CoopFeed.Severity.IMPORTANT);
+                if (service.role() == CoopConnectionRole.HOST) {
+                    String encodedChat = coop.chat.CoopChatService.encode(accepted);
+                    for (String peerId : sessionState.guestIds()) {
+                        if (peerId != null && !peerId.equals(message.senderId())) {
+                            service.sendTo(peerId, CoopMessages.chatMsg(
+                                    sessionState.sessionId(), service.nextSeq(),
+                                    clockMillis.getAsLong(), encodedChat));
+                        }
+                    }
+                }
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to handle CHAT_MSG", ex);
+        }
+    }
+
+    /** Host &rarr; guest optional Nexerelin diplomacy/invasion state event. */
+    private void handleNexEvent(CoopMessages.Message message) {
+        if (droppedBeforeTheSession(message.type()) || service.role() != CoopConnectionRole.GUEST) {
+            return;
+        }
+        try {
+            coop.compat.CoopNexerelinAdapter.NexEvent event =
+                    coop.compat.CoopNexerelinAdapter.decode(CoopMessages.parseBody(message));
+            if (event != null) {
+                coop.compat.CoopNexerelinAdapter.apply(event, coop.compat.CoopNexerelinAdapter.liveWorld());
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to apply NEX_EVENT", ex);
+        }
     }
 
     /** Phase 34: lazily created integration; the first frame a session runs pays the cost. */
+    private coop.campaign.CoopBountyAuthority bountyAuthority() {
+        if (bountyAuthority == null) {
+            bountyAuthority = new coop.campaign.CoopBountyAuthority(
+                    clockMillis,
+                    body -> {
+                        if (service.role() != CoopConnectionRole.HOST || !service.isConnected()
+                                || !isGameplaySessionActive()) {
+                            return;
+                        }
+                        CoopMessages.Message msg = CoopMessages.bountySet(
+                                sessionState.sessionId(), service.nextSeq(),
+                                clockMillis.getAsLong(), body);
+                        service.send(msg);
+                        log("outbound", msg);
+                    },
+                    (recipientId, ledgerId, amount, reason) -> {
+                        if (service.role() != CoopConnectionRole.HOST || !service.isConnected()
+                                || !isGameplaySessionActive()) {
+                            return;
+                        }
+                        CoopMessages.Message grant = CoopMessages.creditsGrant(
+                                sessionState.sessionId(), service.nextSeq(),
+                                clockMillis.getAsLong(), ledgerId, amount, reason);
+                        if (recipientId != null && !recipientId.isBlank()) {
+                            service.sendTo(recipientId, grant);
+                        } else {
+                            service.send(grant);
+                        }
+                        log("outbound", grant);
+                    });
+        }
+        return bountyAuthority;
+    }
+
+    private void syncBountyReplication() {
+        boolean streaming = shouldStreamFleet();
+        boolean sessionHeld = streaming || reconnect.active();
+        if (!sessionHeld) {
+            if (bountyReplicationStreaming) {
+                if (bountyAuthority != null) {
+                    bountyAuthority.dispose();
+                }
+                bountyReplicationStreaming = false;
+            }
+            return;
+        }
+        if (!bountyReplicationStreaming) {
+            bountyReplicationStreaming = true;
+            if (bountyAuthority != null) {
+                bountyAuthority.rearmBroadcast();
+            }
+        }
+        if (!streaming) {
+            return;
+        }
+        if (service.role() == CoopConnectionRole.HOST && peerProvenForOutbound()) {
+            bountyAuthority().tickHost();
+        }
+    }
+
+    private void handleBountySet(CoopMessages.Message message) {
+        if (service.role() != CoopConnectionRole.GUEST || !isGameplaySessionActive()) {
+            return;
+        }
+        try {
+            String body = CoopMessages.payload(message).requiredString("body");
+            bountyAuthority().applyGuestSet(body);
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to handle BOUNTY_SET", ex);
+        }
+    }
+
     private CoopWingmanIntegration wingmanIntegration() {
         CoopWingmanIntegration integration = wingmanIntegration;
         if (integration == null) {
@@ -9325,12 +9984,17 @@ public class CoopNetPump implements EveryFrameScript {
                     m -> {
                         service.send(m);
                         log("outbound", m);
-                    });
+                    },
+                    () -> guestConnectHost);
             wingmanIntegration = integration;
         }
         return integration;
     }
 
+    /**
+     * Owner side: the partner's engine has this player's fleet in a fight. One HUD line, because the
+     * campaign is about to stop and the owner deserves to know whose battle stopped it.
+     */
     private void handleAllyBattleJoin(CoopMessages.Message message) {
         if (droppedBeforeTheSession(message.type())) {
             return;
@@ -9791,6 +10455,49 @@ public class CoopNetPump implements EveryFrameScript {
             return;
         }
         markDialogs.tick();
+    }
+
+    /** Phase 22: opens the opt-in tactical map dialog while a partner battle is active. */
+    private void requestTacticalMapDialog() {
+        if (!battleBridge.isRemoteBattleActive() || !tacticalMapMayRequest()) {
+            return;
+        }
+        coop.ui.CoopTacticalMapDialogPlugin plugin = new coop.ui.CoopTacticalMapDialogPlugin(
+                battleBridge::remoteStatus,
+                battleBridge::sendBattleOrder,
+                this::onTacticalMapDialogClosed);
+        activeTacticalMapDialog = plugin;
+        battleBridge.setOrderAckListener(plugin::onOrderAck);
+        tacticalMapDialogs.request(plugin);
+    }
+
+    private void onTacticalMapDialogClosed() {
+        activeTacticalMapDialog = null;
+        battleBridge.setOrderAckListener(null);
+    }
+
+    private void closeTacticalMapDialog() {
+        tacticalMapDialogs.close();
+        activeTacticalMapDialog = null;
+        battleBridge.setOrderAckListener(null);
+    }
+
+    private boolean tacticalMapMayRequest() {
+        return coop.ui.CoopDialogArbiter.mayRequest(coop.ui.CoopDialogArbiter.TACTICAL_MAP,
+                reconnectDialogs.isRequested() ? coop.ui.CoopDialogArbiter.RECONNECT : null,
+                desyncDialogs.isRequested() ? coop.ui.CoopDialogArbiter.DESYNC : null,
+                lobbyDialogs.isRequested() ? coop.ui.CoopDialogArbiter.LOBBY : null,
+                connectingDialogs.isRequested() ? coop.ui.CoopDialogArbiter.CONNECTING : null,
+                markDialogs.isRequested() ? coop.ui.CoopDialogArbiter.MARK : null);
+    }
+
+    private void tickTacticalMapDialog() {
+        if (tacticalMapDialogs.isRequested()
+                && (!battleBridge.isRemoteBattleActive() || !tacticalMapMayRequest())) {
+            closeTacticalMapDialog();
+            return;
+        }
+        tacticalMapDialogs.tick();
     }
 
     /** Test read: whether the marker note box is being asked for. */

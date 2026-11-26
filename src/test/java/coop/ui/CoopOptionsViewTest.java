@@ -241,11 +241,15 @@ class CoopOptionsViewTest {
     }
 
     @Test
-    void maxGuestsHasNoStepperBecauseItsBoundsLeaveNothingToChoose() {
+    void maxGuestsIsReadOnlyLaunchPolicyKeyWithOneToThreeBounds() {
         CoopOptionsView.Row row = row(CoopOptionsView.of(CoopConnectionRole.HOST, false,
                 new FakeReader()), CoopOptionsRegistry.MAX_GUESTS);
 
+        // Launch-read policy key: displayed read-only on the in-game page, configured at launch.
         assertEquals(CoopOptionsView.Control.NONE, row.control());
+        assertEquals("2", CoopOptionsView.nextValue(CoopOptionsRegistry.MAX_GUESTS, "1", 1));
+        assertEquals("3", CoopOptionsView.nextValue(CoopOptionsRegistry.MAX_GUESTS, "2", 1));
+        assertEquals("2", CoopOptionsView.nextValue(CoopOptionsRegistry.MAX_GUESTS, "3", -1));
     }
 
     // ---- button maths ----------------------------------------------------------------------------
@@ -273,8 +277,9 @@ class CoopOptionsViewTest {
     }
 
     @Test
-    void aSingleValueEnumHasNothingToCycleTo() {
-        assertNull(CoopOptionsView.nextValue(CoopOptionsRegistry.LOOT_SPLIT, "equal", 1));
+    void lootSplitCyclesBetweenEqualAndPilotKeeps() {
+        assertEquals("pilot-keeps", CoopOptionsView.nextValue(CoopOptionsRegistry.LOOT_SPLIT, "equal", 1));
+        assertEquals("equal", CoopOptionsView.nextValue(CoopOptionsRegistry.LOOT_SPLIT, "pilot-keeps", 1));
     }
 
     // ---- confirmation ----------------------------------------------------------------------------
@@ -316,7 +321,7 @@ class CoopOptionsViewTest {
 
         assertEquals(Set.of(CoopOptionsRegistry.HUD_DISABLE, CoopOptionsRegistry.HUD_CORNER,
                 CoopOptionsRegistry.FEED_VERBOSITY, CoopOptionsRegistry.PARTNER_COLOR,
-                CoopOptionsRegistry.MARK_KEY), keys);
+                CoopOptionsRegistry.MARK_KEY, CoopOptionsRegistry.CHAT_KEY), keys);
         for (CoopOptionsRegistry.Option option
                 : CoopOptionsRegistry.byTier(CoopOptionsRegistry.Tier.LAUNCH)) {
             assertFalse(keys.contains(option.key()),

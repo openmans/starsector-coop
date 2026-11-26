@@ -284,6 +284,9 @@ public final class CoopCampaignReplicator
             new CoopStorageUnlockSync(CoopStorageUnlockSync.liveEngine());
     private final CoopCommissionSync commissionSync =
             new CoopCommissionSync(CoopCommissionSync.liveEngine());
+    private final CoopMarketSnapshotChunker.Assembler marketSnapshotAssembler =
+            new CoopMarketSnapshotChunker.Assembler();
+    private long nextMarketChunkTransferId = 1L;
 
     /**
      * Guest {@code MARKET_TXN}s for a hidden base this engine has not been paired with yet, held
@@ -621,6 +624,7 @@ public final class CoopCampaignReplicator
         factionRelations.clear();
         missionBoard.clear();
         marketSync.clear();
+        marketSnapshotAssembler.reset();
         appliedHireables.clear();
         // Phase 32: the per-dock MARKET_OPEN latch and the duplicate-transaction ledger are both
         // session-scoped. Keeping the latch across a teardown would silence the first open of the
@@ -1466,11 +1470,23 @@ public final class CoopCampaignReplicator
             }
             marketSync.applySnapshot(market.getId(), specId, items);
             String encoded = CoopMarketSync.encodeStock(items);
-            if (!snapshotFitsAFrame(market, specId, items.size(), encoded)) {
+            List<String> frames = CoopMarketSnapshotChunker.fragmentIfNeeded(
+                    nextMarketChunkTransferId++, encoded);
+            if (frames.isEmpty()) {
+                logOversizedMarketSnapshotRefusal(market, specId, items.size(), encoded);
                 continue;
             }
-            sendTo(toSenderId, CoopMessages.marketSnapshot(session.sessionId(), service.nextSeq(), now(),
-                    market.getId(), specId, count, encoded));
+            if (frames.size() > 1) {
+                CoopLog.info(CoopCampaignReplicator.class, "Coop MARKET_SNAPSHOT chunked: market="
+                        + market.getId() + " submarket=" + specId + " items=" + items.size()
+                        + " parts=" + frames.size());
+            } else {
+                warnIfMarketSnapshotLarge(market, specId, items.size(), encoded);
+            }
+            for (String frame : frames) {
+                sendTo(toSenderId, CoopMessages.marketSnapshot(session.sessionId(), service.nextSeq(), now(),
+                        market.getId(), specId, count, frame));
+            }
             CoopLog.info(CoopCampaignReplicator.class, "Coop MARKET_SNAPSHOT market=" + market.getId()
                     + " submarket=" + specId + " of " + count
                     + " items=" + items.size() + " " + kindBreakdown(items));
@@ -1499,34 +1515,28 @@ public final class CoopCampaignReplicator
      */
     static final int SNAPSHOT_MAX_BYTES = 1024 * 1024;
 
-    /**
-     * Host: is this snapshot small enough to put on the wire? Warns near the transport's soft
-     * threshold; refuses, logs at ERROR and posts a feed line past its hard cap (Phase 32, P2-8).
-     */
-    private boolean snapshotFitsAFrame(MarketAPI market, String specId, int itemCount, String encoded) {
+    private void warnIfMarketSnapshotLarge(MarketAPI market, String specId, int itemCount, String encoded) {
         int bytes = encoded == null ? 0 : encoded.getBytes(StandardCharsets.UTF_8).length;
         if (bytes < SNAPSHOT_WARN_BYTES) {
-            return true;
+            return;
         }
         String marketId = market == null ? "?" : market.getId();
-        if (bytes < SNAPSHOT_MAX_BYTES) {
-            CoopLog.warn(CoopCampaignReplicator.class, "Coop MARKET_SNAPSHOT is large: market="
-                    + marketId + " submarket=" + specId + " items=" + itemCount + " bytes=" + bytes
-                    + " (soft threshold " + SNAPSHOT_WARN_BYTES + ", hard cap " + SNAPSHOT_MAX_BYTES
-                    + "); there is no chunking, so past the cap it will not be sent at all");
-            return true;
-        }
+        CoopLog.warn(CoopCampaignReplicator.class, "Coop MARKET_SNAPSHOT is large: market="
+                + marketId + " submarket=" + specId + " items=" + itemCount + " bytes=" + bytes
+                + " (soft threshold " + SNAPSHOT_WARN_BYTES + "; chunking engages above "
+                + CoopMarketSnapshotChunker.CHUNK_THRESHOLD_BYTES + ")");
+    }
+
+    private void logOversizedMarketSnapshotRefusal(MarketAPI market, String specId, int itemCount, String encoded) {
+        int bytes = encoded == null ? 0 : encoded.getBytes(StandardCharsets.UTF_8).length;
+        String marketId = market == null ? "?" : market.getId();
         CoopLog.error(CoopCampaignReplicator.class, "Coop MARKET_SNAPSHOT refused: market="
                 + marketId + " submarket=" + specId + " items=" + itemCount + " encodes to " + bytes
-                + " bytes, past the " + SNAPSHOT_MAX_BYTES + " byte frame cap. It is not sent, so"
-                + " the partner's copy of this inventory stays their own until it shrinks.");
-        // CoopColors rather than Misc: Misc's static initializer reads a dozen values out of
-        // Global.getSettings(), so the first touch of that class outside a live game leaves it
-        // permanently unusable for the rest of the JVM. Nothing on a snapshot path is worth that.
+                + " bytes, past the chunked cap (" + CoopMarketSnapshotChunker.MAX_TOTAL_CHARS
+                + " chars). It is not sent, so the partner's copy of this inventory stays their own until it shrinks.");
         CoopFeed.post("Coop: " + specId + " at " + marketDisplayName(market)
                 + " is too large to share (" + (bytes / 1024) + " KB)",
                 coop.ui.CoopColors.negativeHighlight());
-        return false;
     }
 
     /** The market's display name for a player-facing line, falling back to its id. Total. */
@@ -2315,8 +2325,13 @@ public final class CoopCampaignReplicator
                     + submarketId + " at market=" + marketId + " is not a shared inventory");
             return;
         }
-        List<CoopMarketSync.StockItem> items = CoopMarketSync.decodeStock(
-                payload.requiredString("stock"));
+        String rawStock = payload.requiredString("stock");
+        String assembledStock = marketSnapshotAssembler.accept(marketId, submarketId, rawStock, now());
+        if (assembledStock == null) {
+            // Still collecting fragments of a chunked snapshot (or dropped a malformed transfer).
+            return;
+        }
+        List<CoopMarketSync.StockItem> items = CoopMarketSync.decodeStock(assembledStock);
         marketSync.applySnapshot(marketId, submarketId, items);
         // One-shot apply to the guest's engine copy of that one submarket, so it shows the host's
         // canonical stock and nothing else does.
@@ -3971,7 +3986,13 @@ public final class CoopCampaignReplicator
         if (totals == null || !isActive()) {
             return;
         }
-        CoopRewardSplitter.Split split = CoopRewardSplitter.splitCredits(totals.net());
+        int playerCount = Math.max(2, session.totalPlayerCount());
+        coop.config.CoopOptionsPolicy policy = coop.config.CoopOptionsPolicy.active();
+        String incomeMode = policy == null ? "equal"
+                : policy.applied(coop.config.CoopOptionsRegistry.INCOME_SPLIT);
+        boolean isHost = service.role() == CoopConnectionRole.HOST;
+        CoopRewardSplitter.Split split = CoopRewardSplitter.splitColonyCredits(
+                totals.net(), playerCount, isHost, incomeMode);
         if (split.total() != 0L) {
             long deducted = CoopColonyIncome.deductFromLocalPlayer(split.remoteShare());
             queueIncomeBanner(CoopColonyIncome.splitBanner(split));

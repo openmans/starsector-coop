@@ -90,19 +90,8 @@ public record CoopOptionsView(List<Section> sections) {
             CoopOptionsRegistry.PAUSE_ON_GUEST_SCREENS,
             CoopOptionsRegistry.PASSWORD);
 
-    /**
-     * Policy keys whose owning phase has not built, so the value is stored, synced and shown but
-     * nothing reads it. Explicit rather than sniffed out of the description text, because the page
-     * saying "this does nothing yet" has to be exactly right.
-     */
-    public static final Set<String> INERT_KEYS = Set.of(
-            CoopOptionsRegistry.ALLOW_GUEST_PAUSE,
-            CoopOptionsRegistry.ALLOW_MID_SESSION_JOIN,
-            CoopOptionsRegistry.LOOT_SPLIT,
-            CoopOptionsRegistry.INCOME_SPLIT,
-            CoopOptionsRegistry.GUEST_COLONIZATION_CONSENT,
-            CoopOptionsRegistry.FEED_VERBOSITY,
-            CoopOptionsRegistry.PARTNER_COLOR);
+    /** All shipped player-facing options are now wired; this set is empty. */
+    public static final Set<String> INERT_KEYS = Set.of();
 
     /**
      * Policy keys that are still read at launch by {@code CoopNetStartupConfig} rather than from the
@@ -139,10 +128,14 @@ public record CoopOptionsView(List<Section> sections) {
         LABELS.put(CoopOptionsRegistry.FEED_VERBOSITY, "Event feed detail");
         LABELS.put(CoopOptionsRegistry.PARTNER_COLOR, "Partner marker colour");
         LABELS.put(CoopOptionsRegistry.MARK_KEY, "Log marker key");
+        LABELS.put(CoopOptionsRegistry.CHAT_KEY, "In-game chat key");
+        LABELS.put(CoopOptionsRegistry.ENCRYPTION, "Transport encryption");
+        LABELS.put(CoopOptionsRegistry.RELAY_ADDRESS, "Relay server address");
 
         // 15 s is the granularity a reconnect window is actually chosen at; 1 s steps would mean 60
         // presses to cross the default. Ports get no stepper at all - nobody finds 7777 by clicking.
         STEPS.put(CoopOptionsRegistry.RECONNECT_GRACE_SECONDS, 15);
+        STEPS.put(CoopOptionsRegistry.MAX_GUESTS, 1);
     }
 
     /** The label for {@code key}; falls back to the key itself for anything unlabelled. */

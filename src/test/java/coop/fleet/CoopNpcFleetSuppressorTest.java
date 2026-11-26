@@ -72,6 +72,7 @@ class CoopNpcFleetSuppressorTest {
         assertTrue(CoopNpcFleetSuppressor.isSpawnerScriptName("MercFleetManagerV2"));
         assertTrue(CoopNpcFleetSuppressor.isSpawnerScriptName("RemnantSeededFleetManager"));
         assertTrue(CoopNpcFleetSuppressor.isSpawnerScriptName("PersonBountyManager"));
+        assertTrue(CoopNpcFleetSuppressor.isSpawnerScriptName("SystemBountyManager"));
         assertTrue(CoopNpcFleetSuppressor.isSpawnerScriptName("SlipstreamManager"));
         assertTrue(CoopNpcFleetSuppressor.isSpawnerScriptName("HegemonyPatrolFleetManager"));
     }

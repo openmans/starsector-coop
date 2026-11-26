@@ -3,6 +3,10 @@ package coop.presence;
 import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.campaign.SectorEntityToken;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 /**
  * The one slot through which coop.jar tells the forked engine classes "there is a second player, and
  * this entity is where they are".
@@ -40,6 +44,8 @@ public final class CoopPresenceRegistry {
     public static final String PINNED_VERSION = "0.98.5a-RC9";
 
     private static volatile SectorEntityToken presence;
+    /** Phase 27: all live guest mirrors (host + up to 3 guests). */
+    private static volatile List<SectorEntityToken> allPresences = Collections.emptyList();
 
     /** Tri-state: null = not checked yet, TRUE/FALSE = the pinned-version verdict for this process. */
     private static Boolean versionOk;
@@ -95,21 +101,70 @@ public final class CoopPresenceRegistry {
     }
 
     /**
+     * Phase 27: all live guest presence entities for multi-guest forks, or empty when vanilla
+     * behaviour applies (solo play, no mirrors, or version mismatch).
+     */
+    public static List<SectorEntityToken> getAllForFork(String forkName) {
+        List<SectorEntityToken> current = allPresences;
+        if (current.isEmpty()) {
+            SectorEntityToken single = presence;
+            if (single == null) {
+                return Collections.emptyList();
+            }
+            current = Collections.singletonList(single);
+        }
+        if (!versionMatches(forkName)) {
+            return Collections.emptyList();
+        }
+        return current;
+    }
+
+    /**
      * Publishes the co-op guest's presence entity. Called every tick with the current guest mirror, so
      * a mirror that is disposed and rebuilt heals on the next tick rather than leaving a dead entity
      * in the slot.
      */
     public static void set(SectorEntityToken entity) {
         presence = entity;
+        allPresences = entity == null ? Collections.emptyList() : Collections.singletonList(entity);
     }
 
-    /** Drops the presence entity. After this every fork reading it is back to vanilla behaviour. */
+    /**
+     * Phase 27: publishes all live guest presence entities. Keeps the single-entity {@link #get()}
+     * slot pointing at the first live mirror so every existing fork stays 100% compatible.
+     */
+    public static void setAll(List<? extends SectorEntityToken> entities) {
+        if (entities == null || entities.isEmpty()) {
+            clear();
+            return;
+        }
+        List<SectorEntityToken> cleaned = new ArrayList<>(entities.size());
+        for (SectorEntityToken entity : entities) {
+            if (entity != null) {
+                cleaned.add(entity);
+            }
+        }
+        if (cleaned.isEmpty()) {
+            clear();
+            return;
+        }
+        allPresences = Collections.unmodifiableList(cleaned);
+        presence = cleaned.get(0);
+    }
+
+    /** Drops all presence entities. After this every fork reading it is back to vanilla behaviour. */
     public static void clear() {
         presence = null;
+        allPresences = Collections.emptyList();
     }
 
-    /** The co-op guest's presence entity, or null when there is no second player. */
+    /** The primary co-op guest's presence entity, or null when there is no second player. */
     public static SectorEntityToken get() {
         return presence;
+    }
+
+    /** Phase 27: all published guest presence entities (empty when solo). */
+    public static List<SectorEntityToken> getAll() {
+        return allPresences;
     }
 }

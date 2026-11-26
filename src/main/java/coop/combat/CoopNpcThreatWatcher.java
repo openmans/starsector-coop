@@ -795,18 +795,14 @@ public final class CoopNpcThreatWatcher {
         try {
             boolean paused = worldPaused(sector);
             long now = noteFrame(nowMillis, paused);
-            // O(1) handle rather than a sector-wide scan (see CoopGuestMirrorHandle). This used to be
-            // the first statement of every frame — a full location+fleet walk, above the scan throttle
-            // below, with no early exit on a host whose guest had not connected yet. It stays above the
-            // throttle because the battle eject under it is load-bearing per frame; it is just free now.
-            CampaignFleetAPI mirror = CoopGuestMirrorHandle.current();
-            if (mirror == null) {
+            List<CampaignFleetAPI> mirrors = CoopGuestMirrorHandle.all();
+            if (mirrors.isEmpty()) {
                 return;
             }
-            ejectFromBattleIfNeeded(mirror);
+            for (CampaignFleetAPI mirror : mirrors) {
+                ejectFromBattleIfNeeded(mirror);
+            }
             if (paused) {
-                // Nothing engages a paused player. The eject above still runs (it is a recovery, not a
-                // decision), the clock is frozen by noteFrame, and the scan resumes where it left off.
                 logPauseHoldEdge(true);
                 return;
             }
@@ -816,7 +812,9 @@ public final class CoopNpcThreatWatcher {
             }
             nextScanAtMillis = now + SCAN_INTERVAL_MILLIS;
             expirePendingGrace(now);
-            scan(sector, mirror, now, coopBattleActive);
+            for (CampaignFleetAPI mirror : mirrors) {
+                scan(sector, mirror, now, coopBattleActive);
+            }
         } catch (RuntimeException | LinkageError ex) {
             CoopLog.warn(CoopNpcThreatWatcher.class, "Coop NPC threat watcher pass failed", ex);
         }
@@ -1000,14 +998,14 @@ public final class CoopNpcThreatWatcher {
                             nowMillis, CUSTOMS_COOLDOWN_MILLIS));
             switch (action) {
                 case ENGAGE_GUEST -> {
-                    fireEngageGuest(view, nowMillis);
+                    fireEngageGuest(mirror, view, nowMillis);
                     handedOff = true;
                 }
                 case STEER_PURSUIT -> steerPursuit(fleet, mirror, view, nowMillis);
                 case CUSTOMS_PURSUE -> pursueForInspection(fleet, mirror, view);
                 case CUSTOMS_DIALOG -> {
                     endCustomsPursuit(fleet, mirror, view, nowMillis, "caught");
-                    fireCustomsDialog(view, nowMillis);
+                    fireCustomsDialog(mirror, view, nowMillis);
                 }
                 case CUSTOMS_GIVE_UP -> endCustomsPursuit(fleet, mirror, view, nowMillis,
                         customsGiveUpReason(view, transponderOn, battleBusy));
@@ -1065,13 +1063,20 @@ public final class CoopNpcThreatWatcher {
         }
     }
 
-    private void fireEngageGuest(FleetView view, long nowMillis) {
+    private void fireEngageGuest(CampaignFleetAPI mirror, FleetView view, long nowMillis) {
         cooldowns.mark(cooldownKey(view.coopFleetId(), Action.ENGAGE_GUEST), nowMillis);
         lastHandoffAtMillis = nowMillis;
-        service.send(CoopMessages.engageGuest(session.sessionId(), service.nextSeq(),
-                wallMillis(nowMillis), view.coopFleetId(), view.fleetName(), view.factionId()));
+        CoopMessages.Message msg = CoopMessages.engageGuest(session.sessionId(), service.nextSeq(),
+                wallMillis(nowMillis), view.coopFleetId(), view.fleetName(), view.factionId());
+        String targetGuest = CoopGuestMirrorHandle.ownerOf(mirror);
+        if (targetGuest != null && session.guestCount() > 1) {
+            service.sendTo(targetGuest, msg);
+        } else {
+            service.send(msg);
+        }
         CoopLog.info(CoopNpcThreatWatcher.class, "Coop ENGAGE_GUEST sent coopFleetId=" + view.coopFleetId()
                 + " fleet=" + view.fleetName() + " faction=" + view.factionId()
+                + " targetGuest=" + (targetGuest == null ? "primary" : targetGuest)
                 + " dist=" + String.format("%.1f", view.distance())
                 + " contact=" + String.format("%.1f", view.contactDistance())
                 + " vanillaHunting=" + view.huntingMirror());
@@ -1218,11 +1223,17 @@ public final class CoopNpcThreatWatcher {
         }
     }
 
-    private void fireCustomsDialog(FleetView view, long nowMillis) {
+    private void fireCustomsDialog(CampaignFleetAPI mirror, FleetView view, long nowMillis) {
         cooldowns.mark(cooldownKey(view.coopFleetId(), Action.CUSTOMS_DIALOG), nowMillis);
-        service.send(CoopMessages.dialogBegin(session.sessionId(), service.nextSeq(),
+        CoopMessages.Message msg = CoopMessages.dialogBegin(session.sessionId(), service.nextSeq(),
                 wallMillis(nowMillis), view.coopFleetId(), view.factionId(),
-                CoopMessages.DialogKind.CUSTOMS));
+                CoopMessages.DialogKind.CUSTOMS);
+        String targetGuest = CoopGuestMirrorHandle.ownerOf(mirror);
+        if (targetGuest != null && session.guestCount() > 1) {
+            service.sendTo(targetGuest, msg);
+        } else {
+            service.send(msg);
+        }
         CoopLog.info(CoopNpcThreatWatcher.class, "Coop DIALOG_BEGIN sent (customs, transponder-off guest)"
                 + " coopFleetId=" + view.coopFleetId() + " fleet=" + view.fleetName()
                 + " faction=" + view.factionId() + " dist=" + String.format("%.1f", view.distance()));

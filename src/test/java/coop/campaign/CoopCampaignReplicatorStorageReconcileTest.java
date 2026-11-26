@@ -365,15 +365,34 @@ class CoopCampaignReplicatorStorageReconcileTest {
                 "and the loss is named: " + appender.messages());
     }
 
-    // ---- No chunking: an oversized snapshot is refused, loudly --------------------------------------
+    // ---- Chunking: 1 MB..16 MB lockers chunk cleanly; past 16 MB is refused loudly -----------------
+
+    @Test
+    void aLargeLockerPast1MBIsChunkedAcrossMultipleFrames() {
+        FakeMarket market = storageMarket().storageUnlocked();
+        market.storage().commodities.put("x".repeat(1_200_000), 1);
+        Global.setSector(market.sector());
+        RecordingNetService service = new RecordingNetService(CoopConnectionRole.HOST);
+
+        hostReplicator(service).handle(CoopMessages.marketOpen("session-a", 7L, 5000L, "jangala",
+                CoopMessages.SUBMARKET_ALL, "guest-player"));
+
+        List<CoopMessages.Message> snapshots = service.sent.stream()
+                .filter(m -> m.type() == CoopMessages.Type.MARKET_SNAPSHOT).toList();
+        assertTrue(snapshots.size() >= 3,
+                "1.2 MB storage locker must be split into multiple chunked frames, got " + snapshots.size());
+        for (CoopMessages.Message msg : snapshots) {
+            String stock = CoopMessages.requiredPayloadString(msg, "stock");
+            assertTrue(CoopMarketSnapshotChunker.isChunk(stock));
+            assertTrue(stock.length() < coop.net.CoopNetService.MAX_FRAME_BYTES);
+        }
+    }
 
     @Test
     void anOversizedSnapshotIsNotSentAndThePlayerIsTold() {
-        // P2-8: past the transport's 1 MB frame cap the frame is dropped inside CoopNetService and
-        // nothing above it learns the snapshot never went. There is no chunking, so the send is
-        // refused here instead and the host's player is told which inventory did not go.
+        // Past the 16 MB chunked safety cap, the send is refused loudly and the host's player is told.
         FakeMarket market = storageMarket().storageUnlocked();
-        market.storage().commodities.put("x".repeat(1_200_000), 1);
+        market.storage().commodities.put("x".repeat(CoopMarketSnapshotChunker.MAX_TOTAL_CHARS + 1024), 1);
         Global.setSector(market.sector());
         RecordingNetService service = new RecordingNetService(CoopConnectionRole.HOST);
         attachAppender();
@@ -383,7 +402,7 @@ class CoopCampaignReplicatorStorageReconcileTest {
 
         assertEquals(List.of(), service.sent.stream()
                         .filter(m -> m.type() == CoopMessages.Type.MARKET_SNAPSHOT).toList(),
-                "a frame the transport would silently drop must not be handed to it");
+                "a payload past the chunked cap must not be sent");
         assertTrue(market.feed.stream().anyMatch(m ->
                         m.startsWith("Coop: storage at Jangala is too large to share (")),
                 "the host's player has to be told: " + market.feed);

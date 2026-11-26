@@ -268,16 +268,23 @@ class CoopNetStartupConfigTest {
     }
 
     @Test
-    void maxGuestsIsClampedToOneRatherThanRejected() {
-        for (String value : new String[]{"3", "0", "-2", "many"}) {
+    void maxGuestsAcceptsOneToThreeAndClampsOutOfRange() {
+        for (int valid : new int[]{1, 2, 3}) {
             Properties properties = new Properties();
-            properties.setProperty("coop.maxGuests", value);
-
+            properties.setProperty("coop.maxGuests", String.valueOf(valid));
             CoopNetStartupConfig config = CoopNetStartupConfig.from(properties);
-
-            assertEquals(CoopNetStartupConfig.MAX_GUESTS_V1, config.maxGuests(),
-                    "coop.maxGuests=" + value + " must clamp, not fail the launch");
+            assertEquals(valid, config.maxGuests());
         }
+        for (String lowOrBad : new String[]{"0", "-2", "many"}) {
+            Properties properties = new Properties();
+            properties.setProperty("coop.maxGuests", lowOrBad);
+            CoopNetStartupConfig config = CoopNetStartupConfig.from(properties);
+            assertEquals(CoopNetStartupConfig.MAX_GUESTS_V1, config.maxGuests(),
+                    "coop.maxGuests=" + lowOrBad + " must clamp, not fail the launch");
+        }
+        Properties high = new Properties();
+        high.setProperty("coop.maxGuests", "9");
+        assertEquals(CoopNetStartupConfig.MAX_GUESTS_CAP, CoopNetStartupConfig.from(high).maxGuests());
     }
 
     @Test

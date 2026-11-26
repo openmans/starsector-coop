@@ -68,6 +68,8 @@ public final class CoopNpcFleetSuppressor {
             "RemnantFleetManager",
             "RemnantSeededFleetManager",
             "PersonBountyManager",
+            // Phase 34: system bounties are replicated from the host via BOUNTY_SET.
+            "SystemBountyManager",
 
             // Phase 13 inventory table: dynamic bases, encounters, ghosts, deciv, war sim,
             // punitive expeditions, faction hostility rolls.
@@ -127,7 +129,9 @@ public final class CoopNpcFleetSuppressor {
             Map.entry("WarSimScript", new ManagerHandle("$core_warSimScript", false)),
             Map.entry("DecivTracker", new ManagerHandle("$core_decivTracker", false)),
             Map.entry("FactionHostilityManager", new ManagerHandle("$core_factionHostilityManager", false)),
-            Map.entry("PunitiveExpeditionManager", new ManagerHandle("$core_punitiveExpeditionManager", false)));
+            Map.entry("PunitiveExpeditionManager", new ManagerHandle("$core_punitiveExpeditionManager", false)),
+            Map.entry("SystemBountyManager", new ManagerHandle(
+                    com.fs.starfarer.api.impl.campaign.intel.SystemBountyManager.KEY, false)));
     // Deliberately absent: HostileActivityManager. It is stateless and vanilla caches no handle to it
     // — the only key in play is the intel's own {@code $hae_ref}, which the manager reads through
     // HostileActivityEventIntel.get() rather than owning. That key is handled by
@@ -230,10 +234,12 @@ public final class CoopNpcFleetSuppressor {
         removed += removeSpawnerScripts(sector.getTransientScripts(), sector, "transient", coverage);
         int endedIntel = endGuestBaseIntel(sector);
         int endedHostileActivity = endGuestHostileActivityIntel(sector);
+        int endedSystemBounties = endGuestSystemBountyIntel(sector);
         CoopLog.info(CoopNpcFleetSuppressor.class,
                 "Coop guest suppressed " + removed + " NPC spawner script(s), ended " + endedIntel
                         + " guest-spawned base intel item(s), ended " + endedHostileActivity
-                        + " hostile-activity event intel item(s)");
+                        + " hostile-activity event intel item(s), ended " + endedSystemBounties
+                        + " local system-bounty intel item(s)");
         logCoverage(coverage);
     }
 
@@ -339,6 +345,30 @@ public final class CoopNpcFleetSuppressor {
             return endGuestHostileActivityIntel(new SectorHostileActivityCleanup(sector, manager));
         } catch (RuntimeException | LinkageError ex) {
             CoopLog.warn(CoopNpcFleetSuppressor.class, "Failed to end guest hostile-activity intel", ex);
+            return 0;
+        }
+    }
+
+    /** Phase 34: ends any local vanilla SystemBountyIntel on the guest at session start. */
+    private int endGuestSystemBountyIntel(SectorAPI sector) {
+        try {
+            IntelManagerAPI manager = sector.getIntelManager();
+            if (manager == null) {
+                return 0;
+            }
+            int ended = 0;
+            for (IntelInfoPlugin intel : new ArrayList<>(manager.getIntel(
+                    com.fs.starfarer.api.impl.campaign.intel.SystemBountyIntel.class))) {
+                if (intel instanceof com.fs.starfarer.api.impl.campaign.intel.SystemBountyIntel sb
+                        && !sb.isEnded() && !sb.isEnding()) {
+                    sb.endImmediately();
+                    manager.removeIntel(sb);
+                    ended++;
+                }
+            }
+            return ended;
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNpcFleetSuppressor.class, "Failed to end guest system-bounty intel", ex);
             return 0;
         }
     }

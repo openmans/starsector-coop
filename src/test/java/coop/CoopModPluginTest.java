@@ -298,8 +298,24 @@ class CoopModPluginTest {
         // Pre-fix nothing ever uninstalled the feed, so loading a solo save after a coop session left
         // the "Coop Session" intel page rendering the previous game's role, partner and RTT.
         assertNull(CoopSessionIntelFeed.active());
+        assertNull(coop.wingman.CoopWingmanIntegration.active());
         CoopStallNotice.notifyLocalStall(CoopStallNotice.REASON_LOCAL_SAVE, 1L);
         assertEquals(0, stalls.get(), "a replaced pump must not still be receiving save callbacks");
+    }
+
+    @Test
+    void wingmanIntegrationActiveHandleIsClearedWhenAPumpIsReplaced() {
+        coop.wingman.CoopWingmanIntegration.create(
+                () -> coop.net.CoopConnectionRole.HOST,
+                () -> 1L,
+                () -> "session-1",
+                () -> 0L,
+                m -> {});
+        assertNotNull(coop.wingman.CoopWingmanIntegration.active());
+
+        CoopModPlugin.tearDownPreviousPump(null);
+
+        assertNull(coop.wingman.CoopWingmanIntegration.active());
     }
 
     @Test

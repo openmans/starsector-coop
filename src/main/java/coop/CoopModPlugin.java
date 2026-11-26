@@ -618,6 +618,8 @@ public class CoopModPlugin extends BaseModPlugin {
         CoopSessionStatsIntel.clearSource();
         // Same shape for the stall hook: with no pump there is nothing to route beforeGameSave to.
         CoopStallNotice.setActive(null);
+        // Phase 34: clear the static Wingman bridge handle so a loaded save never consults a dead pump.
+        coop.wingman.CoopWingmanIntegration.uninstall();
     }
 
     @Override

@@ -26,6 +26,6 @@
     },
 
     # Optional, read by LunaLib's bundled version checker UI.
-    "directDownloadURL":"https://github.com/AyoKeito/starsector-coop/releases/latest",
-    "changelogURL":"https://raw.githubusercontent.com/AyoKeito/starsector-coop/main/CHANGELOG.md"
+    "directDownloadURL":"https://github.com/openmans/starsector-coop/releases/latest",
+    "changelogURL":"https://raw.githubusercontent.com/openmans/starsector-coop/main/CHANGELOG.md"
 }

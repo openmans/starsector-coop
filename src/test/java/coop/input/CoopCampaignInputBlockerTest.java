@@ -150,6 +150,19 @@ class CoopCampaignInputBlockerTest {
         assertTrue(pauseHeld.consumed);
     }
 
+    @Test
+    void guestFastForwardDownEdgeRecordsAPressAndStillConsumes() {
+        CoopSharedPauseCoordinator coordinator = new CoopSharedPauseCoordinator();
+        CoopCampaignInputBlocker blocker = new CoopCampaignInputBlocker(coordinator);
+        RecordingInputEvent ffDown = new RecordingInputEvent(
+                "FAST_FORWARD", true, true, false, Set.of("GENERAL_PAUSE", "FAST_FORWARD"));
+
+        blocker.processCampaignInputPreCore(List.of(ffDown.proxy()));
+
+        assertTrue(coordinator.consumeGuestFastForwardKeyPress());
+        assertTrue(ffDown.consumed);
+    }
+
     private static final class RecordingInputEvent {
         private final String controlName;
         private final boolean activated;

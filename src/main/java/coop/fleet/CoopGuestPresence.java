@@ -174,7 +174,8 @@ public final class CoopGuestPresence {
         // The mod's single authoritative mirror scan (see CoopGuestMirrorHandle): this pass needed one
         // anyway, and publishing its result here is what bounds how long a stale handle can survive to
         // one interval. Every other consumer reads the O(1) handle instead of scanning.
-        CampaignFleetAPI mirror = CoopGuestMirrorHandle.reresolve(sector);
+        List<CampaignFleetAPI> mirrors = CoopGuestMirrorHandle.reresolveAll(sector);
+        CampaignFleetAPI mirror = mirrors.isEmpty() ? null : mirrors.get(0);
         LocationAPI system = mirror == null ? null : mirror.getContainingLocation();
         if (system == null) {
             if (!armedSystemId.isEmpty()) {
@@ -186,7 +187,7 @@ public final class CoopGuestPresence {
             return;
         }
 
-        setPresence(mirror);
+        setPresence(mirrors);
 
         String systemId = String.valueOf(system.getId());
         if (!systemId.equals(armedSystemId)) {
@@ -243,12 +244,12 @@ public final class CoopGuestPresence {
 
     // ---- The registry slot (lives in coop-forks.jar, on the system classloader) --------------------
 
-    private static void setPresence(CampaignFleetAPI mirror) {
+    private static void setPresence(List<CampaignFleetAPI> mirrors) {
         if (registryUnavailable) {
             return;
         }
         try {
-            coop.presence.CoopPresenceRegistry.set(mirror);
+            coop.presence.CoopPresenceRegistry.setAll(mirrors);
             presenceRegistered = true;
         } catch (LinkageError ex) {
             registryUnavailable = true;

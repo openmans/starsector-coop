@@ -67,6 +67,10 @@ public final class CoopSessionIntelFeed {
     private CoopSessionIntelModel.LinkSample peerLink;
     private long peerLinkAtMillis;
     private CoopSessionIntelModel.Reachability reachability;
+    private volatile java.util.function.BooleanSupplier tacticalMapAvailable;
+    private volatile Runnable tacticalMapOpener;
+    private volatile Runnable chatOpener;
+    private volatile Runnable tradeOpener;
 
     /** Wall-clock timestamp plus the line; the display age is derived at snapshot time. */
     private record EventEntry(long atMillis, String line) {
@@ -132,6 +136,85 @@ public final class CoopSessionIntelFeed {
     public static CoopSessionIntelModel currentModel() {
         CoopSessionIntelFeed feed = active;
         return feed == null ? CoopSessionIntelModel.empty() : feed.snapshot();
+    }
+
+    /** Phase 22: registers the pump hook that opens the opt-in tactical map during a partner battle. */
+    public void setTacticalMapHook(java.util.function.BooleanSupplier available, Runnable opener) {
+        this.tacticalMapAvailable = available;
+        this.tacticalMapOpener = opener;
+    }
+
+    /** Phase 22: true when a partner battle is currently active and the tactical map can be opened. */
+    public static boolean isTacticalMapAvailable() {
+        CoopSessionIntelFeed feed = active;
+        if (feed == null) {
+            return false;
+        }
+        java.util.function.BooleanSupplier check = feed.tacticalMapAvailable;
+        if (check == null) {
+            return false;
+        }
+        try {
+            return check.getAsBoolean();
+        } catch (RuntimeException | LinkageError ex) {
+            return false;
+        }
+    }
+
+    /** Phase 22: requests the pump to show the tactical map dialog once the campaign map is clear. */
+    public static void requestOpenTacticalMap() {
+        CoopSessionIntelFeed feed = active;
+        if (feed == null) {
+            return;
+        }
+        Runnable opener = feed.tacticalMapOpener;
+        if (opener != null) {
+            try {
+                opener.run();
+            } catch (RuntimeException | LinkageError ignored) {
+                // UI button must never crash the intel screen.
+            }
+        }
+    }
+
+    /** Registers optional openers for in-game co-op chat and direct player trade dialogs. */
+    public void setCommsHooks(Runnable chatOpener, Runnable tradeOpener) {
+        this.chatOpener = chatOpener;
+        this.tradeOpener = tradeOpener;
+    }
+
+    public static boolean isChatAvailable() {
+        CoopSessionIntelFeed feed = active;
+        return feed != null && feed.chatOpener != null && feed.currentRole() != CoopConnectionRole.NONE;
+    }
+
+    public static boolean isTradeAvailable() {
+        CoopSessionIntelFeed feed = active;
+        return feed != null && feed.tradeOpener != null && feed.currentRole() != CoopConnectionRole.NONE;
+    }
+
+    public static void requestOpenChat() {
+        CoopSessionIntelFeed feed = active;
+        Runnable opener = feed == null ? null : feed.chatOpener;
+        if (opener != null) {
+            try {
+                opener.run();
+            } catch (RuntimeException | LinkageError ignored) {
+                // never crash intel UI
+            }
+        }
+    }
+
+    public static void requestOpenTrade() {
+        CoopSessionIntelFeed feed = active;
+        Runnable opener = feed == null ? null : feed.tradeOpener;
+        if (opener != null) {
+            try {
+                opener.run();
+            } catch (RuntimeException | LinkageError ignored) {
+                // never crash intel UI
+            }
+        }
     }
 
     // ---- publishing ------------------------------------------------------------------------------

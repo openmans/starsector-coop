@@ -2,6 +2,11 @@ package coop.session;
 
 import coop.net.CoopConnectionRole;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -9,7 +14,29 @@ import java.util.function.Supplier;
 import static coop.util.CoopText.requireText;
 
 public class CoopSessionState {
+    /** Phase 27: per-guest session slot tracked on the host (join order). */
+    public record PeerSession(String playerId, String name, boolean handshakeValidated, boolean seedLocked) {
+        public PeerSession {
+            playerId = requireText(playerId, "playerId");
+            name = name == null || name.trim().isEmpty() ? "Guest" : name.trim();
+        }
+
+        public PeerSession withHandshakeValidated() {
+            return new PeerSession(playerId, name, true, seedLocked);
+        }
+
+        public PeerSession withSeedLocked() {
+            return new PeerSession(playerId, name, true, true);
+        }
+    }
+
     private final Supplier<String> idSupplier;
+    /** Phase 27: host-side table of connected guests (up to {@link #maxGuests}, join order). */
+    private final Map<String, PeerSession> guests = new LinkedHashMap<>();
+    private int maxGuests = 1;
+    private boolean allowMidSessionJoin = true;
+    /** Phase 27: guest-side view of total active players reported by host (defaults to 2 when connected). */
+    private int knownTotalPlayers;
 
     private String sessionId;
     private String provisionalLobbyId;
@@ -96,21 +123,61 @@ public class CoopSessionState {
         localPlayerId = id;
     }
 
+    /** Phase 27: configures how many guests the host accepts simultaneously (clamped 1..3). */
+    public synchronized void setMaxGuests(int maxGuests) {
+        this.maxGuests = Math.max(1, Math.min(3, maxGuests));
+    }
+
+    public synchronized int maxGuests() {
+        return maxGuests;
+    }
+
+    /** Phase 27: whether new guests may join after the host has released the lobby. */
+    public synchronized void setAllowMidSessionJoin(boolean allow) {
+        this.allowMidSessionJoin = allow;
+    }
+
+    public synchronized boolean allowMidSessionJoin() {
+        return allowMidSessionJoin;
+    }
+
     public synchronized boolean canAcceptGuest() {
-        return role == CoopConnectionRole.HOST
-                && connectionState == CoopLobbyState.HOST_WAITING
-                && remotePlayerId == null;
+        if (role != CoopConnectionRole.HOST) {
+            return false;
+        }
+        boolean lobbyOpen = connectionState == CoopLobbyState.HOST_WAITING
+                || (connectionState == CoopLobbyState.HOST_CONNECTED && maxGuests > 1);
+        if (!lobbyOpen) {
+            return false;
+        }
+        if (guests.size() >= maxGuests) {
+            return false;
+        }
+        if (lobbyReleased && !allowMidSessionJoin) {
+            return false;
+        }
+        return true;
     }
 
     public synchronized void hostAcceptGuest(CoopPlayerInfo guest) {
         Objects.requireNonNull(guest, "guest");
-        if (!canAcceptGuest()) {
+        if (role != CoopConnectionRole.HOST) {
             throw new IllegalStateException(rejectReasonForGuest(guest));
         }
-        remotePlayerId = guest.playerId();
-        remoteName = guest.name();
+        boolean replacingExisting = guests.containsKey(guest.playerId());
+        if (!replacingExisting && !canAcceptGuest()) {
+            throw new IllegalStateException(rejectReasonForGuest(guest));
+        }
+        boolean firstGuest = guests.isEmpty();
+        guests.put(guest.playerId(), new PeerSession(guest.playerId(), guest.name(), false, false));
+        if (firstGuest || remotePlayerId == null || remotePlayerId.equals(guest.playerId())) {
+            remotePlayerId = guest.playerId();
+            remoteName = guest.name();
+        }
         connectionState = CoopLobbyState.HOST_CONNECTED;
-        clearCanonicalSession();
+        if (firstGuest) {
+            clearCanonicalSession();
+        }
     }
 
     public synchronized String rejectReasonForGuest(CoopPlayerInfo guest) {
@@ -118,8 +185,13 @@ public class CoopSessionState {
         if (role != CoopConnectionRole.HOST) {
             return "Host lobby is not active";
         }
-        if (remotePlayerId != null || connectionState == CoopLobbyState.HOST_CONNECTED) {
-            return "Lobby already has a guest";
+        if (lobbyReleased && !allowMidSessionJoin && !guests.containsKey(guest.playerId())) {
+            return "Host does not allow mid-session joins";
+        }
+        if (guests.size() >= maxGuests || (maxGuests == 1 && (remotePlayerId != null
+                || connectionState == CoopLobbyState.HOST_CONNECTED))) {
+            return maxGuests == 1 ? "Lobby already has a guest"
+                    : "Lobby is full (" + maxGuests + " guests)";
         }
         return "Host lobby is not accepting guests";
     }
@@ -229,8 +301,10 @@ public class CoopSessionState {
         CoopLobbyState target = role == CoopConnectionRole.HOST
                 ? CoopLobbyState.HOST_WAITING
                 : CoopLobbyState.GUEST_CONNECTING;
-        boolean changed = remotePlayerId != null || sessionId != null
+        boolean changed = remotePlayerId != null || !guests.isEmpty() || sessionId != null
                 || handshakeValidated || seedLong != null || connectionState != target;
+        guests.clear();
+        knownTotalPlayers = 0;
         remotePlayerId = null;
         remoteName = null;
         handshakeRejectReason = null;
@@ -250,15 +324,118 @@ public class CoopSessionState {
     }
 
     public synchronized String hostAcceptHandshake() {
+        return hostAcceptHandshake(remotePlayerId);
+    }
+
+    /** Phase 27: accepts handshake for a specific guest without resetting other active guests. */
+    public synchronized String hostAcceptHandshake(String guestPlayerId) {
         if (role != CoopConnectionRole.HOST || connectionState != CoopLobbyState.HOST_CONNECTED) {
             throw new IllegalStateException("Host lobby is not ready for handshake acceptance");
         }
-        if (handshakeValidated) {
-            return sessionId;
+        if (sessionId == null) {
+            sessionId = nextId("sessionId");
         }
-        sessionId = nextId("sessionId");
         handshakeValidated = true;
+        if (guestPlayerId != null && !guestPlayerId.trim().isEmpty()) {
+            PeerSession existing = guests.get(guestPlayerId.trim());
+            if (existing != null) {
+                guests.put(existing.playerId(), existing.withHandshakeValidated());
+            }
+        }
         return sessionId;
+    }
+
+    /** Phase 27: removes one guest from the host table; returns true if that ended the session. */
+    public synchronized boolean hostRemoveGuest(String guestPlayerId) {
+        if (role != CoopConnectionRole.HOST || guestPlayerId == null || guestPlayerId.trim().isEmpty()) {
+            return false;
+        }
+        PeerSession removed = guests.remove(guestPlayerId.trim());
+        if (removed == null) {
+            return false;
+        }
+        if (guests.isEmpty()) {
+            remotePlayerId = null;
+            remoteName = null;
+            connectionState = CoopLobbyState.HOST_WAITING;
+            clearCanonicalSession();
+            return true;
+        }
+        PeerSession nextPrimary = guests.values().iterator().next();
+        remotePlayerId = nextPrimary.playerId();
+        remoteName = nextPrimary.name();
+        return false;
+    }
+
+    /** Phase 27: records seed lock for a specific guest on the host. */
+    public synchronized void recordSeedLockForGuest(String guestPlayerId, long acceptedSeedLong,
+                                                    String acceptedSeedString,
+                                                    String acceptedSectorFingerprint) {
+        recordSeedLock(acceptedSeedLong, acceptedSeedString, acceptedSectorFingerprint);
+        if (guestPlayerId != null && !guestPlayerId.trim().isEmpty()) {
+            PeerSession existing = guests.get(guestPlayerId.trim());
+            if (existing != null) {
+                guests.put(existing.playerId(), existing.withSeedLocked());
+            }
+        }
+    }
+
+    public synchronized boolean hasGuest(String playerId) {
+        if (playerId == null || playerId.trim().isEmpty()) {
+            return false;
+        }
+        String id = playerId.trim();
+        return guests.containsKey(id) || id.equals(remotePlayerId);
+    }
+
+    public synchronized PeerSession guest(String playerId) {
+        return playerId == null ? null : guests.get(playerId.trim());
+    }
+
+    public synchronized List<PeerSession> guests() {
+        return Collections.unmodifiableList(new ArrayList<>(guests.values()));
+    }
+
+    public synchronized List<String> guestIds() {
+        return Collections.unmodifiableList(new ArrayList<>(guests.keySet()));
+    }
+
+    public synchronized int guestCount() {
+        if (!guests.isEmpty()) {
+            return guests.size();
+        }
+        return (role == CoopConnectionRole.HOST && remotePlayerId != null) ? 1 : 0;
+    }
+
+    public synchronized String guestDisplayName(String playerId) {
+        if (playerId == null || playerId.trim().isEmpty()) {
+            return remoteName == null ? "Guest" : remoteName;
+        }
+        PeerSession peer = guests.get(playerId.trim());
+        if (peer != null) {
+            return peer.name();
+        }
+        return playerId.trim().equals(remotePlayerId) && remoteName != null ? remoteName : "Guest";
+    }
+
+    /** Phase 27: host reports total player count (1 + active guests) so guests split colony income identically. */
+    public synchronized void setKnownTotalPlayers(int count) {
+        this.knownTotalPlayers = Math.max(0, count);
+    }
+
+    /** Phase 27: total players in the active session (2 in standard 1-guest mode; 2..4 in multi-guest). */
+    public synchronized int totalPlayerCount() {
+        if (role == CoopConnectionRole.HOST) {
+            int g = guestCount();
+            return g == 0 ? 1 : 1 + g;
+        }
+        if (role == CoopConnectionRole.GUEST) {
+            if (knownTotalPlayers >= 2) {
+                return knownTotalPlayers;
+            }
+            return remotePlayerId == null ? 1 : 2;
+        }
+        return 1;
     }
 
     public synchronized void guestAcceptHandshake(String acceptedSessionId) {
@@ -397,6 +574,8 @@ public class CoopSessionState {
     }
 
     public synchronized void reset() {
+        guests.clear();
+        knownTotalPlayers = 0;
         sessionId = null;
         provisionalLobbyId = null;
         localPlayerId = null;

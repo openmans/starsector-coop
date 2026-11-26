@@ -144,15 +144,17 @@ public class NearbyEventsEvent extends BaseEventPlugin implements RouteFleetSpaw
 		if (coop.ambient.CoopWreckBridge.isGuestMode()) return;
 		CampaignFleetAPI playerFleet = Global.getSector().getPlayerFleet();
 		coopTrySpawnDerelictNear(playerFleet);
-		SectorEntityToken presence = coop.presence.CoopPresenceRegistry.getForFork("NearbyEventsEvent");
-		if (presence instanceof CampaignFleetAPI && presence != playerFleet) {
-			CampaignFleetAPI guestFleet = (CampaignFleetAPI) presence;
-			if (guestFleet.isInHyperspace()) {
-				float dx = guestFleet.getLocation().x - playerFleet.getLocation().x;
-				float dy = guestFleet.getLocation().y - playerFleet.getLocation().y;
-				if (coop.ambient.CoopWreckBridge.needsGuestSpawnCheck(
-						playerFleet.isInHyperspace(), dx * dx + dy * dy)) {
-					coopTrySpawnDerelictNear(guestFleet);
+		// COOP FORK: check floating-wreck spawns around every live guest in hyperspace.
+		for (SectorEntityToken presence : coop.presence.CoopPresenceRegistry.getAllForFork("NearbyEventsEvent")) {
+			if (presence instanceof CampaignFleetAPI && presence != playerFleet) {
+				CampaignFleetAPI guestFleet = (CampaignFleetAPI) presence;
+				if (guestFleet.isInHyperspace()) {
+					float dx = guestFleet.getLocation().x - playerFleet.getLocation().x;
+					float dy = guestFleet.getLocation().y - playerFleet.getLocation().y;
+					if (coop.ambient.CoopWreckBridge.needsGuestSpawnCheck(
+							playerFleet.isInHyperspace(), dx * dx + dy * dy)) {
+						coopTrySpawnDerelictNear(guestFleet);
+					}
 				}
 			}
 		}

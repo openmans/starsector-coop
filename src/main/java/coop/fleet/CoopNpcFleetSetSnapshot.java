@@ -139,12 +139,28 @@ public record CoopNpcFleetSetSnapshot(List<CoopNpcFleetSnapshot> fleets, String 
      */
     public static String computeNearHash(List<CoopNpcFleetSnapshot> fleets,
                                          Set<String> observerLocationIds) {
+        return computeNearHash(fleets, observerLocationIds, null);
+    }
+
+    /**
+     * S4-C refinement: excludes ephemeral empty-roster fleets that were never mirrored to the
+     * guest ({@code previouslySentIds} is non-null and does not contain the fleet id) so a fleet
+     * despawning before the guest ever saw it cannot trigger an immediate full-set resend.
+     */
+    public static String computeNearHash(List<CoopNpcFleetSnapshot> fleets,
+                                         Set<String> observerLocationIds,
+                                         Set<String> previouslySentIds) {
         List<String> records = new ArrayList<>();
         if (fleets != null) {
             for (CoopNpcFleetSnapshot fleet : fleets) {
-                if (isNear(fleet, observerLocationIds)) {
-                    records.add(structuralRecord(fleet));
+                if (!isNear(fleet, observerLocationIds)) {
+                    continue;
                 }
+                if (previouslySentIds != null && fleet.members().isEmpty()
+                        && !previouslySentIds.contains(fleet.coopFleetId())) {
+                    continue;
+                }
+                records.add(structuralRecord(fleet));
             }
         }
         records.sort(null);

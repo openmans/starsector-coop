@@ -131,9 +131,70 @@ public final class CoopColonyManagement {
      * {@code COLONY_FOUNDED} payload and decodes them with the same tag. One record shape, one codec.
      */
     static final String QUEUE_TAG = "Q";
+    /** Optional admin record line: {@code A|kind|personId|aiCoreId|name|portrait|skills}. */
+    static final String ADMIN_TAG = "A";
+    /** Optional base-state hash line for concurrent edit conflict detection: {@code B|hash}. */
+    static final String BASE_HASH_TAG = "B";
     private static final int HEADER_FIELDS = 8;
     private static final int INDUSTRY_FIELDS = 7;
     private static final int QUEUE_FIELDS = 3;
+    private static final int ADMIN_FIELDS = 7;
+
+    /** Category of colony administrator captured without calling mutating {@code Market.getAdmin()}. */
+    public enum AdminKind {
+        /** Admin not included or unreadable; receiver leaves local admin untouched. */
+        UNSET,
+        /** Local player character administers the colony. */
+        PLAYER,
+        /** Installed AI core (e.g. {@code alpha_core}). */
+        AI_CORE,
+        /** Hired human administrator. */
+        PERSON
+    }
+
+    /** Compact, XStream-free snapshot of a colony's administrator. */
+    public record AdminState(AdminKind kind, String personId, String aiCoreId,
+                             String name, String portrait, String skills) {
+        public static final AdminState UNSET = new AdminState(AdminKind.UNSET, "", "", "", "", "");
+
+        public AdminState {
+            kind = kind == null ? AdminKind.UNSET : kind;
+            personId = CoopDelimited.normalize(personId);
+            aiCoreId = CoopDelimited.normalize(aiCoreId);
+            name = CoopDelimited.normalize(name);
+            portrait = CoopDelimited.normalize(portrait);
+            skills = CoopDelimited.normalize(skills);
+        }
+
+        public boolean isPresent() {
+            return kind != AdminKind.UNSET;
+        }
+
+        String encode() {
+            return CoopDelimited.field(ADMIN_TAG)
+                    + FIELD_SEPARATOR + CoopDelimited.field(kind.name())
+                    + FIELD_SEPARATOR + CoopDelimited.field(personId)
+                    + FIELD_SEPARATOR + CoopDelimited.field(aiCoreId)
+                    + FIELD_SEPARATOR + CoopDelimited.field(name)
+                    + FIELD_SEPARATOR + CoopDelimited.field(portrait)
+                    + FIELD_SEPARATOR + CoopDelimited.field(skills);
+        }
+
+        static AdminState decode(List<String> fields) {
+            if (fields.size() != ADMIN_FIELDS) {
+                throw new IllegalArgumentException(
+                        "Expected " + ADMIN_FIELDS + " colony admin fields, got " + fields.size());
+            }
+            AdminKind parsed;
+            try {
+                parsed = AdminKind.valueOf(fields.get(1).trim().toUpperCase(Locale.ROOT));
+            } catch (IllegalArgumentException ex) {
+                parsed = AdminKind.UNSET;
+            }
+            return new AdminState(parsed, fields.get(2), fields.get(3),
+                    fields.get(4), fields.get(5), fields.get(6));
+        }
+    }
 
     /**
      * One industry's replicated state. Every field is an absolute read, so applying twice writes the
@@ -228,7 +289,17 @@ public final class CoopColonyManagement {
     public record State(String reportId, String marketId, String actingPlayerId, boolean freePort,
                         boolean immigrationClosed, boolean immigrationIncentives,
                         boolean useStockpilesForShortages, List<IndustryState> industries,
-                        List<QueueItem> queue) {
+                        List<QueueItem> queue, AdminState admin, String baseContentHash) {
+
+        /** Backward-compatible 9-arg constructor (admin UNSET, no baseContentHash). */
+        public State(String reportId, String marketId, String actingPlayerId, boolean freePort,
+                     boolean immigrationClosed, boolean immigrationIncentives,
+                     boolean useStockpilesForShortages, List<IndustryState> industries,
+                     List<QueueItem> queue) {
+            this(reportId, marketId, actingPlayerId, freePort, immigrationClosed,
+                    immigrationIncentives, useStockpilesForShortages, industries, queue,
+                    AdminState.UNSET, "");
+        }
 
         public State {
             reportId = requireText(reportId, "reportId");
@@ -236,13 +307,10 @@ public final class CoopColonyManagement {
             actingPlayerId = CoopDelimited.normalize(actingPlayerId);
             industries = industries == null ? List.of() : List.copyOf(industries);
             queue = queue == null ? List.of() : List.copyOf(queue);
+            admin = admin == null ? AdminState.UNSET : admin;
+            baseContentHash = CoopDelimited.normalize(baseContentHash);
         }
 
-        /**
-         * True when this describes the same colony state as {@code other}, ignoring who reported it
-         * and when. This is the diff: the open-time snapshot is compared against the close-time one
-         * and only a difference produces a message.
-         */
         public boolean sameStateAs(State other) {
             return other != null
                     && marketId.equals(other.marketId)
@@ -251,20 +319,10 @@ public final class CoopColonyManagement {
                     && immigrationIncentives == other.immigrationIncentives
                     && useStockpilesForShortages == other.useStockpilesForShortages
                     && industries.equals(other.industries)
-                    && queue.equals(other.queue);
+                    && queue.equals(other.queue)
+                    && admin.equals(other.admin);
         }
 
-        /**
-         * The comparison key the {@link Poll} suppresses on: everything {@link #sameStateAs} compares
-         * and nothing else, so the report id and the acting player id — which differ on every capture
-         * and on every engine — cannot make two identical colonies look different.
-         *
-         * <p>It is the content itself, canonically encoded, not a digest. A colony's management state
-         * is a handful of short records; hashing it down to an int would buy nothing but the chance of
-         * a collision silently suppressing a real change. Order-stable by construction: the industry
-         * list is in market order and the queue list is in build order, both of which the wire already
-         * has to preserve.
-         */
         public String contentHash() {
             StringBuilder out = new StringBuilder(160);
             out.append(CoopDelimited.field(marketId))
@@ -278,22 +336,35 @@ public final class CoopColonyManagement {
             for (QueueItem item : queue) {
                 out.append(RECORD_SEPARATOR).append(item.encode());
             }
+            if (admin.isPresent()) {
+                out.append(RECORD_SEPARATOR).append(admin.encode());
+            }
             return out.toString();
         }
 
         /** The same state under a new report id; used to mint the outbound report from a snapshot. */
         public State withReportId(String newReportId) {
             return new State(newReportId, marketId, actingPlayerId, freePort, immigrationClosed,
-                    immigrationIncentives, useStockpilesForShortages, industries, queue);
+                    immigrationIncentives, useStockpilesForShortages, industries, queue,
+                    admin, baseContentHash);
         }
 
-        /**
-         * The whole state as one self-contained delimited blob: the envelope's flat JSON parser has no
-         * arrays, so list-shaped bodies ship as a single opaque string (the
-         * {@code CoopBaseRecord.encodeSet} convention). Header line first, then one line per industry,
-         * then one per queue entry <em>in queue order</em> — the order is the build order and has to
-         * survive the wire.
-         */
+        /** Attaches the baseline content hash for concurrent-edit conflict detection. */
+        public State withBaseContentHash(String baseHash) {
+            return new State(reportId, marketId, actingPlayerId, freePort, immigrationClosed,
+                    immigrationIncentives, useStockpilesForShortages, industries, queue,
+                    admin, baseHash);
+        }
+
+        /** Returns true when this report was edited against a stale canonical hash. */
+        public boolean conflictsWith(String currentCanonicalHash) {
+            return !baseContentHash.isEmpty()
+                    && currentCanonicalHash != null
+                    && !currentCanonicalHash.isEmpty()
+                    && !baseContentHash.equals(currentCanonicalHash)
+                    && !contentHash().equals(currentCanonicalHash);
+        }
+
         public String encode() {
             StringBuilder out = new StringBuilder(160);
             out.append(CoopDelimited.field(HEADER_TAG))
@@ -309,6 +380,13 @@ public final class CoopColonyManagement {
             }
             for (QueueItem item : queue) {
                 out.append(RECORD_SEPARATOR).append(item.encode());
+            }
+            if (admin.isPresent()) {
+                out.append(RECORD_SEPARATOR).append(admin.encode());
+            }
+            if (!baseContentHash.isEmpty()) {
+                out.append(RECORD_SEPARATOR).append(CoopDelimited.field(BASE_HASH_TAG))
+                        .append(FIELD_SEPARATOR).append(CoopDelimited.field(baseContentHash));
             }
             return out.toString();
         }
@@ -326,11 +404,15 @@ public final class CoopColonyManagement {
         }
         List<IndustryState> industries = new ArrayList<>();
         List<QueueItem> queue = new ArrayList<>();
+        AdminState admin = AdminState.UNSET;
+        String baseHash = "";
         for (int i = 1; i < lines.length; i++) {
             List<String> fields = CoopDelimited.split(lines[i]);
             switch (fields.get(0)) {
                 case INDUSTRY_TAG -> industries.add(IndustryState.decode(fields));
                 case QUEUE_TAG -> queue.add(QueueItem.decode(fields));
+                case ADMIN_TAG -> admin = AdminState.decode(fields);
+                case BASE_HASH_TAG -> baseHash = fields.size() > 1 ? fields.get(1) : "";
                 default -> throw new IllegalArgumentException(
                         "Unknown colony management record tag: " + fields.get(0));
             }
@@ -338,7 +420,7 @@ public final class CoopColonyManagement {
         return new State(header.get(1), header.get(2), header.get(3),
                 Boolean.parseBoolean(header.get(4)), Boolean.parseBoolean(header.get(5)),
                 Boolean.parseBoolean(header.get(6)), Boolean.parseBoolean(header.get(7)),
-                industries, queue);
+                industries, queue, admin, baseHash);
     }
 
     private static BuildState parseBuildState(String raw) {
@@ -411,7 +493,152 @@ public final class CoopColonyManagement {
         }
         return new State(reportId, market.getId(), actingPlayerId, market.isFreePort(),
                 market.isImmigrationClosed(), market.isImmigrationIncentivesOn(),
-                market.isUseStockpilesForShortages(), industries, captureQueue(market));
+                market.isUseStockpilesForShortages(), industries, captureQueue(market),
+                captureAdminWithoutMutating(market), "");
+    }
+
+    /**
+     * Reads {@code Market.admin} via sandbox-safe {@code MethodHandles.privateLookupIn} without
+     * calling {@code Market.getAdmin()} (which mutates the market on read by fabricating a governor).
+     */
+    static AdminState captureAdminWithoutMutating(MarketAPI market) {
+        if (market == null) {
+            return AdminState.UNSET;
+        }
+        try {
+            com.fs.starfarer.api.characters.PersonAPI rawAdmin = readRawAdminField(market);
+            if (rawAdmin == null) {
+                return AdminState.UNSET;
+            }
+            if (rawAdmin.isPlayer()) {
+                return new AdminState(AdminKind.PLAYER, "", "", "", "", "");
+            }
+            if (rawAdmin.isAICore()) {
+                return new AdminState(AdminKind.AI_CORE,
+                        rawAdmin.getId(), rawAdmin.getAICoreId(),
+                        rawAdmin.getNameString(), rawAdmin.getPortraitSprite(), "");
+            }
+            StringBuilder skills = new StringBuilder();
+            if (rawAdmin.getStats() != null && rawAdmin.getStats().getSkillsCopy() != null) {
+                for (var sk : rawAdmin.getStats().getSkillsCopy()) {
+                    if (sk != null && sk.getLevel() > 0f && sk.getSkill() != null) {
+                        if (skills.length() > 0) {
+                            skills.append(',');
+                        }
+                        skills.append(sk.getSkill().getId()).append('=').append((int) sk.getLevel());
+                    }
+                }
+            }
+            return new AdminState(AdminKind.PERSON,
+                    rawAdmin.getId(), "",
+                    rawAdmin.getNameString(), rawAdmin.getPortraitSprite(), skills.toString());
+        } catch (Throwable ignored) {
+            return AdminState.UNSET;
+        }
+    }
+
+    private static com.fs.starfarer.api.characters.PersonAPI readRawAdminField(MarketAPI market)
+            throws Throwable {
+        for (Class<?> c = market.getClass(); c != null; c = c.getSuperclass()) {
+            try {
+                var lookup = java.lang.invoke.MethodHandles.privateLookupIn(
+                        c, java.lang.invoke.MethodHandles.lookup());
+                var handle = lookup.findGetter(
+                        c, "admin", com.fs.starfarer.api.characters.PersonAPI.class);
+                return (com.fs.starfarer.api.characters.PersonAPI) handle.invoke(market);
+            } catch (NoSuchFieldException ignored) {
+                // walk up hierarchy
+            }
+        }
+        return null;
+    }
+
+    /** Applies a replicated {@link AdminState} cleanly to {@code market} and {@code CharacterDataAPI}. */
+    static boolean applyAdminToMarket(MarketAPI market, AdminState admin) {
+        if (market == null || admin == null || !admin.isPresent()) {
+            return true;
+        }
+        try {
+            com.fs.starfarer.api.campaign.SectorAPI sector = Global.getSector();
+            if (sector == null) {
+                return false;
+            }
+            switch (admin.kind()) {
+                case PLAYER -> {
+                    com.fs.starfarer.api.characters.PersonAPI player = sector.getPlayerPerson();
+                    if (player != null) {
+                        market.setAdmin(player);
+                    }
+                    return true;
+                }
+                case AI_CORE -> {
+                    if (admin.aiCoreId().isEmpty()) {
+                        return true;
+                    }
+                    var plugin = com.fs.starfarer.api.util.Misc.getAICoreOfficerPlugin(admin.aiCoreId());
+                    if (plugin == null) {
+                        return false;
+                    }
+                    com.fs.starfarer.api.characters.PersonAPI core =
+                            plugin.createPerson(admin.aiCoreId(),
+                                    com.fs.starfarer.api.impl.campaign.ids.Factions.PLAYER, null);
+                    if (core != null) {
+                        if (!admin.personId().isEmpty()) {
+                            core.setId(admin.personId());
+                        }
+                        market.setAdmin(core);
+                    }
+                    return true;
+                }
+                case PERSON -> {
+                    com.fs.starfarer.api.characters.PersonAPI target = null;
+                    var charData = sector.getCharacterData();
+                    if (charData != null && charData.getAdmins() != null) {
+                        for (var data : charData.getAdmins()) {
+                            if (data != null && data.getPerson() != null
+                                    && admin.personId().equals(data.getPerson().getId())) {
+                                target = data.getPerson();
+                                break;
+                            }
+                        }
+                    }
+                    if (target == null) {
+                        target = Global.getFactory().createPerson();
+                        if (!admin.personId().isEmpty()) {
+                            target.setId(admin.personId());
+                        }
+                        if (!admin.name().isEmpty()) {
+                            String[] parts = admin.name().trim().split("\\s+", 2);
+                            target.getName().setFirst(parts[0]);
+                            target.getName().setLast(parts.length > 1 ? parts[1] : "");
+                        }
+                        if (!admin.portrait().isEmpty()) {
+                            target.setPortraitSprite(admin.portrait());
+                        }
+                        if (!admin.skills().isEmpty() && target.getStats() != null) {
+                            for (String token : admin.skills().split(",")) {
+                                String[] kv = token.split("=", 2);
+                                if (kv.length == 2 && !kv[0].isEmpty()) {
+                                    target.getStats().setSkillLevel(kv[0], Float.parseFloat(kv[1]));
+                                }
+                            }
+                        }
+                        if (charData != null) {
+                            charData.addAdmin(target);
+                        }
+                    }
+                    market.setAdmin(target);
+                    return true;
+                }
+                default -> {
+                    return true;
+                }
+            }
+        } catch (Throwable ex) {
+            CoopLog.warn(CoopColonyManagement.class,
+                    "Could not apply colony admin for " + market.getId(), ex);
+            return false;
+        }
     }
 
     /**
@@ -876,6 +1103,11 @@ public final class CoopColonyManagement {
         } catch (RuntimeException | LinkageError ex) {
             applied = false;
             CoopLog.warn(CoopColonyManagement.class, "Failed to apply coop colony toggles", ex);
+        }
+        if (state.admin().isPresent()) {
+            if (!applyAdminToMarket(market, state.admin())) {
+                applied = false;
+            }
         }
         if (changed) {
             try {

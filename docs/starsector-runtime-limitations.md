@@ -1,6 +1,6 @@
 # Starsector Runtime Limitations
 
-The co-op mod targets Starsector `0.98.5a-RC5`. The notes below describe the engine behavior it relies on and record earlier versions where the original check used one. The ledger in `COOP_MP_IMPLEMENTATION_PLAN_V1.md` keeps the history.
+The co-op mod targets Starsector `0.98.5a-RC9`. The notes below describe the engine behavior it relies on and record earlier versions where the original check used one. The ledger in `COOP_MP_IMPLEMENTATION_PLAN_V1.md` keeps the history.
 
 ## Script sandbox
 
@@ -31,7 +31,7 @@ These are a superset of the engine's list. The superset costs nothing and surviv
 - No `java.nio.file.*`, `java.net.URL.openStream()` or protection-domain jar inspection in handshake code.
 - Field access on engine classes goes through `java.lang.invoke.MethodHandles`, never `java.lang.reflect`. Both compile and unit-test green; only the second one throws in-game.
 - All networking is progressed from `EveryFrameScript.advance()` on the campaign thread. Mod-created daemon threads are not reliable: in two-client testing the `coop-net-*` threads disappeared while the game kept running and left the socket half-open.
-- `CoopNetServiceSandboxCompatibilityTest` and `CoopHandshakeSandboxCompatibilityTest` pin the rules; keep them aligned with any change here.
+- `CoopSandboxCompatibilityTest`, `CoopNetServiceSandboxCompatibilityTest`, `CoopHandshakeSandboxCompatibilityTest`, and `CoopOptionsShippedFileTest` pin the rules across the entire mod source tree; keep them aligned with any change here.
 
 ### `SettingsAPI.loadText` works from inside the sandbox
 
@@ -40,7 +40,11 @@ These are a superset of the engine's list. The superset costs nothing and surviv
 - The call catches `Throwable`, not a named checked exception, so a blocked `java.io` type can never be named in the calling class.
 - A per-mod failure degrades to that mod's `UNAVAILABLE:script-sandbox` entry instead of throwing out of `capture()`, so one unreadable third-party mod cannot kill the handshake.
 
-Jar checksums stay `UNAVAILABLE` permanently: no engine surface hands back jar bytes and the sandbox forbids opening them. The git-commit comparison and the Phase 6 sector fingerprint are the primary guards against a skewed install; the `mod_info.json` hashes are corroborating detail in the handshake diff.
+Jar checksums are computed outside the script sandbox by the desktop launcher (`CoopModJarDigester`)
+and passed to `CoopHandshakeManifest` via the one-shot `coop.launcher.modJarDigests` key; direct
+manual launches without the launcher gracefully degrade per-jar entries to `UNAVAILABLE:script-sandbox`.
+The git-commit comparison and the Phase 6 sector fingerprint remain the primary guards against a
+skewed install, corroborated by both `mod_info.json` hashes and launcher-supplied JAR SHA-256 digests.
 
 ## Classpath forks (`coop-forks.jar`)
 

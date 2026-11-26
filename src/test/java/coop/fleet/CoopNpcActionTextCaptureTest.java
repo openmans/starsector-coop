@@ -3,6 +3,8 @@ package coop.fleet;
 import com.fs.starfarer.api.campaign.FleetAssignment;
 import org.junit.jupiter.api.Test;
 
+import java.util.Locale;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -39,12 +41,16 @@ class CoopNpcActionTextCaptureTest {
         assertEquals("travelling to Jangala", CoopNpcActionTextCapture.resolve(view));
     }
 
+    private static String descriptionOf(FleetAssignment assignment) {
+        return assignment.getDescription().toLowerCase(Locale.ROOT);
+    }
+
     @Test
     void assignmentWithoutActionTextFallsBackToTheDescriptionPlusTargetName() {
         CoopNpcActionTextCapture.View view = assignment(FleetAssignment.RESUPPLY);
         view.assignmentTarget = CoopNpcActionTextCapture.Target.entity("Jangala");
 
-        assertEquals("resupplying at Jangala", CoopNpcActionTextCapture.resolve(view));
+        assertEquals(descriptionOf(FleetAssignment.RESUPPLY) + " Jangala", CoopNpcActionTextCapture.resolve(view));
     }
 
     @Test
@@ -52,7 +58,7 @@ class CoopNpcActionTextCaptureTest {
         CoopNpcActionTextCapture.View view = assignment(FleetAssignment.PATROL_SYSTEM);
         view.assignmentTarget = CoopNpcActionTextCapture.Target.entity("Corvus");
 
-        assertEquals("patrolling system", CoopNpcActionTextCapture.resolve(view));
+        assertEquals(descriptionOf(FleetAssignment.PATROL_SYSTEM), CoopNpcActionTextCapture.resolve(view));
     }
 
     @Test
@@ -60,7 +66,8 @@ class CoopNpcActionTextCaptureTest {
         CoopNpcActionTextCapture.View view = assignment(FleetAssignment.DELIVER_SUPPLIES);
         view.assignmentTarget = CoopNpcActionTextCapture.Target.guestMirror("Alice");
 
-        assertEquals("delivering supplies to your fleet", CoopNpcActionTextCapture.resolve(view));
+        assertEquals(descriptionOf(FleetAssignment.DELIVER_SUPPLIES) + " your fleet",
+                CoopNpcActionTextCapture.resolve(view));
     }
 
     @Test
@@ -68,7 +75,8 @@ class CoopNpcActionTextCaptureTest {
         CoopNpcActionTextCapture.View view = assignment(FleetAssignment.DELIVER_SUPPLIES);
         view.assignmentTarget = CoopNpcActionTextCapture.Target.hostPlayer();
 
-        assertEquals("delivering supplies to " + HOST_LABEL, CoopNpcActionTextCapture.resolve(view));
+        assertEquals(descriptionOf(FleetAssignment.DELIVER_SUPPLIES) + " " + HOST_LABEL,
+                CoopNpcActionTextCapture.resolve(view));
     }
 
     // ---- Pursuit --------------------------------------------------------------------------------
@@ -133,7 +141,8 @@ class CoopNpcActionTextCaptureTest {
         view.tacticalTarget = CoopNpcActionTextCapture.Target.guestMirror("Alice");
         view.assignmentTarget = CoopNpcActionTextCapture.Target.guestMirror("Alice");
 
-        assertEquals("intercepting your fleet", CoopNpcActionTextCapture.resolve(view));
+        assertEquals(descriptionOf(FleetAssignment.INTERCEPT) + " your fleet",
+                CoopNpcActionTextCapture.resolve(view));
     }
 
     @Test

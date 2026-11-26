@@ -25,7 +25,10 @@ public enum CoopDialogArbiter {
     DESYNC,
     LOBBY,
     CONNECTING,
-    MARK;
+    MARK,
+    TACTICAL_MAP,
+    CHAT,
+    TRADE;
 
     /** True when {@code kind} outranks {@code other}. */
     public boolean outranks(CoopDialogArbiter other) {

@@ -1,7 +1,7 @@
 # Starsector Coop
 
-**A two-player campaign mod for Starsector.** Fly your own fleet through a shared sector, trade from
-the same markets, and manage colonies together. The host runs the world; the guest's game mirrors it.
+**A campaign co-op mod for Starsector (2–4 players: host + up to 3 guests).** Fly your own fleet through a shared sector, trade from
+the same markets, hunt shared bounties, and manage colonies together. The host runs the world; guests' games mirror it.
 Your ships, cargo, credits, officers, and skills stay yours.
 
 <p>
@@ -24,11 +24,12 @@ Your ships, cargo, credits, officers, and skills stay yours.
 | Part of the campaign | How it works |
 | --- | --- |
 | Sector and exploration | See your partner's fleet and the same NPC fleets. Survey progress, explored ruins, and salvaged wrecks are shared. |
-| Campaign time | Pause and fast-forward together. Battles and interaction screens pause the campaign for your partner. |
-| Battles | One of you pilots the fight. A toggle ability sends your fleet in as an AI ally, with real losses and no share of the spoils. |
-| Markets and storage | Buy from shared open, black, and military markets. Use the same storage locker, including stored ships. Take turns docking at a market. |
-| Colonies and reputation | Govern the same colonies under one faction. Faction reputation changes affect both players. |
-| Player transfers | Jettison cargo for your partner to collect, exchange ships through storage, or send credits from **Intel → Coop Options**. |
+| Campaign time | Any player can toggle global pause (when `coop.allowGuestPause` is on) and fast-forward together. Battles and interaction screens pause the campaign automatically. |
+| Battles | Fly together in real time via Wingman, or pilot solo while partners send AI-ally fleets and issue live tactical orders (engage/escort/defend/retreat) from the opt-in Tactical Map in **Intel → Coop Session**. |
+| Markets and storage | Buy from shared open, black, and military markets. Use the same storage locker (with automatic chunking for large ship lockers). Take turns docking at a market. |
+| Colonies, bounties, and reputation | Govern the same colonies under one faction (with synced administrators, configurable `coop.incomeSplit`, and optional `coop.guestColonizationConsent`). Host person/system bounties, commission payouts, contacts, and whitelisted storyline flags replicate to guests. |
+| Player transfers & comms | Trade credits, cargo, and ships atomically via the direct Trade UI (`Intel → Coop Session → Trade with Partner`), chat in-game (`F8` / `coop.chatKey`), or use shared storage and jettisoned pods. |
+| Networking & security | Supports LAN, UPnP/NAT-PMP, optional standalone CGNAT TCP relay (`coop.relayAddress` / `coop-launcher.jar --relay <port>`), and opt-in AES-256-GCM frame encryption (`coop.encryption=aes-gcm` with `coop.password`). |
 
 The [limitations guide](docs/player/LIMITATIONS.md) explains the details, including storage fees,
 local trade effects, missions, and differences between the two screens.
@@ -39,10 +40,11 @@ With [The Wingman Project](https://github.com/NEOysod/TheWingmanProject) 0.9.4-b
 installed and enabled on **both** PCs, battles are fully synchronised: when the host fights,
 the guest joins the same battle over Wingman and pilots a ship in real time.
 
-- The host opens the Wingman session automatically from the campaign map (port 24816, plus UDP
-  where it gets through). The guest connects Wingman **once**: title screen &rarr; CO-OP &rarr;
-  host address &rarr; port 24816. The guest's coop client posts the same hint as a campaign
-  message when a session starts.
+- The host opens the Wingman session automatically from the campaign map (port `24816`, TCP+UDP).
+  When `coop.portMapping` is `auto`, the host also asks the router to map port `24816` via
+  UPnP/NAT-PMP; if you forward ports manually, forward `24816` (TCP+UDP) alongside `7777`. The
+  guest connects Wingman **once**: title screen &rarr; CO-OP &rarr; host address &rarr; port `24816`.
+  The guest's coop client posts the same hint as a campaign message when a session starts.
 - The guest's fleet joins the host's battles through the usual **Fight Alongside** toggle; the
   coop host reserves the guest's flagship with Wingman, so the guest gets their own ship when
   it deploys. Without the toggle, the guest flies the host's ships instead (nothing of the
@@ -56,7 +58,7 @@ the guest joins the same battle over Wingman and pilots a ship in real time.
 
 - **Starsector `0.98.5a-RC9` on both PCs**, with Ironman off. Co-op uses Normal campaign mode.
 - **The same co-op build and other mods on both PCs**, including matching mod versions.
-- **Windows for the launcher.** It uses the Java runtime bundled with Starsector.
+- **Launcher on Windows (`Coop Launcher.cmd`) and Linux/macOS (`Coop Launcher.sh`).** Uses the Java runtime bundled with Starsector.
 - **A connection to the host's PC.** Use a LAN, VPN, IPv6, port forwarding, or a router with
   UPnP/NAT-PMP. The default port is `7777`; forward both TCP and UDP if configuring it manually.
   See the [connection guide](docs/player/CONNECT.md).

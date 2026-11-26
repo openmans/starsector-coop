@@ -1,13 +1,13 @@
 # Codebase Map
 
-Orientation map for the Starsector co-op mod. Last checked against the tree on 2026-11-13 (0.2.1 preview).
+Orientation map for the Starsector co-op mod. Last checked against the tree on 2026-11-26 (0.2.3 / 0.98.5a-RC9).
 
-P26 remains PARTIAL. M1/M2, shared wrecks and M3 are accepted within their recorded scope. M4/M5 have bounded MCP execution, lifecycle and travel evidence; native visual acceptance remains open. Guest-proximity encounter triggering remains unbuilt. Decisions and deferred gates live in [the plan](COOP_MP_IMPLEMENTATION_PLAN_V1.md#phase-26-hyperspace-ambient-world-replication-post-v1--slipstreams--abyssal-encounters); dated M3, M4 and M4/M5 acceptance reports retain the run history.
+P26 remains PARTIAL only for manual native visual checks (M4/M5 paired storms/ghosts). M1/M2, shared wrecks, M3, multi-guest ambient forks, and guest-proximity ambient system-call sync (`CoopAmbientSystemSync` / `AMBIENT_CALL`) are implemented and unit-tested. Decisions and deferred gates live in [the plan](COOP_MP_IMPLEMENTATION_PLAN_V1.md#phase-26-hyperspace-ambient-world-replication-post-v1--slipstreams--abyssal-encounters); dated M3, M4 and M4/M5 acceptance reports retain the run history.
 
 ## Stack
 
 - Java 17 toolchain (`build.gradle`: `JavaLanguageVersion.of(17)`), Gradle wrapper (`gradlew`)
-- Compiles against Starsector 0.98.5a-RC5's `starsector-core` jars, including `starfarer.api.jar`,
+- Compiles against Starsector 0.98.5a-RC9's `starsector-core` jars, including `starfarer.api.jar`,
   `xstream-1.4.10.jar`, `log4j-1.2.9.jar`, `json.jar`, `lwjgl.jar` and `lwjgl_util.jar`.
   Set `-PstarsectorCore` or `STARSECTOR_CORE` when `../../starsector-core` points at another install.
 - Three jars out of one build: `jars/coop.jar` (mod classloader), `jars/coop-forks.jar` (system
@@ -26,7 +26,7 @@ P26 remains PARTIAL. M1/M2, shared wrecks and M3 are accepted within their recor
 
 ```text
 K:\Starsector\mods\coop
-|-- src/main/java/coop/   the mod: 24 packages + CoopModPlugin
+|-- src/main/java/coop/   the mod: 28 packages + CoopModPlugin
 |-- src/launcher/java/    coop.launcher, the FlatLaf desktop launcher (no Starsector API on its classpath)
 |-- src/test/java/coop/   JUnit 5 suite, mirrors the main packages + coop/launcher + coop/testing
 |-- forks/                pinned vanilla classpath-shadow copies -> coop-forks.jar
@@ -154,7 +154,8 @@ toggle too).
   and the Phase 20.4 abuse limits.
 - `CoopNetPump` - the `EveryFrameScript` that drives everything: ~9.5k lines, the frame order above.
 - `CoopNetPumpInstaller` - installs it as a transient script.
-- `CoopMessages` - the `Type` enum (90 constants), the envelope codec, datagram header parse,
+- `CoopMessages` - the `Type` enum (95 constants, including `FF_INTENT`, `BOUNTY_SET`,
+  `BATTLE_ORDER`, `BATTLE_ORDER_ACK`), the envelope codec, datagram header parse,
   `isReliableOneShot`, `wireToken`, `MAX_DATAGRAM_CHUNKS`.
 - `CoopPeerLink` - everything known about one peer: TCP channel, half-written frame, inbound
   assembly, validated send address, watermarks.
@@ -208,8 +209,12 @@ Owns: every wire type, since the enum lives here.
   `tickMarketSyncGate`.
 - `CoopWorldDelta` (+ `CoopWorldEntitySpawn`) - the single guest -> host channel for any guest
   interaction that mutates shared state.
-- `CoopMarketSync` / `CoopMarketSyncGate` / `CoopMarketIds` / `CoopShipDetail` / `CoopPersonDetail` /
-  `CoopMemberIds` / `CoopStorageUnlock` / `CoopStorageUnlockSync` - markets, submarkets, storage.
+- `CoopMarketSync` / `CoopMarketSyncGate` / `CoopMarketSnapshotChunker` / `CoopMarketIds` /
+  `CoopShipDetail` / `CoopPersonDetail` / `CoopMemberIds` / `CoopStorageUnlock` /
+  `CoopStorageUnlockSync` - markets, submarkets, chunked storage lockers up to 16 MiB.
+- `CoopBountyAuthority` (+ `CoopPersonBountyIntel` / `CoopSystemBountyIntel`) - Phase 34
+  host-authoritative person and system bounty replication (`BOUNTY_SET`) and pre-reconcile
+  `CREDITS_GRANT` payouts for guest kills.
 - `CoopMissionBoardSync` / `CoopMissionClaim` / `CoopBarSync` / `CoopBarPoolCapture` /
   `CoopBarPoolInjector` / `CoopBarAcceptanceWatcher` / `CoopBarGenerationSuppressor` - shared
   mission and bar pools with first-come claims.
@@ -373,21 +378,33 @@ Owns: every wire type, since the enum lives here.
   (paused, forward-only clock alignment for paired QA samples).
 - **`coop.util`** (5) - `CoopLog`, `CoopDebug` (diagnostics opt-in), `CoopText`, `CoopFrameProfiler`,
   `CoopIntelFacts`.
+- **`coop.wingman`** (3) - optional integration with The Wingman Project (0.9.4-beta+).
+  `CoopWingmanApi` is the narrow interface; `ReflectiveCoopWingmanApi` binds `WingmanAPI` via
+  sandbox-safe `MethodHandles` (never `java.lang.reflect`), short-circuiting when Wingman is not
+  enabled; `CoopWingmanIntegration` drives host session open/pump and dynamic guest flagship
+  reservation, guest name announcement (`WINGMAN_HELLO`) and connect hint, and spectator
+  classification for `CoopBattleBridge`. Owns `WINGMAN_HELLO`.
 - **`coop.rewards`** (1) - `CoopRewardSplitter`, the co-op share policy as pure arithmetic.
 - **`coop.storm`** (4) - system-loader-only `CoopStormBridge`, `CoopStormGrid`,
   `CoopStormSnapshot` and `CoopStormControl`. Forks and mod adapters share one parent-loader copy.
   The bridge references native/JDK types, not campaign/network/config classes. Runtime handlers and
   windows stay transient; native objects save primitive M4 metadata under their existing class names.
+- **`coop.trade`** (1), **`coop.chat`** (1), **`coop.compat`** (1) - direct player-to-player atomic
+  trade state machine (`CoopTradeSession` + `CoopTradeDialogPlugin`, `TRADE_SYNC`), in-game text
+  chat (`CoopChatService` + `CoopChatDialog`, `CHAT_MSG`, `coop.chatKey`), and optional Nexerelin
+  diplomacy/invasion sync adapter (`CoopNexerelinAdapter`, `NEX_EVENT`, dormant when Nexerelin is
+  absent).
 - **`coop.rng`** (1) and **`coop.presence`** (2) - system classloader only. `CoopRandom` is the
-  deterministic session-seeded RNG the forks draw from; `CoopPresenceRegistry` is the one slot
-  through which `coop.jar` tells the forked engine classes where the second player is;
+  deterministic session-seeded RNG the forks draw from; `CoopPresenceRegistry` is the multi-guest
+  registry through which `coop.jar` tells the forked engine classes where all guests are;
   `CoopSpawnSpacing` is their spawn geometry. Both ship **only** in `coop-forks.jar`.
 
 ## Wire Protocol
 
-Types are declared in `coop/net/CoopMessages.java` as `CoopMessages.Type`: **90 constants**. The
-envelope is flat JSON with six fields. Structured payloads travel as primitive text using their
-record codec, including delimiter or length-prefixed formats:
+Types are declared in `coop/net/CoopMessages.java` as `CoopMessages.Type`: **100 constants**. The
+envelope is flat JSON with six fields (optionally wrapped in `ENC1:<iv>:<ciphertext>` when
+`coop.encryption=aes-gcm` with `coop.password`). Structured payloads travel as primitive text using
+their record codec, including delimiter or length-prefixed formats:
 
 ```text
 {"type","sessionId","seq","sentAtMillis","payloadJson","senderId"}

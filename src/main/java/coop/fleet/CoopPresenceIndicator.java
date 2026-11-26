@@ -4,6 +4,11 @@ import com.fs.starfarer.api.campaign.CampaignFleetAPI;
 import com.fs.starfarer.api.combat.MutableStat;
 import com.fs.starfarer.api.impl.campaign.ids.Factions;
 import com.fs.starfarer.api.impl.campaign.ids.Stats;
+import coop.config.CoopOptionsRegistry;
+import coop.config.CoopOptionsStore;
+
+import java.awt.Color;
+import java.util.Locale;
 
 /**
  * Makes the mirrored remote-player fleet an always-visible presence on the campaign map, rendered in
@@ -87,6 +92,49 @@ public final class CoopPresenceIndicator {
     }
 
     /**
+     * Resolves {@code coop.partnerColor} into an AWT {@link Color}, supporting named presets
+     * ({@code cyan}, {@code green}, {@code amber}, {@code gold}, {@code magenta}, {@code blue},
+     * {@code orange}, {@code red}, {@code white}) and {@code #RRGGBB} hex strings. Returns
+     * {@code null} when unset or invalid (caller uses default player-faction colour).
+     */
+    public static Color parsePartnerColor(String raw) {
+        if (raw == null || raw.trim().isEmpty()) {
+            return null;
+        }
+        String norm = raw.trim().toLowerCase(Locale.ROOT);
+        return switch (norm) {
+            case "cyan" -> new Color(80, 235, 255);
+            case "green" -> new Color(100, 240, 130);
+            case "amber", "gold", "yellow" -> new Color(255, 200, 80);
+            case "magenta", "purple" -> new Color(235, 110, 255);
+            case "blue" -> new Color(100, 170, 255);
+            case "orange" -> new Color(255, 145, 70);
+            case "red" -> new Color(255, 95, 95);
+            case "white" -> Color.WHITE;
+            default -> {
+                String hex = norm.startsWith("#") ? norm.substring(1) : norm;
+                if (hex.length() == 6) {
+                    try {
+                        yield new Color(Integer.parseInt(hex, 16));
+                    } catch (NumberFormatException ignored) {
+                        yield null;
+                    }
+                }
+                yield null;
+            }
+        };
+    }
+
+    /** Reads the live {@code coop.partnerColor} preference, or null when unset. */
+    public static Color configuredPartnerColor() {
+        try {
+            return parsePartnerColor(CoopOptionsStore.system().string(CoopOptionsRegistry.PARTNER_COLOR));
+        } catch (RuntimeException | LinkageError ex) {
+            return null;
+        }
+    }
+
+    /**
      * Applies always-visible presence styling to the mirror fleet. Safe to call every update; the
      * modifier is keyed by a stable source so it is not stacked, and {@code MutableStat.modifyMult}
      * is a no-op when the value has not changed.
@@ -101,6 +149,12 @@ public final class CoopPresenceIndicator {
                     mirrorFleet.getStats().getDynamic().getStat(Stats.DETECTED_BY_PLAYER_RANGE_MULT);
             if (detectedByPlayer != null) {
                 detectedByPlayer.modifyMult(PRESENCE_SOURCE, PLAYER_DETECTION_MULT, "Coop partner");
+            }
+            Color custom = configuredPartnerColor();
+            if (custom != null && mirrorFleet.getMemoryWithoutUpdate() != null) {
+                mirrorFleet.getMemoryWithoutUpdate().set("$coopPartnerColorRgb",
+                        String.format(Locale.ROOT, "#%02x%02x%02x",
+                                custom.getRed(), custom.getGreen(), custom.getBlue()));
             }
         } catch (RuntimeException ignored) {
             // Visibility styling is cosmetic; never let it abort the mirror update.

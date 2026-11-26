@@ -25,6 +25,8 @@ import coop.net.CoopNetService;
 import coop.session.CoopPlayerInfo;
 import coop.session.CoopSessionState;
 import coop.time.CoopSharedPauseCoordinator;
+import coop.wingman.CoopWingmanApi;
+import coop.wingman.CoopWingmanIntegration;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -1258,5 +1260,80 @@ class CoopBattleBridgeTest {
         }
 
         assertTrue(fixture.bridge.isRemoteBattleActive());
+    }
+
+    @Test
+    void guestWingmanJoinBattleStaysSpectatorEvenBeforeBattleBeginArrives() {
+        Fixture guest = Fixture.guest();
+        CoopWingmanIntegration.install(wingmanIntegration(true));
+        try {
+            // Synthetic Wingman combat starts before host BATTLE_BEGIN arrives over TCP:
+            // context has no mirrored NPC fleet and no Dweller encounter tag.
+            guest.bridge.onCombatFrame(guest.engine(List.of()), 1_000L);
+
+            assertTrue(guest.service.sent.isEmpty(),
+                    "guest in Wingman join battle must not announce a separate BATTLE_BEGIN");
+            assertFalse(guest.pause.eitherInCombat(),
+                    "guest Wingman join battle must not assert a local combat pause");
+
+            guest.bridge.tickCampaign(null, true, 2_000L);
+            assertTrue(guest.service.sent.isEmpty(),
+                    "exiting a Wingman join battle must not emit BATTLE_END");
+        } finally {
+            CoopWingmanIntegration.uninstall();
+        }
+    }
+
+    @Test
+    void guestFightingMirroredNpcFleetWhileWingmanJoinedRunsNormalLocalBattle() {
+        Fixture guest = Fixture.guest();
+        Engine world = new Engine("npc-7", List.of());
+        SettingsAPI previousSettings = Global.getSettings();
+        BattleCreationContext context;
+        try {
+            Global.setSettings(ApiProxies.whiteSettings());
+            context = new BattleCreationContext((CampaignFleetAPI) world.playerFleet,
+                    FleetGoal.ATTACK, (CampaignFleetAPI) world.mirror, FleetGoal.ATTACK);
+        } finally {
+            Global.setSettings(previousSettings);
+        }
+        CombatEngineAPI combat = combatEngine(List.of(), false, context);
+        CoopWingmanIntegration.install(wingmanIntegration(true));
+        try {
+            guest.bridge.onCombatFrame(combat, 1_000L);
+
+            assertEquals(1, countOf(guest.service.sent, CoopMessages.Type.BATTLE_BEGIN),
+                    "a guest attacking a mirrored NPC fleet while Wingman-joined still runs a normal local battle");
+            assertEquals("npc-7",
+                    CoopMessages.requiredPayloadString(guest.service.sent.get(0), "npcFleetIds"));
+        } finally {
+            CoopWingmanIntegration.uninstall();
+        }
+    }
+
+    private static CoopWingmanIntegration wingmanIntegration(boolean joined) {
+        return new CoopWingmanIntegration(
+                () -> CoopConnectionRole.GUEST,
+                () -> 1L,
+                () -> "session-a",
+                () -> 0L,
+                stubWingmanApi(joined),
+                () -> true,
+                () -> "",
+                (msg) -> {},
+                (hint) -> {},
+                () -> "host.example");
+    }
+
+    private static CoopWingmanApi stubWingmanApi(boolean joined) {
+        return new CoopWingmanApi() {
+            @Override public boolean wingmanEnabled() { return true; }
+            @Override public boolean isJoined() { return joined; }
+            @Override public String localName() { return "GuestPilot"; }
+            @Override public boolean openHost() { return false; }
+            @Override public String pumpHost() { return ""; }
+            @Override public List<String> playerNames() { return List.of(); }
+            @Override public void reserveShip(String playerName, String fleetMemberId) {}
+        };
     }
 }

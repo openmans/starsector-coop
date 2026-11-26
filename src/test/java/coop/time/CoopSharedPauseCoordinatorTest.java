@@ -217,4 +217,94 @@ class CoopSharedPauseCoordinatorTest {
         assertFalse(coordinator.reconnectHold());
         assertFalse(coordinator.effectivePaused());
     }
+
+    // ---- Phase 25: allowGuestPause + global any-player pause & fast-forward toggle ----------------
+
+    @Test
+    void allowGuestPauseFalseIgnoresGuestKeyPauseButKeepsScreenCombatAndReconnectPauses() {
+        CoopSharedPauseCoordinator coordinator = new CoopSharedPauseCoordinator();
+        coordinator.setAllowGuestPause(false);
+
+        coordinator.applyGuestKeyPauseIntent(true, 1L);
+        assertFalse(coordinator.effectivePaused(), "manual guest pause is ignored when disallowed");
+
+        coordinator.applyGuestScreenPauseIntent(true, 2L);
+        assertTrue(coordinator.effectivePaused(), "screen pause is never gated by allowGuestPause");
+
+        coordinator.applyGuestScreenPauseIntent(false, 3L);
+        coordinator.setEitherInCombat(true);
+        assertTrue(coordinator.effectivePaused(), "combat pause is never gated");
+
+        coordinator.setEitherInCombat(false);
+        coordinator.setReconnectHold(true);
+        assertTrue(coordinator.effectivePaused(), "reconnect hold is never gated");
+    }
+
+    @Test
+    void guestUnpauseToggleClearsHostManualPauseWhenAllowedButNotScreenOrCombat() {
+        CoopSharedPauseCoordinator coordinator = new CoopSharedPauseCoordinator();
+        coordinator.setHostPauseIntent(true);
+        assertTrue(coordinator.effectivePaused());
+
+        assertTrue(coordinator.applyGuestKeyPauseToggle("guest-1", false, 1L));
+        assertFalse(coordinator.hostPauseIntent());
+        assertFalse(coordinator.effectivePaused());
+
+        // When disallowed, guest cannot unpause host manual pause either.
+        coordinator.setAllowGuestPause(false);
+        coordinator.setHostPauseIntent(true);
+        assertTrue(coordinator.applyGuestKeyPauseToggle("guest-1", false, 2L));
+        assertTrue(coordinator.hostPauseIntent());
+        assertTrue(coordinator.effectivePaused());
+
+        // Even when allowed, guest key unpause never clears combat or screen holds.
+        coordinator.setAllowGuestPause(true);
+        coordinator.applyGuestScreenPauseIntent("guest-2", true, 1L);
+        assertTrue(coordinator.applyGuestKeyPauseToggle("guest-1", false, 3L));
+        assertFalse(coordinator.hostPauseIntent());
+        assertTrue(coordinator.guestScreenPauseIntent());
+        assertTrue(coordinator.effectivePaused());
+    }
+
+    @Test
+    void anyPlayerCanToggleGlobalFastForwardDirectlyWithoutConfirmation() {
+        CoopSharedPauseCoordinator coordinator = new CoopSharedPauseCoordinator();
+
+        // Guest presses Shift while observing 1x -> desired is true, host applies immediately.
+        coordinator.setObservedFastForward(false);
+        coordinator.recordGuestFastForwardKeyPress();
+        assertTrue(coordinator.consumeGuestFastForwardKeyPress());
+        assertFalse(coordinator.consumeGuestFastForwardKeyPress());
+        assertTrue(coordinator.desiredFastForward());
+
+        assertTrue(coordinator.applyGuestFastForwardIntent("guest-1", true, 1L));
+        assertTrue(coordinator.effectiveFastForward());
+
+        // Host presses Shift while observing 2x -> toggles off immediately.
+        coordinator.setObservedFastForward(true);
+        coordinator.onHostFastForwardKey();
+        assertFalse(coordinator.effectiveFastForward());
+
+        // Stale seq is ignored.
+        assertFalse(coordinator.applyGuestFastForwardIntent("guest-1", true, 1L));
+        assertFalse(coordinator.effectiveFastForward());
+
+        // Reconnect hold clears fast-forward; shared pause does not.
+        assertTrue(coordinator.applyGuestFastForwardIntent("guest-1", true, 2L));
+        coordinator.setHostPauseIntent(true);
+        assertTrue(coordinator.effectiveFastForward(), "FF survives a shared pause");
+        coordinator.setReconnectHold(true);
+        assertFalse(coordinator.effectiveFastForward(), "reconnect hold clears FF");
+    }
+
+    @Test
+    void ffIntentMessageRoundTrips() {
+        CoopMessages.Message message = CoopMessages.ffIntent("session-z", 5L, 8000L, true, 12L);
+        CoopMessages.Message decoded = CoopMessages.decode(CoopMessages.encode(message));
+
+        assertEquals(CoopMessages.Type.FF_INTENT, decoded.type());
+        assertEquals("session-z", decoded.sessionId());
+        assertEquals("true", CoopMessages.requiredPayloadString(decoded, "fastForward"));
+        assertEquals(12L, CoopMessages.requiredPayloadLong(decoded, "intentSeq"));
+    }
 }

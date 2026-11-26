@@ -34,6 +34,8 @@ public final class CoopMessages {
         SEED_LOCK_REJECT,
         TIME_SNAPSHOT,
         PAUSE_INTENT,
+        /** Phase 25: guest &rarr; host global fast-forward toggle intent (reliable TCP). */
+        FF_INTENT,
         FLEET_SNAPSHOT,
         /**
          * Phase 20 M4 roster split: the immutable half of a player fleet, on reliable TCP, sent on
@@ -63,6 +65,8 @@ public final class CoopMessages {
         COLONY_MGMT,
         COLONY_INCOME,
         EXPEDITION_WARNING,
+        /** Phase 34: host &rarr; guest complete active person + system bounty set. */
+        BOUNTY_SET,
         ABILITY_ACTIVATE,
         ORBIT_SNAPSHOT,
         NPC_FLEET_SET,
@@ -104,6 +108,10 @@ public final class CoopMessages {
         BATTLE_STATUS,
         BATTLE_END,
         BATTLE_RESULT,
+        /** Phase 22: partner &rarr; fighting side tactical order for an owned allied ship. */
+        BATTLE_ORDER,
+        /** Phase 22: fighting side &rarr; partner acknowledgement for {@code BATTLE_ORDER}. */
+        BATTLE_ORDER_ACK,
         ENGAGE_GUEST,
         DIALOG_BEGIN,
         GUEST_SNAPSHOT,
@@ -358,7 +366,25 @@ public final class CoopMessages {
          * reserve the guest's flagship with Wingman so the guest gets their own ship when it
          * deploys. Reliable one-shot per session; nothing re-sends it on its own.
          */
-        WINGMAN_HELLO
+        WINGMAN_HELLO,
+        /** Phase 26: guest &rarr; host ambient system-call request (slipsurge / abyssal encounter). */
+        AMBIENT_CALL,
+        /** Host &rarr; guest full guest-snapshot restore payload from {@code coop.guestFleetSnapshots}. */
+        GUEST_SNAPSHOT_RESTORE,
+        /** Guest &rarr; host colonization approval request when {@code coop.guestColonizationConsent=true}. */
+        COLONY_CONSENT_REQ,
+        /** Host &rarr; guest colonization approval verdict. */
+        COLONY_CONSENT_RES,
+        /** Host &rarr; guest active contacts and contact missions snapshot. */
+        CONTACT_SET,
+        /** Host &rarr; guest whitelisted storyline flags ({@code $ga*}, {@code $sd*}). */
+        STORY_STATE,
+        /** Bidirectional player-to-player direct trade state frame. */
+        TRADE_SYNC,
+        /** Bidirectional in-game co-op text chat message. */
+        CHAT_MSG,
+        /** Host &rarr; guest optional Nexerelin diplomacy/invasion state event. */
+        NEX_EVENT
     }
 
     /**
@@ -415,35 +441,38 @@ public final class CoopMessages {
                  REP_DELTA, GUEST_REP_DELTA, FACTION_REL_DELTA,
                  // A marker no producer ever sends again, whose point is to be in both logs.
                  MARK,
-                 // Phase 33: the only report of what a battle on the other engine did to this
-                 // player's ships. Nothing re-sends it and nothing else carries the same facts.
-                 ALLY_BATTLE_RESULT, WINGMAN_HELLO -> true;
-            case LOBBY_HELLO, LOBBY_CHALLENGE, LOBBY_ACCEPT, LOBBY_REJECT, LOBBY_STATUS,
-                 HANDSHAKE_MANIFEST, HANDSHAKE_RESULT,
-                 SEED_LOCK_REQUEST, SEED_LOCK_ACK, SEED_LOCK_REJECT,
-                 SESSION_RESUME_REQUEST, SESSION_RESUME_ACCEPT, SESSION_RESUME_REJECT,
-                 READY_STATE, FLEET_ROSTER_REQUEST, RELIABLE_ACK,
-                 TIME_SNAPSHOT, PAUSE_INTENT, FLEET_SNAPSHOT, FLEET_ROSTER, GUEST_SNAPSHOT,
-                 ORBIT_SNAPSHOT, NPC_FLEET_SET, NPC_FLEET_MOTION, BASE_SET, ENC_SET, STATE_DATAGRAM,
-                 // Phase 26: resume sends a fresh manifest and every live stream. Replaying an old
-                 // upsert after that set could recreate terrain the host has already removed.
-                 STREAM_SET, STREAM_ADD, STREAM_DESPAWN, STREAM_REMOVE,
-                 WRECK_SET, WRECK_ADD, WRECK_REMOVE, WRECK_CONSUME, WRECK_MUTATION, WRECK_MUTATION_ACK,
-                 LIGHT_SET, LIGHT_REQUEST, LIGHT_RESULT,
-                 STORM_SET, STORM_GRID, STORM_CONTROL,
-                 PLAYER_REP_SNAPSHOT, MISSION_POOL_SNAPSHOT,
-                 MISSION_CLAIM_REQUEST, MISSION_CLAIM_ACCEPT, MISSION_CLAIM_REJECT,
-                 MARKET_OPEN, MARKET_SNAPSHOT, COLONY_INCOME, EXPEDITION_WARNING,
-                 INTERACTION_CLAIM, INTERACTION_ACCEPT, INTERACTION_REJECT, INTERACTION_RELEASE,
-                 ABILITY_ACTIVATE, DIALOG_BEGIN,
-                 BATTLE_BEGIN, BATTLE_STATUS, BATTLE_END, BATTLE_RESULT, ENGAGE_GUEST,
-                 SAVE_CHECKPOINT, SAVE_CHECKPOINT_RESULT, RESPAWN_PLAYER, STALL_NOTICE,
-                 SESSION_LEAVE,
-                 OPTIONS_SNAPSHOT, OPTIONS_APPLIED, SESSION_STATS, LINK_STATUS,
-                 // Phase 33: the announcement half of the ally pair. The result that follows carries
-                 // the facts and is reliable; this one costs a HUD line if it is lost.
-                 ALLY_BATTLE_JOIN,
-                 PING, PONG, UDP_PROBE, PATH_PROBE -> false;
+                  // Phase 33: the only report of what a battle on the other engine did to this
+                  // player's ships. Nothing re-sends it and nothing else carries the same facts.
+                  ALLY_BATTLE_RESULT, WINGMAN_HELLO,
+                  GUEST_SNAPSHOT_RESTORE, CHAT_MSG, NEX_EVENT -> true;
+             case LOBBY_HELLO, LOBBY_CHALLENGE, LOBBY_ACCEPT, LOBBY_REJECT, LOBBY_STATUS,
+                  HANDSHAKE_MANIFEST, HANDSHAKE_RESULT,
+                  SEED_LOCK_REQUEST, SEED_LOCK_ACK, SEED_LOCK_REJECT,
+                  SESSION_RESUME_REQUEST, SESSION_RESUME_ACCEPT, SESSION_RESUME_REJECT,
+                  READY_STATE, FLEET_ROSTER_REQUEST, RELIABLE_ACK,
+                  TIME_SNAPSHOT, PAUSE_INTENT, FF_INTENT, FLEET_SNAPSHOT, FLEET_ROSTER, GUEST_SNAPSHOT,
+                  ORBIT_SNAPSHOT, NPC_FLEET_SET, NPC_FLEET_MOTION, BASE_SET, ENC_SET, STATE_DATAGRAM,
+                  // Phase 26: resume sends a fresh manifest and every live stream. Replaying an old
+                  // upsert after that set could recreate terrain the host has already removed.
+                  STREAM_SET, STREAM_ADD, STREAM_DESPAWN, STREAM_REMOVE,
+                  WRECK_SET, WRECK_ADD, WRECK_REMOVE, WRECK_CONSUME, WRECK_MUTATION, WRECK_MUTATION_ACK,
+                  LIGHT_SET, LIGHT_REQUEST, LIGHT_RESULT,
+                  STORM_SET, STORM_GRID, STORM_CONTROL, AMBIENT_CALL,
+                  PLAYER_REP_SNAPSHOT, MISSION_POOL_SNAPSHOT,
+                  MISSION_CLAIM_REQUEST, MISSION_CLAIM_ACCEPT, MISSION_CLAIM_REJECT,
+                  MARKET_OPEN, MARKET_SNAPSHOT, COLONY_INCOME, EXPEDITION_WARNING, BOUNTY_SET,
+                  COLONY_CONSENT_REQ, COLONY_CONSENT_RES, CONTACT_SET, STORY_STATE, TRADE_SYNC,
+                  INTERACTION_CLAIM, INTERACTION_ACCEPT, INTERACTION_REJECT, INTERACTION_RELEASE,
+                  ABILITY_ACTIVATE, DIALOG_BEGIN,
+                  BATTLE_BEGIN, BATTLE_STATUS, BATTLE_END, BATTLE_RESULT,
+                  BATTLE_ORDER, BATTLE_ORDER_ACK, ENGAGE_GUEST,
+                  SAVE_CHECKPOINT, SAVE_CHECKPOINT_RESULT, RESPAWN_PLAYER, STALL_NOTICE,
+                  SESSION_LEAVE,
+                  OPTIONS_SNAPSHOT, OPTIONS_APPLIED, SESSION_STATS, LINK_STATUS,
+                  // Phase 33: the announcement half of the ally pair. The result that follows carries
+                  // the facts and is reliable; this one costs a HUD line if it is lost.
+                  ALLY_BATTLE_JOIN,
+                  PING, PONG, UDP_PROBE, PATH_PROBE -> false;
         };
     }
 
@@ -865,6 +894,49 @@ public final class CoopMessages {
                 "{\"source\":\"" + source.name() + "\","
                         + "\"paused\":\"" + paused + "\","
                         + "\"intentSeq\":" + intentSeq + "}");
+    }
+
+    /** Phase 25 guest&rarr;host global fast-forward toggle intent (reliable TCP). */
+    public static Message ffIntent(String sessionId, long seq, long sentAtMillis,
+                                   boolean fastForward, long intentSeq) {
+        return new Message(Type.FF_INTENT, requireText(sessionId, "sessionId"), seq, sentAtMillis,
+                "{\"fastForward\":\"" + fastForward + "\","
+                        + "\"intentSeq\":" + intentSeq + "}");
+    }
+
+    /** Phase 34 host&rarr;guest full active person and system bounty set (reliable TCP). */
+    public static Message bountySet(String sessionId, long seq, long sentAtMillis, String body) {
+        return new Message(Type.BOUNTY_SET, requireText(sessionId, "sessionId"), seq, sentAtMillis,
+                "{\"body\":\"" + escapeJson(body == null ? "" : body) + "\"}");
+    }
+
+    /** Phase 22 partner&rarr;fighting-side tactical order for a joined allied ship. */
+    public static Message battleOrder(String sessionId, long seq, long sentAtMillis,
+                                      String orderId, String battleId, String shipId, String kind,
+                                      String targetId, float targetX, float targetY,
+                                      boolean directRetreat) {
+        return new Message(Type.BATTLE_ORDER, requireText(sessionId, "sessionId"), seq, sentAtMillis,
+                "{\"orderId\":\"" + escapeJson(orderId == null ? "" : orderId) + "\","
+                        + "\"battleId\":\"" + escapeJson(battleId == null ? "" : battleId) + "\","
+                        + "\"shipId\":\"" + escapeJson(shipId == null ? "" : shipId) + "\","
+                        + "\"kind\":\"" + escapeJson(kind == null ? "CANCEL" : kind) + "\","
+                        + "\"targetId\":\"" + escapeJson(targetId == null ? "" : targetId) + "\","
+                        + "\"targetX\":\"" + targetX + "\","
+                        + "\"targetY\":\"" + targetY + "\","
+                        + "\"directRetreat\":\"" + directRetreat + "\"}");
+    }
+
+    /** Phase 22 fighting-side&rarr;partner acknowledgement for a {@code BATTLE_ORDER}. */
+    public static Message battleOrderAck(String sessionId, long seq, long sentAtMillis,
+                                         String orderId, String battleId, String shipId,
+                                         boolean accepted, String activeAssignment, String reason) {
+        return new Message(Type.BATTLE_ORDER_ACK, requireText(sessionId, "sessionId"), seq, sentAtMillis,
+                "{\"orderId\":\"" + escapeJson(orderId == null ? "" : orderId) + "\","
+                        + "\"battleId\":\"" + escapeJson(battleId == null ? "" : battleId) + "\","
+                        + "\"shipId\":\"" + escapeJson(shipId == null ? "" : shipId) + "\","
+                        + "\"accepted\":\"" + accepted + "\","
+                        + "\"activeAssignment\":\"" + escapeJson(activeAssignment == null ? "" : activeAssignment) + "\","
+                        + "\"reason\":\"" + escapeJson(reason == null ? "" : reason) + "\"}");
     }
 
     public static Message interactionClaim(String sessionId, long seq, long sentAtMillis,
@@ -2126,7 +2198,17 @@ public final class CoopMessages {
         return json.toString();
     }
 
+    public static String encode(Message message, CoopCipher cipher) {
+        String plain = encode(message);
+        return cipher == null ? plain : cipher.encrypt(plain);
+    }
+
     public static Message decode(String json) {
+        return decode(json, null);
+    }
+
+    public static Message decode(String raw, CoopCipher cipher) {
+        String json = (cipher != null && CoopCipher.isEncryptedFrame(raw)) ? cipher.decrypt(raw) : raw;
         Map<String, Object> fields = CoopJson.parseObject(json);
         Type type = Type.valueOf(requiredString(fields, "type"));
         String sessionId = nullableString(fields, "sessionId");
@@ -2809,5 +2891,52 @@ public final class CoopMessages {
                 payload.optionalString("location", ""),
                 payload.optionalLong("markSeq", message.seq()),
                 payload.optionalString("note", ""));
+    }
+
+    // ---- Extended sync messages (Phase 26 ambient, restore, consent, contacts, story, trade, chat, Nexerelin) ----
+
+    public static Message bodyMessage(Type type, String sessionId, long seq, long sentAtMillis, String body) {
+        return new Message(type, requireText(sessionId, "sessionId"), seq, sentAtMillis,
+                "{\"body\":\"" + escapeJson(body == null ? "" : body) + "\"}");
+    }
+
+    public static String parseBody(Message message) {
+        return optionalPayloadString(message, "body", "");
+    }
+
+    public static Message ambientCall(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.AMBIENT_CALL, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message guestSnapshotRestore(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.GUEST_SNAPSHOT_RESTORE, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message colonyConsentReq(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.COLONY_CONSENT_REQ, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message colonyConsentRes(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.COLONY_CONSENT_RES, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message contactSet(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.CONTACT_SET, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message storyState(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.STORY_STATE, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message tradeSync(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.TRADE_SYNC, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message chatMsg(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.CHAT_MSG, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message nexEvent(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.NEX_EVENT, sessionId, seq, sentAtMillis, body);
     }
 }

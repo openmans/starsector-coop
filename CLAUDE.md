@@ -1,6 +1,6 @@
 # Starsector co-op mod
 
-Java mod for Starsector 0.98.5a-RC5 that runs one shared campaign across two clients. The host owns the simulation and the guest mirrors it. `README_DEV.md` has the full commands.
+Java mod for Starsector 0.98.5a-RC9 that runs one shared campaign across two clients. The host owns the simulation and the guest mirrors it. `README_DEV.md` has the full commands.
 
 ## Repo and layout
 

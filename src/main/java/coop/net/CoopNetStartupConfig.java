@@ -72,8 +72,10 @@ public final class CoopNetStartupConfig {
      */
     public static final String HUD_CORNER_PROPERTY = CoopOptionsRegistry.HUD_CORNER;
 
-    /** The only supported guest count in v1. */
+    /** Default guest count (standard 2-player session). */
     public static final int MAX_GUESTS_V1 = 1;
+    /** Phase 27 upper bound: host + up to 3 guests (4 players total). */
+    public static final int MAX_GUESTS_CAP = 3;
 
     /** Long enough for a NAT rebind or a Wi-Fi roam, short enough not to strand a player. */
     public static final int DEFAULT_RECONNECT_GRACE_SECONDS = 60;
@@ -364,10 +366,9 @@ public final class CoopNetStartupConfig {
     }
 
     /**
-     * Clamps rather than throws. A launch script that asks for three guests should still start a
-     * playable one-guest session — refusing to load the game over a forward-looking setting would be
-     * the worse failure — but it must say so, once, loudly enough to explain why the second guest is
-     * being turned away.
+     * Clamps rather than throws. Accepts {@code 1..MAX_GUESTS_CAP} (Phase 27 supports host + up to 3
+     * guests); anything outside that range is clamped with a single warning rather than failing the
+     * launch.
      */
     private static int parseMaxGuests(String value) {
         String trimmed = trimToNull(value);
@@ -382,13 +383,18 @@ public final class CoopNetStartupConfig {
                     + MAX_GUESTS_V1);
             return MAX_GUESTS_V1;
         }
-        if (requested != MAX_GUESTS_V1) {
+        if (requested < MAX_GUESTS_V1) {
             warnAboutMaxGuestsOnce(MAX_GUESTS_PROPERTY + "=" + requested
-                    + " is not supported in v1 and has been clamped to " + MAX_GUESTS_V1
-                    + ". The transport is N-ready; the gameplay arbitration for more than one guest"
-                    + " is a later phase.");
+                    + " is below the minimum " + MAX_GUESTS_V1 + "; clamped to " + MAX_GUESTS_V1);
+            return MAX_GUESTS_V1;
         }
-        return MAX_GUESTS_V1;
+        if (requested > MAX_GUESTS_CAP) {
+            warnAboutMaxGuestsOnce(MAX_GUESTS_PROPERTY + "=" + requested
+                    + " exceeds the Phase 27 cap of " + MAX_GUESTS_CAP + "; clamped to "
+                    + MAX_GUESTS_CAP);
+            return MAX_GUESTS_CAP;
+        }
+        return requested;
     }
 
     /**

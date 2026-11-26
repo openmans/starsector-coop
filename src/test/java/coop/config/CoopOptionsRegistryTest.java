@@ -106,7 +106,8 @@ class CoopOptionsRegistryTest {
                 // rest of this set is: the launcher's settings file is its only channel, and the
                 // game reads neither.
                 "coop.launcher.bridgeEnabled",
-                "coop.launcher.bridgePort"), dOnly);
+                "coop.launcher.bridgePort",
+                "coop.launcher.modJarDigests"), dOnly);
     }
 
     /**
@@ -216,12 +217,14 @@ class CoopOptionsRegistryTest {
     }
 
     @Test
-    void maxGuestsIsPinnedToOneForV1() {
+    void maxGuestsAllowsUpToThreeForPhase27() {
         Option option = CoopOptionsRegistry.require("coop.maxGuests");
         assertEquals(Type.INT, option.type());
         assertEquals(1, option.min());
-        assertEquals(1, option.max());
-        assertEquals("1", option.coerce("3").value());
+        assertEquals(3, option.max());
+        assertEquals("1", option.defaultValue());
+        assertEquals("3", option.coerce("3").value());
+        assertEquals("3", option.coerce("5").value());
     }
 
     @Test

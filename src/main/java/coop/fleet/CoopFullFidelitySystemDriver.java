@@ -145,15 +145,22 @@ public final class CoopFullFidelitySystemDriver {
 
     // ---- State queries ----------------------------------------------------------------------------
 
+    /** Phase 27: all non-hyperspace guest system ids driven on the most recent frame. */
+    private static final java.util.Set<String> drivenSystemIds = new java.util.LinkedHashSet<>();
+
     /**
-     * Id of the location this mod is advancing at full rate right now, or {@code ""}.
-     *
-     * <p>{@link CoopNpcFleetReplicator} uses this to bypass {@link CoopNpcFleetMotionSmoother}: a
-     * driven system's positions are already full-rate truth, so interpolating them would only add a
-     * frame of latency and blur. Every other non-current location keeps the smoother.
+     * Id of the primary location this mod is advancing at full rate right now, or {@code ""}.
      */
     public static String drivenLocationId() {
         return drivenSystemId;
+    }
+
+    /** Phase 27: true when {@code locationId} is any guest system currently driven at full fidelity. */
+    public static boolean isDrivenLocation(String locationId) {
+        if (locationId == null || locationId.isEmpty()) {
+            return false;
+        }
+        return locationId.equals(drivenSystemId) || drivenSystemIds.contains(locationId);
     }
 
     /** True once a resolve or drive failure has taken the feature out for this process. */
@@ -250,6 +257,27 @@ public final class CoopFullFidelitySystemDriver {
         if (decision.advanceNow() && !drivenSystemId.isEmpty()) {
             advanceAsCurrentLocation(sector, guestSystem);
         }
+        // Phase 27: drive any additional guests' distinct non-hyperspace star systems too.
+        drivenSystemIds.clear();
+        if (!drivenSystemId.isEmpty()) {
+            drivenSystemIds.add(drivenSystemId);
+        }
+        if (canDrive) {
+            String hostLocId = currentLocationId(sector);
+            for (LocationAPI extraSystem : allGuestLocations()) {
+                if (extraSystem == null || extraSystem.isHyperspace()) {
+                    continue;
+                }
+                String extraId = String.valueOf(CoopLocations.keyOf(extraSystem));
+                if (extraId.isEmpty() || extraId.equals(hostLocId) || !drivenSystemIds.add(extraId)) {
+                    continue;
+                }
+                if (!activeThisFrame(extraSystem) && resolveHandles(sector, extraSystem)) {
+                    dodgeEnginePhaseSlot(sector, extraSystem);
+                    advanceAsCurrentLocation(sector, extraSystem);
+                }
+            }
+        }
     }
 
     /**
@@ -318,6 +346,7 @@ public final class CoopFullFidelitySystemDriver {
         }
         drivenSystemId = "";
         drivenSystemName = "";
+        drivenSystemIds.clear();
     }
 
     private static void disablePermanently(String message, Throwable cause) {
@@ -395,6 +424,22 @@ public final class CoopFullFidelitySystemDriver {
         } catch (RuntimeException | LinkageError ex) {
             return null;
         }
+    }
+
+    /** Phase 27: unique containing locations of all live guest mirrors. */
+    private static java.util.List<LocationAPI> allGuestLocations() {
+        java.util.List<LocationAPI> result = new java.util.ArrayList<>();
+        try {
+            for (CampaignFleetAPI mirror : CoopGuestMirrorHandle.all()) {
+                LocationAPI loc = mirror == null ? null : mirror.getContainingLocation();
+                if (loc != null && !result.contains(loc)) {
+                    result.add(loc);
+                }
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // best-effort
+        }
+        return result;
     }
 
     private static String currentLocationId(SectorAPI sector) {

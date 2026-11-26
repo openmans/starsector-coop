@@ -291,6 +291,14 @@ public final class CoopOptionsRegistry {
      */
     public static final String LAUNCHER_BRIDGE_ENABLED = "coop.launcher.bridgeEnabled";
     public static final String LAUNCHER_BRIDGE_PORT = "coop.launcher.bridgePort";
+    /** Launcher-computed SHA-256 digests of mod JAR binaries (computed outside Starsector's sandbox). */
+    public static final String LAUNCHER_MOD_JAR_DIGESTS = "coop.launcher.modJarDigests";
+    /** Optional AES-256-GCM transport encryption mode (off | aes-gcm). */
+    public static final String ENCRYPTION = "coop.encryption";
+    /** Optional relay server address (host:port) for CGNAT traversal. */
+    public static final String RELAY_ADDRESS = "coop.relayAddress";
+    /** Hotkey opening the in-game co-op chat input box (default F8). */
+    public static final String CHAT_KEY = "coop.chatKey";
 
     private static final Map<String, Option> BY_KEY;
     private static final List<Option> ORDERED;
@@ -326,11 +334,10 @@ public final class CoopOptionsRegistry {
                 "Name shown to your partner. Empty falls back to the local character's own name."));
 
         // -- Tier 2: host gameplay policy ------------------------------------------------------
-        options.add(intOption(MAX_GUESTS, Tier.POLICY, "1", false, 1, 1, "Phase 20.5 / 27",
+        options.add(intOption(MAX_GUESTS, Tier.POLICY, "1", false, 1, 3, "Phase 20.5 / 27",
                 "next connection attempt", ApplyBoundary.NEXT_CONNECTION,
-                "Peer-table capacity. v1 supports exactly one guest: the transport is N-ready, the"
-                        + " gameplay arbitration is not, so anything else is clamped with a warning."
-                        + " Phase 27 raises the bound."));
+                "Peer-table capacity (1..3 guests, up to 4 players total including the host)."
+                        + " Defaults to 1 so standard two-player sessions stay unchanged."));
         options.add(intOption(RECONNECT_GRACE_SECONDS, Tier.POLICY, "60", false, 0, 3600,
                 "Phase 20.2", "next drop", ApplyBoundary.NEXT_DROP,
                 "How long a dropped socket keeps the session alive before it really ends. 0 restores"
@@ -338,8 +345,8 @@ public final class CoopOptionsRegistry {
                         + " its own timer and they are configured independently on purpose."));
         options.add(boolOption(ALLOW_GUEST_PAUSE, Tier.POLICY, "true", "Phase 25",
                 "immediately", ApplyBoundary.IMMEDIATE,
-                "Whether the guest may pause and unpause the shared world. INERT until Phase 25"
-                        + " builds. Never gates the screen pause below - that would punish the guest"
+                "Whether guests may manually pause and unpause the shared world with the pause key."
+                        + " Never gates the screen pause below - that would punish the guest"
                         + " silently."));
         options.add(boolOption(PAUSE_ON_GUEST_SCREENS, Tier.POLICY, "true",
                 "Phase 28 (Phase 11 lever)", "next screen open/close", ApplyBoundary.NEXT_SCREEN_TOGGLE,
@@ -351,31 +358,27 @@ public final class CoopOptionsRegistry {
                         + " correctness) and combat auto-pause. Wired in milestone 2."));
         options.add(boolOption(ALLOW_MID_SESSION_JOIN, Tier.POLICY, "true", "Phase 27",
                 "next connection attempt", ApplyBoundary.NEXT_CONNECTION,
-                "Whether a guest may join a campaign already in progress. INERT until Phase 27"
-                        + " builds."));
+                "Whether additional guests may join a multi-guest campaign already in progress"
+                        + " after the host releases the lobby."));
         options.add(boolOption(WINGMAN_BATTLES, Tier.POLICY, "true", "Phase 34",
                 "next connection attempt", ApplyBoundary.NEXT_CONNECTION,
                 "Let The Wingman Project (when installed and enabled on both PCs) serve the battles"
                         + " of a coop session: the host opens Wingman from the campaign map, the guest"
                         + " connects Wingman to the host's PC and flies in the host's battles. off = the"
                         + " classic solo own-fleet model (the partner watches from the paused campaign)."));
-        options.add(enumOption(LOOT_SPLIT, Tier.POLICY, "equal", List.of("equal"), "Phase 22",
-                "next battle result", ApplyBoundary.NEXT_BATTLE_RESULT,
-                "How salvage from a jointly fought battle is divided. INERT until Phase 22 builds,"
-                        + " which is also what defines any value other than equal."));
-        // 2026-09-14: Phase 24 shipped without ever reading this key - CoopRewardSplitter hardwires
-        // the equal split. The description says so instead of promising a phase that already
-        // happened; see CoopOptionsView.INERT_KEYS for the page-side caveat.
+        options.add(enumOption(LOOT_SPLIT, Tier.POLICY, "equal", List.of("equal", "pilot-keeps"),
+                "Phase 22", "next battle result", ApplyBoundary.NEXT_BATTLE_RESULT,
+                "How salvage credit value from a battle joined by an ally is divided:"
+                        + " equal shares with participating allies via CREDITS_GRANT; pilot-keeps"
+                        + " leaves 100% with the fighting player."));
         options.add(enumOption(INCOME_SPLIT, Tier.POLICY, "equal", List.of("equal", "host-banks"),
                 "Phase 24", "next month tick", ApplyBoundary.NEXT_MONTH_TICK,
-                "Not consulted in this build: CoopRewardSplitter hardwires the equal 50/50 split"
-                        + " (local upkeep stays with the owner) regardless of this value."));
-        // 2026-09-14: same as INCOME_SPLIT above - colonization is trusted unconditionally, the
-        // guest is never asked, and this key is never read.
+                "How monthly colony net income is divided: equal splits 1/N across active players,"
+                        + " host-banks leaves 100% with the host."));
         options.add(boolOption(GUEST_COLONIZATION_CONSENT, Tier.POLICY, "false", "Phase 24",
                 "next colonization", ApplyBoundary.NEXT_COLONIZATION,
-                "Not consulted in this build: a guest founding a colony is never asked to wait for"
-                        + " host consent, regardless of this value. Colonization is trusted."));
+                "When true, a guest founding a colony must wait for host approval before the"
+                        + " colony is finalized."));
 
         // -- Tier 3: per-client preferences ----------------------------------------------------
         options.add(boolOption(HUD_DISABLE, Tier.CLIENT, "false", "Phase 20.6",
@@ -389,11 +392,22 @@ public final class CoopOptionsRegistry {
                         + " the HUD's refresh tick."));
         options.add(enumOption(FEED_VERBOSITY, Tier.CLIENT, "all",
                 List.of("all", "important", "minimal"), "Phase 20.6", "immediately", ApplyBoundary.IMMEDIATE,
-                "How much of the coop event feed is shown. INERT until the feed reads the key."));
-        // 2026-09-14: Phase 8 shipped a fixed presence-marker colour and never read this key.
+                "How much of the coop event feed is shown: all, important (battles/credits/chat),"
+                        + " or minimal (critical warnings/disconnects only)."));
         options.add(stringOption(PARTNER_COLOR, Tier.CLIENT, "", true, "Phase 8", "immediately", ApplyBoundary.IMMEDIATE,
-                "Not consulted in this build: your partner's presence marker colour is unused,"
-                        + " and there is no named vocabulary to set it to."));
+                "Optional partner marker colour: cyan, green, amber, magenta, blue, orange, red,"
+                        + " white, or #RRGGBB hex (empty = player faction default)."));
+        options.add(stringOption(CHAT_KEY, Tier.CLIENT, "F8", false, "Chat", "next game load",
+                ApplyBoundary.NEXT_CONNECTION,
+                "LWJGL key name that opens the in-game co-op text chat input dialog (default F8)."));
+        options.add(enumOption(ENCRYPTION, Tier.LAUNCH, "off", List.of("off", "aes-gcm"),
+                "Security", "next launch", ApplyBoundary.NEXT_CONNECTION,
+                "Optional AES-256-GCM encryption for TCP frames and UDP datagrams derived from"
+                        + " coop.password (off | aes-gcm). Both sides must match."));
+        options.add(stringOption(RELAY_ADDRESS, Tier.LAUNCH, "", true, "Connectivity",
+                "next launch", ApplyBoundary.NEXT_CONNECTION,
+                "Optional relay server host:port for CGNAT traversal when direct UPnP/NAT-PMP"
+                        + " fails (empty = direct P2P)."));
         // Read once when the marker listener is installed, which is why this is not IMMEDIATE:
         // resolving it means an option read plus an LWJGL key lookup, and neither belongs on a
         // per-frame path for a key that gets pressed a handful of times a session.
@@ -468,6 +482,9 @@ public final class CoopOptionsRegistry {
                 "next launch", ApplyBoundary.NEXT_CONNECTION,
                 "Launcher only. The port typed beside the agent bridge checkbox; 0 means the role"
                         + " default, 7801 hosting and 7802 joining. The game ignores this."));
+        options.add(dOnly(LAUNCHER_MOD_JAR_DIGESTS, Type.STRING, "", "Handshake",
+                "next launch", ApplyBoundary.NEXT_CONNECTION,
+                "Launcher-computed SHA-256 digests of mod JAR binaries, verified during handshake."));
         options.add(dOnly(DEBUG_WIRETAP, Type.BOOL, "false", "Phase 20.1",
                 "immediately", ApplyBoundary.IMMEDIATE,
                 "Datagram wiretap: per-type size histograms against the 1200 B WAN budget."));

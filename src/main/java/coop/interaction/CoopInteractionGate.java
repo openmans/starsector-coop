@@ -67,6 +67,23 @@ public final class CoopInteractionGate {
         return false;
     }
 
+    /** Phase 27: releases every claim held by a departing guest without touching other players' claims. */
+    public synchronized int releaseAllForPlayer(String playerId) {
+        if (playerId == null || playerId.trim().isEmpty()) {
+            return 0;
+        }
+        String normPlayer = playerId.trim();
+        int removed = 0;
+        var it = claimsByEntity.entrySet().iterator();
+        while (it.hasNext()) {
+            if (it.next().getValue().playerId().equals(normPlayer)) {
+                it.remove();
+                removed++;
+            }
+        }
+        return removed;
+    }
+
     public synchronized void clear() {
         claimsByEntity.clear();
     }

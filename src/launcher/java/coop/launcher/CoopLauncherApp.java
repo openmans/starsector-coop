@@ -303,6 +303,25 @@ public final class CoopLauncherApp {
     static final String APPLY_FIX_FLAG = "--apply-install-fix";
 
     public static void main(String[] args) {
+        if (args != null && args.length >= 1 && "--relay".equalsIgnoreCase(args[0])) {
+            int port = coop.net.CoopRelayProtocol.DEFAULT_RELAY_PORT;
+            if (args.length >= 2) {
+                try {
+                    port = Integer.parseInt(args[1].trim());
+                } catch (NumberFormatException ignored) {
+                    // keep default
+                }
+            }
+            try (CoopRelayServer relay = new CoopRelayServer(port)) {
+                System.out.println("Coop CGNAT relay listening on TCP port " + relay.boundPort());
+                relay.startAsync();
+                Thread.currentThread().join();
+            } catch (Exception ex) {
+                System.err.println("Coop relay failed: " + ex.getMessage());
+                System.exit(1);
+            }
+            return;
+        }
         CoopInstallLayout discovered = CoopInstallLayout.discover();
         File logFile = discovered == null
                 ? new File("coop-launcher.log")
@@ -2612,6 +2631,17 @@ public final class CoopLauncherApp {
         if (!flagsOn.isEmpty()) {
             LOG.info("Developer flags for this launch: " + flagsOn);
             append("Developer flags: " + String.join(" ", flagsOn));
+        }
+
+        try {
+            Map<String, String> jarDigests = CoopModJarDigester.digestModsDirectory(
+                    layout.installRoot().toPath().resolve("mods"));
+            String encodedDigests = CoopModJarDigester.encodeProperty(jarDigests);
+            if (!encodedDigests.isEmpty()) {
+                owned.put(CoopLauncherConfig.LAUNCHER_MOD_JAR_DIGESTS, encodedDigests);
+            }
+        } catch (Exception ex) {
+            LOG.warn("Could not compute mod JAR digests before launch: " + ex.getMessage());
         }
 
         try {

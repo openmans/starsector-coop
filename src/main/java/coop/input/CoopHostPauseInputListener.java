@@ -26,6 +26,7 @@ import java.util.Objects;
 public final class CoopHostPauseInputListener implements CampaignInputListener {
     private static final int INPUT_PRIORITY = Integer.MAX_VALUE;
     private static final String GENERAL_PAUSE = "GENERAL_PAUSE";
+    private static final String FAST_FORWARD = "FAST_FORWARD";
 
     private final CoopSharedPauseCoordinator pauseCoordinator;
 
@@ -41,11 +42,16 @@ public final class CoopHostPauseInputListener implements CampaignInputListener {
     @Override
     public void processCampaignInputPreCore(List<InputEventAPI> events) {
         for (InputEventAPI event : events) {
-            if (event.isConsumed() || !isPauseDownEdge(event)) {
+            if (event.isConsumed()) {
                 continue;
             }
-            pauseCoordinator.onHostPauseKey();
-            event.consume();
+            if (isControlDownEdge(event, GENERAL_PAUSE)) {
+                pauseCoordinator.onHostPauseKey();
+                event.consume();
+            } else if (isControlDownEdge(event, FAST_FORWARD)) {
+                pauseCoordinator.onHostFastForwardKey();
+                event.consume();
+            }
         }
     }
 
@@ -57,9 +63,9 @@ public final class CoopHostPauseInputListener implements CampaignInputListener {
     public void processCampaignInputPostCore(List<InputEventAPI> events) {
     }
 
-    private boolean isPauseDownEdge(InputEventAPI event) {
+    private boolean isControlDownEdge(InputEventAPI event, String control) {
         try {
-            return event.isControlDownEvent(GENERAL_PAUSE);
+            return event.isControlDownEvent(control);
         } catch (IllegalArgumentException ex) {
             return false;
         }

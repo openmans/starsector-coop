@@ -136,6 +136,17 @@ class CoopRulesFileTest {
         assertTrue(zigguratStart.get(3).lines().anyMatch("FireBest NGCSelectDifficulty"::equals));
     }
 
+    @Test
+    void testStartIsGatedBehindDevMode() throws IOException {
+        for (String id : List.of("coopZigguratStart", "coopZigguratPicked")) {
+            List<String> row = rows().stream()
+                    .filter(r -> id.equals(r.get(0)))
+                    .findFirst().orElseThrow();
+            assertTrue(row.get(2).lines().map(String::trim).anyMatch("$global.isDevMode"::equals),
+                    id + " must stay hidden outside dev mode");
+        }
+    }
+
     /**
      * Red-team P1-5. The commission mirror's whole model is "the host signs, the guest reads one
      * memory key"; nothing enforced it, so a guest could dock at any faction market and take a

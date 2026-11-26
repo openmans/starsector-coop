@@ -16,16 +16,23 @@ solo play and the preview features that still need in-game checking.
   the full range of native storm effects still need in-game checking.
 - **Sensor ghosts stay local.** The guest runs a restricted cosmetic subset; the host's ghosts are
   not mirrored. Star-corona and pulsar flares also remain local.
-- **The Galatia Academy chain is the host's.** The mod removes the guest's entry points.
-  Contacts, person bounties and system bounties are local to each player.
-- **No trade screen between the two of you.** Cargo goes by jettisoned pod, ships through shared
-  storage, credits through a row on the Coop Options page.
-- **The host's save is the campaign.** The guest's save is co-op material and needs the mod and a
-  host to be worth loading.
+- **The Galatia Academy & Sindrian Diktat chains are host-driven.** Whitelisted `$ga*` / `$sd*`
+  story flags replicate host-authoritatively (`STORY_STATE`), and contacts/missions replicate via
+  `CONTACT_SET` with first-come claim arbitration; complex scripted quest dialogs still run on the
+  host.
+- **Direct player trade & in-game chat are included.** Open **Intel → Coop Session** for direct
+  two-phase atomic Trade (credits, cargo, ships) and in-game Comms Chat (`F8` / `coop.chatKey`),
+  alongside shared storage and jettisoned pods.
+- **The host's save is the campaign** (and embeds per-guest `coop.guestFleetSnapshots` for
+  host-driven guest restoration via `GUEST_SNAPSHOT_RESTORE`). The guest's save still needs the mod
+  and a host to be worth loading.
 - **Rejoin by loading the co-op save,** never by starting a New Game on the same seed.
 - **Turn the mod off for solo campaigns.** With it enabled the game is under co-op rules whether or
   not a session exists.
-- **One guest.** Traffic is plaintext; the lobby password is a gate, not encryption.
+- **Up to 3 guests (`coop.maxGuests=1..3`, default `1`), optional encryption & relay.** Plaintext
+  TCP/UDP is the default for zero-config compatibility; set `coop.encryption=aes-gcm` (with a shared
+  `coop.password`) for AES-256-GCM frame encryption, and `coop.relayAddress` (with
+  `coop-launcher.jar --relay <port>`) for CGNAT relay without port forwarding.
 
 ---
 
@@ -39,8 +46,9 @@ the host's battles are served by Wingman instead: the guest connects Wingman to 
 once, joins the battle, and pilots a ship in real time. The coop layer keeps doing everything
 else — shared pause, `BATTLE_BEGIN/END`, and the result reconciliation that writes real damage
 and losses back to the guest's fleet. The guest's flagship is reserved for them when their fleet
-deploys through Fight Alongside; without the toggle the guest flies the host's ships and risks
-nothing of their own.
+deploys through Fight Alongside (and updated automatically if the flagship changes); without the
+toggle the guest flies the host's ships and risks nothing of their own. Guest-initiated battles
+still run solo on the guest's PC while the host waits paused.
 
 **Your fleet can join as an AI ally.** The toggle ability on your ability bar decides it: off, your
 fleet is a mirror on your partner's screen and nothing pulls it in; on, your partner's encounters
@@ -62,15 +70,13 @@ dialog for one.
 fought, as vanilla does for a battle with allies. Kills your ships make count for your partner's
 officers, not yours.
 
-**You cannot direct your ships while they fight.** No retreat, no orders, no tactical map. That is
-the next step in this line of work and it is not in this release.
+**You can direct your joined ships from the Tactical Map.** While your partner fights, open
+**Intel → Coop Session** and click **Open Tactical Map** to see the fighting side's fog-filtered
+battlefield at 5 Hz, select your own contributed allied ships, and issue ENGAGE, ESCORT, DEFEND,
+CAPTURE, WAYPOINT, RETREAT, or CANCEL orders. Ship AI still flies, and stations cannot be ordered.
 
 **Your partner gets a banner**, one when a battle starts, one when it ends, and one more if their
-fleet was in it. There is no in-game view of the fight; people watch over a Discord screen share,
-where a full-screen panel on the watching client would be in the way anyway.
-
-**Both players piloting in one battle is not in this release.** It is the largest single item on the
-list of things that could come later.
+fleet was in it. The Tactical Map is strictly opt-in so it never interrupts Discord screen-sharing.
 
 ## Saves
 
@@ -107,8 +113,8 @@ session exists, and three of those are visible immediately:
 - Difficulty is forced to Normal and the difficulty question is never asked.
 - The tutorial is skipped. The vanilla tutorial rewrites Galatia system state, which would pull two
   seed-locked campaigns apart.
-- The career list has a sixth entry, "COOP TEST", that starts you in a Ziggurat with a million
-  credits. It exists so a test session has something worth fighting over.
+- In Starsector dev mode only, the career list adds a sixth entry, "COOP TEST", that starts you in
+  a Ziggurat with a million credits for quick testing. In normal play the five vanilla starts appear.
 
 ## Fast-forward
 
@@ -137,11 +143,11 @@ alone until you send some: the Coop Options page has a Send credits row and that
 that moves money between you. The player who salvages keeps the loot; consuming a shared wreck
 removes it from the other map. Survey data stays with the player who performed the survey.
 
-**Neither, in this release.** Contacts, the missions contacts offer, and person bounties are local to
-each player. The guest gets no person bounties at all; the script that generates them is one of the
-ones held back so it does not spawn a second copy of the host's world. System bounties are posted by
-each game separately, so the guest sees bounties the host does not and is paid by its own game for
-kills in them.
+**Shared bounties, local contacts.** Host person bounties and system bounties are replicated to
+guests as co-op intel entries (`BOUNTY_SET`), and the guest's divergent local `SystemBountyManager`
+is suppressed. When a guest destroys a bounty target, the host settles the vanilla bounty and pays
+the guest via `CREDITS_GRANT` before the battle reconciler despawns the fleet. Contacts and
+contact-offered missions remain local to each player.
 
 **The Galatia Academy chain is the host's.** The chain and the missions it unlocks run on one
 engine only, the host's, and their rewards go to the host. The mod enforces this on the guest: the
@@ -323,7 +329,10 @@ If the host's game crashes rather than exits, the port mapping it asked the rout
 Most routers expire it within the hour. At the next launch the mod hits the conflict, asks the router
 who owns that external port, and deletes the entry only when the router names this machine; a port
 held by another device is reported and left alone, and you pick a different `coop.hostPort`. A router
-that refuses timed leases keeps the port open until you next start the game.
+that refuses timed leases keeps the port open until you next start the game. When Wingman battles
+are enabled on the host and `coop.portMapping` is `auto`, the host also requests a UPnP/NAT-PMP
+mapping for Wingman port `24816` (TCP+UDP); on a manual port-forward setup, forward `24816` TCP+UDP
+alongside `coop.hostPort`.
 
 ## The launcher
 

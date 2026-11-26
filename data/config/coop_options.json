@@ -81,6 +81,16 @@
 	# text | applies: next connection attempt | Phase 20.4
 	"coop.playerName":"",
 
+	# Optional AES-256-GCM transport encryption derived from coop.password. off keeps plaintext TCP;
+	# aes-gcm encrypts wire frames when a shared coop.password is configured.
+	# off|aes-gcm | applies: next connection attempt | Security
+	"coop.encryption":"off",
+
+	# Optional CGNAT TCP relay server address (host:port) for sessions without direct port forwarding.
+	# Empty disables relay mode and connects directly.
+	# text | applies: next connection attempt | Relay
+	"coop.relayAddress":"",
+
 
 	##############################################################
 	# Tier: host policy (host-authoritative gameplay rules)
@@ -89,10 +99,9 @@
 	# them on the "Coop Options" intel page; the guest sees them there read-only.
 	##############################################################
 
-	# Peer-table capacity. v1 supports exactly one guest: the transport is N-ready, the gameplay
-	# arbitration is not, so any other value is clamped back to 1 with a warning rather than
-	# producing a session that connects and then misbehaves. Phase 27 raises the bound.
-	# integer 1..1 | applies: next connection attempt | Phase 20.5 / 27
+	# Peer-table capacity (1..3 guests, up to 4 players total including the host).
+	# Defaults to 1 so standard two-player sessions stay unchanged.
+	# integer 1..3 | applies: next connection attempt | Phase 20.5 / 27
 	"coop.maxGuests":1,
 
 	# How long a dropped socket keeps the session alive before the session really ends. 0 restores
@@ -101,9 +110,9 @@
 	# integer 0..3600 | applies: next drop | Phase 20.2
 	"coop.reconnectGraceSeconds":60,
 
-	# Whether the guest may pause and unpause the shared world.
+	# Whether guests may manually pause and unpause the shared world with the pause key.
 	# Never gates the screen pause below - that would punish the guest silently.
-	# true|false | applies: immediately | Phase 25 | INERT until Phase 25 builds
+	# true|false | applies: immediately | Phase 25
 	"coop.allowGuestPause":true,
 
 	# true (default) is the shipped behaviour: the world stops while a guest browses the vanilla
@@ -114,22 +123,29 @@
 	# true|false | applies: next screen open/close | Phase 28 | wired in milestone 2
 	"coop.pauseOnGuestScreens":true,
 
-	# Whether a guest may join a campaign that is already in progress.
-	# true|false | applies: next connection attempt | Phase 27 | INERT until Phase 27 builds
+	# Whether additional guests may join a multi-guest campaign already in progress after lobby release.
+	# true|false | applies: next connection attempt | Phase 27
 	"coop.allowMidSessionJoin":true,
 
-	# How salvage from a jointly fought battle is divided. Phase 22 is what defines any value other
-	# than equal, so equal is the only accepted value today.
-	# equal | applies: next battle result | Phase 22 | INERT until Phase 22 builds
+	# true (default): let The Wingman Project (installed and enabled on both PCs) serve the
+	# battles of a coop session - the host opens Wingman from the campaign map and the guest
+	# connects Wingman to the host's PC and flies in the host's battles in real time.
+	# false: the classic solo own-fleet model (the partner watches from the paused campaign).
+	# true|false | applies: next connection attempt | Phase 34
+	"coop.wingmanBattles":true,
+
+	# How salvage from a jointly fought battle is divided: equal splits evenly among participants;
+	# pilot-keeps leaves salvage with the engaging pilot.
+	# equal|pilot-keeps | applies: next battle result | Phase 22
 	"coop.lootSplit":"equal",
 
 	# equal splits shared-faction colony income 50/50 with local upkeep staying with the owner;
 	# host-banks pays all of it to the host.
-	# equal|host-banks | applies: next month tick | Phase 24 | INERT until Phase 24 wires the key
+	# equal|host-banks | applies: next month tick | Phase 24
 	"coop.incomeSplit":"equal",
 
 	# true makes a guest founding a colony ask the host first. false is the shipped trusted model.
-	# true|false | applies: next colonization | Phase 24 | INERT until Phase 24 wires the key
+	# true|false | applies: next colonization | Phase 24
 	"coop.guestColonizationConsent":false,
 
 
@@ -146,12 +162,12 @@
 	"coop.hudCorner":"TR",
 
 	# How much of the coop event feed is shown.
-	# all|important|minimal | applies: immediately | Phase 20.6 | INERT until the feed reads it
+	# all|important|minimal | applies: immediately | Phase 20.6
 	"coop.feedVerbosity":"all",
 
-	# Colour used for your partner's presence marker. Empty is the built-in preset; Phase 8 defines
-	# the named vocabulary when it wires the key.
-	# text | applies: immediately | Phase 8 | INERT until Phase 8 wires the key
+	# Colour used for your partner's presence marker. Empty is the built-in cyan preset; accepts
+	# named presets (cyan, green, gold, orange, magenta, white, blue, red) or hex #RRGGBB.
+	# text | applies: immediately | Phase 8
 	"coop.partnerColor":"",
 
 	# Which key writes a COOP-MARK line into BOTH players' logs. Press it during a test session
@@ -162,10 +178,7 @@
 	# text | applies: next game load | Log markers
 	"coop.markKey":"F11",
 
-	# true (default): let The Wingman Project (installed and enabled on both PCs) serve the
-	# battles of a coop session - the host opens Wingman from the campaign map and the guest
-	# connects Wingman to the host's PC and flies in the host's battles in real time.
-	# false: the classic solo own-fleet model (the partner watches from the paused campaign).
-	# true|false | applies: next connection attempt | Phase 34
-	"coop.wingmanBattles":true
+	# Hotkey to open the in-game co-op text chat dialog. An LWJGL key name - F8, F10, etc.
+	# text | applies: next game load | Chat
+	"coop.chatKey":"F8"
 }

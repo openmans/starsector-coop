@@ -6,6 +6,7 @@ import com.fs.starfarer.api.campaign.comm.IntelManagerAPI;
 import com.fs.starfarer.api.impl.campaign.intel.BaseIntelPlugin;
 import com.fs.starfarer.api.ui.Alignment;
 import com.fs.starfarer.api.ui.CustomPanelAPI;
+import com.fs.starfarer.api.ui.IntelUIAPI;
 import com.fs.starfarer.api.ui.SectorMapAPI;
 import com.fs.starfarer.api.ui.TooltipMakerAPI;
 import com.fs.starfarer.api.util.Misc;
@@ -119,6 +120,11 @@ public class CoopSessionIntel extends BaseIntelPlugin {
 
     /** Rendered instead of the page when anything at all goes wrong building it. */
     static final String UNAVAILABLE_LINE = "Coop session details are unavailable.";
+
+    /** Phase 22: button id for opening the opt-in tactical map during a partner battle. */
+    static final String BUTTON_TACTICAL_MAP = "coop_open_tactical_map";
+    static final String BUTTON_OPEN_CHAT = "coop_open_chat";
+    static final String BUTTON_OPEN_TRADE = "coop_open_trade";
 
     /** Log-once guard for a broken render. Static: one warning per process, not one per open. */
     private static boolean renderFailureLogged;
@@ -396,6 +402,16 @@ public class CoopSessionIntel extends BaseIntelPlugin {
         info.addPara("Partner: %s", 3f, highlight,
                 value.partnerName().isEmpty() ? CoopSessionIntelModel.UNKNOWN : value.partnerName());
 
+        if (CoopSessionIntelFeed.isTacticalMapAvailable()) {
+            info.addButton("Open Tactical Map", BUTTON_TACTICAL_MAP, 220f, 26f, 8f);
+        }
+        if (CoopSessionIntelFeed.isChatAvailable()) {
+            info.addButton("Open Co-op Chat", BUTTON_OPEN_CHAT, 220f, 26f, 6f);
+        }
+        if (CoopSessionIntelFeed.isTradeAvailable()) {
+            info.addButton("Trade with Partner", BUTTON_OPEN_TRADE, 220f, 26f, 6f);
+        }
+
         renderLink(info, value, highlight, gray);
         renderPeer(info, value, gray);
         renderReachability(info, value, highlight);
@@ -490,6 +506,17 @@ public class CoopSessionIntel extends BaseIntelPlugin {
                 CoopSessionIntelModel.formatLoss(stats.minLossPercent()),
                 CoopSessionIntelModel.formatLoss(stats.medianLossPercent()),
                 CoopSessionIntelModel.formatLoss(stats.maxLossPercent()));
+    }
+
+    @Override
+    public void buttonPressConfirmed(Object buttonId, IntelUIAPI ui) {
+        if (BUTTON_TACTICAL_MAP.equals(buttonId)) {
+            CoopSessionIntelFeed.requestOpenTacticalMap();
+        } else if (BUTTON_OPEN_CHAT.equals(buttonId)) {
+            CoopSessionIntelFeed.requestOpenChat();
+        } else if (BUTTON_OPEN_TRADE.equals(buttonId)) {
+            CoopSessionIntelFeed.requestOpenTrade();
+        }
     }
 
     // ---- colours ---------------------------------------------------------------------------------

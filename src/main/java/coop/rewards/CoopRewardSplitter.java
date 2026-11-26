@@ -57,10 +57,23 @@ public final class CoopRewardSplitter {
     }
 
     public static Split split(long total, Policy policy) {
+        return split(total, policy, 2);
+    }
+
+    /**
+     * Phase 27: equal N-way split across {@code playerCount} players (2..4). Keeps exact 50/50
+     * behaviour for {@code playerCount <= 2}.
+     */
+    public static Split split(long total, int playerCount) {
+        return split(total, Policy.EVEN, playerCount);
+    }
+
+    public static Split split(long total, Policy policy, int playerCount) {
         Objects.requireNonNull(policy, "policy");
-        // Java's integer division truncates toward zero, so -25001 / 2 == -12500: each side eats
-        // about half the loss and the odd credit lands on the remote share, same as for a gain.
-        long local = total / 2;
+        int divisor = Math.max(2, playerCount);
+        // Java's integer division truncates toward zero: each side keeps total / divisor and
+        // deducts the remaining share (total - local) from its local wallet.
+        long local = total / divisor;
         return new Split(local, total - local);
     }
 
@@ -74,5 +87,36 @@ public final class CoopRewardSplitter {
      */
     public static Split splitCredits(float total) {
         return split(Math.round(total));
+    }
+
+    /** Phase 27: N-way credit split across {@code playerCount} players (2..4). */
+    public static Split splitCredits(float total, int playerCount) {
+        return split(Math.round(total), playerCount);
+    }
+
+    /**
+     * Splits colony monthly credits honouring {@code coop.incomeSplit} ({@code equal} vs
+     * {@code host-banks}): under {@code host-banks}, the host keeps 100% and each guest deducts 100%.
+     */
+    public static Split splitColonyCredits(float total, int playerCount, boolean isHost,
+                                           String incomeSplitPolicy) {
+        long rounded = Math.round(total);
+        if ("host-banks".equalsIgnoreCase(incomeSplitPolicy == null ? "" : incomeSplitPolicy.trim())) {
+            return isHost ? new Split(rounded, 0L) : new Split(0L, rounded);
+        }
+        return split(rounded, playerCount);
+    }
+
+    /**
+     * Splits joint-battle salvage credit value honouring {@code coop.lootSplit}
+     * ({@code equal} vs {@code pilot-keeps}).
+     */
+    public static Split splitSalvageCredits(long totalSalvageCredits, int participants,
+                                            String lootSplitPolicy) {
+        if (totalSalvageCredits <= 0L || participants <= 1
+                || "pilot-keeps".equalsIgnoreCase(lootSplitPolicy == null ? "" : lootSplitPolicy.trim())) {
+            return new Split(Math.max(0L, totalSalvageCredits), 0L);
+        }
+        return split(totalSalvageCredits, participants);
     }
 }

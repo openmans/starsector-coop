@@ -410,13 +410,14 @@ public class DerelictShipEntityPlugin extends BaseCustomEntityPlugin {
 			boolean playerCanSee = entity.isInCurrentLocation() && 
 									(vis == VisibilityLevel.COMPOSITION_AND_FACTION_DETAILS ||
 									 vis == VisibilityLevel.COMPOSITION_DETAILS);
-			// COOP FORK: the guest's actual visibility also keeps an expired-lifetime wreck alive.
-			SectorEntityToken presence = coop.presence.CoopPresenceRegistry.getForFork("DerelictShipEntityPlugin");
-			if (presence != null && entity.getContainingLocation() != null
-					&& presence.getContainingLocation() == entity.getContainingLocation()) {
-				VisibilityLevel guestVis = entity.getVisibilityLevelTo(presence);
-				playerCanSee |= guestVis == VisibilityLevel.COMPOSITION_AND_FACTION_DETAILS
-						|| guestVis == VisibilityLevel.COMPOSITION_DETAILS;
+			// COOP FORK: any live guest's actual visibility also keeps an expired-lifetime wreck alive.
+			for (SectorEntityToken presence : coop.presence.CoopPresenceRegistry.getAllForFork("DerelictShipEntityPlugin")) {
+				if (presence != null && entity.getContainingLocation() != null
+						&& presence.getContainingLocation() == entity.getContainingLocation()) {
+					VisibilityLevel guestVis = entity.getVisibilityLevelTo(presence);
+					playerCanSee |= guestVis == VisibilityLevel.COMPOSITION_AND_FACTION_DETAILS
+							|| guestVis == VisibilityLevel.COMPOSITION_DETAILS;
+				}
 			}
 			if (!playerCanSee) {
 				Misc.fadeAndExpire(entity, 1f);

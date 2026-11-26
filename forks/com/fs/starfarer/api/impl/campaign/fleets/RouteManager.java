@@ -95,6 +95,11 @@ public class RouteManager implements FleetEventListener {
 		return coop.presence.CoopPresenceRegistry.getForFork("RouteManager");
 	}
 
+	/** COOP FORK (Phase 27): all live guest mirrors so multi-guest routes spawn/stay alive around every guest. */
+	protected static List<SectorEntityToken> coopPresences() {
+		return coop.presence.CoopPresenceRegistry.getAllForFork("RouteManager");
+	}
+
 	// ---- end COOP FORK block ---------------------------------------------------------------------
 
 
@@ -745,15 +750,13 @@ public class RouteManager implements FleetEventListener {
 		float distLY = Misc.getDistanceLY(interpLoc, player.getLocationInHyperspace());
 		if (distLY < SPAWN_DIST_LY) return true;
 
-		// COOP FORK (edit 1): the co-op guest counts as a player for spawn purposes, at the same
-		// SPAWN_DIST_LY and against the same interpolated hyperspace location. Deliberately not
-		// restricted to star systems: a guest sitting in hyperspace materialises routes within 1.6 LY
-		// exactly as a real player does, which is also what makes fleets already in transit toward the
-		// guest's system arrive without the host having to fly over.
-		SectorEntityToken coopPresence = coopPresence();
-		if (coopPresence != null) {
-			float coopDistLY = Misc.getDistanceLY(interpLoc, coopPresence.getLocationInHyperspace());
-			if (coopDistLY < SPAWN_DIST_LY) return true;
+		// COOP FORK (edit 1): every co-op guest counts as a player for spawn purposes, at the same
+		// SPAWN_DIST_LY and against the same interpolated hyperspace location.
+		for (SectorEntityToken coopPresence : coopPresences()) {
+			if (coopPresence != null) {
+				float coopDistLY = Misc.getDistanceLY(interpLoc, coopPresence.getLocationInHyperspace());
+				if (coopDistLY < SPAWN_DIST_LY) return true;
+			}
 		}
 
 		return false;
@@ -762,13 +765,12 @@ public class RouteManager implements FleetEventListener {
 	public static boolean isPlayerInSpawnRange(SectorEntityToken from) {
 		float distLY = Misc.getDistanceLY(from.getLocationInHyperspace(), Global.getSector().getPlayerFleet().getLocationInHyperspace());
 		if (distLY < SPAWN_DIST_LY) return true;
-		// COOP FORK (edit 2): same disjunction as shouldSpawn. This one matters beyond spawning --
-		// BaseAssignmentAI.canTakeAction() gates on it, so without it patrols standing next to the
-		// guest never raid, capture objectives or build.
-		SectorEntityToken coopPresence = coopPresence();
-		if (coopPresence != null) {
-			float coopDistLY = Misc.getDistanceLY(from.getLocationInHyperspace(), coopPresence.getLocationInHyperspace());
-			if (coopDistLY < SPAWN_DIST_LY) return true;
+		// COOP FORK (edit 2): same disjunction across all guests as shouldSpawn.
+		for (SectorEntityToken coopPresence : coopPresences()) {
+			if (coopPresence != null) {
+				float coopDistLY = Misc.getDistanceLY(from.getLocationInHyperspace(), coopPresence.getLocationInHyperspace());
+				if (coopDistLY < SPAWN_DIST_LY) return true;
+			}
 		}
 		return false;
 	}
@@ -777,17 +779,14 @@ public class RouteManager implements FleetEventListener {
 	protected boolean shouldDespawn(RouteData data) {
 		if (data.activeFleet == null) return false;
 		if (data.daysSinceSeenByPlayer < DAYS_SINCE_SEEN_BEFORE_DESPAWN_IF_FAR) return false;
-		// COOP FORK (edit 4): vanilla resets daysSinceSeenByPlayer only for fleets the *host* player
-		// mouses over (spawnAndDespawn, above), so a fleet the guest is looking at ages out of that
-		// gate and falls through to the distance tests. A fleet sharing a star system with the guest is
-		// being watched by a real player; it is not despawnable. Hyperspace is excluded because "same
-		// location" there is the whole sector and carries no proximity information -- the distance test
-		// below covers the guest in hyperspace correctly.
-		SectorEntityToken coopPresence = coopPresence();
-		if (coopPresence != null && data.activeFleet.getContainingLocation() != null
-				&& data.activeFleet.getContainingLocation() == coopPresence.getContainingLocation()
-				&& !data.activeFleet.getContainingLocation().isHyperspace()) {
-			return false;
+		// COOP FORK (edit 4): a fleet sharing a star system with any live guest is not despawnable.
+		List<SectorEntityToken> presences = coopPresences();
+		for (SectorEntityToken coopPresence : presences) {
+			if (coopPresence != null && data.activeFleet.getContainingLocation() != null
+					&& data.activeFleet.getContainingLocation() == coopPresence.getContainingLocation()
+					&& !data.activeFleet.getContainingLocation().isHyperspace()) {
+				return false;
+			}
 		}
 		if (data.activeFleet.getBattle() != null) return false;
 		if (data.activeFleet.isNoAutoDespawn()) return false;
@@ -796,11 +795,12 @@ public class RouteManager implements FleetEventListener {
 
 		CampaignFleetAPI player = Global.getSector().getPlayerFleet();
 		float distLY = Misc.getDistanceLY(data.activeFleet.getLocationInHyperspace(), player.getLocationInHyperspace());
-		// COOP FORK (edit 3): both despawn distance tests below run against the nearest player, which
-		// in a session is whichever of {host player fleet, guest presence} is closer.
-		if (coopPresence != null) {
-			float coopDistLY = Misc.getDistanceLY(data.activeFleet.getLocationInHyperspace(), coopPresence.getLocationInHyperspace());
-			if (coopDistLY < distLY) distLY = coopDistLY;
+		// COOP FORK (edit 3): both despawn distance tests run against the nearest of {host, all guests}.
+		for (SectorEntityToken coopPresence : presences) {
+			if (coopPresence != null) {
+				float coopDistLY = Misc.getDistanceLY(data.activeFleet.getLocationInHyperspace(), coopPresence.getLocationInHyperspace());
+				if (coopDistLY < distLY) distLY = coopDistLY;
+			}
 		}
 
 		if (distLY > DESPAWN_DIST_LY_FAR) return true;

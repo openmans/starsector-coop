@@ -1,5 +1,11 @@
 package coop.net;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -138,8 +144,45 @@ public final class CoopReconnectCoordinator {
      */
     public static final long MAX_REMAINING_MILLIS = 1_800_000L;
 
+    /** Phase 27: per-guest reconnect grace entry held independently on a multi-guest host. */
+    public static final class PeerGrace {
+        private final String sessionId;
+        private final String peerPlayerId;
+        private final long startedAtMillis;
+        private long endsAtMillis;
+
+        PeerGrace(String sessionId, String peerPlayerId, long startedAtMillis, long endsAtMillis) {
+            this.sessionId = sessionId;
+            this.peerPlayerId = peerPlayerId;
+            this.startedAtMillis = startedAtMillis;
+            this.endsAtMillis = endsAtMillis;
+        }
+
+        public String sessionId() {
+            return sessionId;
+        }
+
+        public String peerPlayerId() {
+            return peerPlayerId;
+        }
+
+        public long startedAtMillis() {
+            return startedAtMillis;
+        }
+
+        public long endsAtMillis() {
+            return endsAtMillis;
+        }
+
+        public long remainingMillis(long nowMillis) {
+            return Math.max(0L, endsAtMillis - nowMillis);
+        }
+    }
+
     private final long graceMillis;
     private final Listener listener;
+    /** Phase 27: independent per-peer grace windows on a multi-guest host. */
+    private final Map<String, PeerGrace> peerGraces = new LinkedHashMap<>();
 
     private State state = State.IDLE;
     private String sessionId;
@@ -388,6 +431,85 @@ public final class CoopReconnectCoordinator {
         clear();
     }
 
+    // ---- Phase 27: per-peer host grace table -----------------------------------------------------
+
+    /** Opens an independent reconnect grace window for one dropped guest in a multi-guest session. */
+    public boolean beginHostWaitForPeer(String heldSessionId, String droppedPeerId, long nowMillis) {
+        if (graceMillis <= 0L || heldSessionId == null || heldSessionId.isBlank()
+                || droppedPeerId == null || droppedPeerId.isBlank()) {
+            return false;
+        }
+        String key = droppedPeerId.trim();
+        if (peerGraces.containsKey(key)) {
+            return false;
+        }
+        peerGraces.put(key, new PeerGrace(heldSessionId.trim(), key, nowMillis, nowMillis + graceMillis));
+        return true;
+    }
+
+    public boolean isPeerWaiting(String peerId) {
+        return peerId != null && peerGraces.containsKey(peerId.trim());
+    }
+
+    public List<String> waitingPeerIds() {
+        return Collections.unmodifiableList(new ArrayList<>(peerGraces.keySet()));
+    }
+
+    public ResumeDecision evaluatePeerResumeRequest(String requestSessionId, String requestPlayerId) {
+        if (requestPlayerId == null || requestPlayerId.isBlank()) {
+            return ResumeDecision.REJECT_PLAYER_MISMATCH;
+        }
+        PeerGrace entry = peerGraces.get(requestPlayerId.trim());
+        if (entry == null) {
+            return evaluateResumeRequest(requestSessionId, requestPlayerId);
+        }
+        if (requestSessionId == null || !requestSessionId.equals(entry.sessionId)) {
+            return ResumeDecision.REJECT_SESSION_MISMATCH;
+        }
+        return ResumeDecision.ACCEPT;
+    }
+
+    public boolean resumePeer(String peerId) {
+        if (peerId == null || peerId.isBlank()) {
+            return false;
+        }
+        return peerGraces.remove(peerId.trim()) != null;
+    }
+
+    public boolean extendPeer(String peerId, long extraMillis, long nowMillis) {
+        if (peerId == null || extraMillis <= 0L) {
+            return false;
+        }
+        PeerGrace entry = peerGraces.get(peerId.trim());
+        if (entry == null) {
+            return false;
+        }
+        long proposed = Math.max(entry.endsAtMillis, nowMillis) + extraMillis;
+        long capped = Math.min(proposed, nowMillis + MAX_REMAINING_MILLIS);
+        if (capped <= entry.endsAtMillis) {
+            return false;
+        }
+        entry.endsAtMillis = capped;
+        return true;
+    }
+
+    /** Returns every multi-guest peer id whose individual grace window expired on this tick. */
+    public List<String> tickExpiredPeers(long nowMillis) {
+        if (peerGraces.isEmpty()) {
+            return List.of();
+        }
+        List<String> expired = new ArrayList<>();
+        Iterator<Map.Entry<String, PeerGrace>> it = peerGraces.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<String, PeerGrace> e = it.next();
+            if (nowMillis >= e.getValue().endsAtMillis) {
+                expired.add(e.getKey());
+                it.remove();
+            }
+        }
+        return expired;
+    }
+
     private void clear() {
         state = State.IDLE;
         sessionId = null;
@@ -395,6 +517,7 @@ public final class CoopReconnectCoordinator {
         graceStartedAtMillis = 0L;
         graceEndsAtMillis = 0L;
         resumeRequestSent = false;
+        peerGraces.clear();
         // expiredWindowMillis is deliberately left alone: it describes the window that just ended and
         // is read afterwards, by the dialog explaining the ending.
     }

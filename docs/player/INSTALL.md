@@ -7,7 +7,8 @@ connect time.
 ## Quick start
 
 1. Unzip so `mod_info.json` sits in `<Starsector>\mods\coop`.
-2. Double-click `<Starsector>\mods\coop\Coop Launcher.cmd`.
+2. Launch the co-op launcher: double-click `<Starsector>\mods\coop\Coop Launcher.cmd` on Windows,
+   or run `./Coop\ Launcher.sh` from `<Starsector>/mods/coop` on Linux/macOS.
 3. Open **Details** beside the installation status and press **Fix** on each repairable problem.
    That is the classpath entry in `vmparams` and
    the mod tick in `enabled_mods.json`, the two things the mod cannot do for itself once the game is

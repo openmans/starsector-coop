@@ -415,7 +415,7 @@ public class CoopFleetMirror implements CoopNpcMirror {
         // This is the only thing in the mod that creates a player mirror, so publishing it here is
         // what lets the host's per-frame consumers stop scanning the sector for it. See
         // CoopGuestMirrorHandle.
-        CoopGuestMirrorHandle.publish(mirrorFleet);
+        CoopGuestMirrorHandle.publishForPlayer(snapshot.playerId(), mirrorFleet);
         resetTracking();
         coopFleetId = "player:" + snapshot.playerId();
         appliedName = label;

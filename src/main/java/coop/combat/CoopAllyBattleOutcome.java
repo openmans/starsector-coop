@@ -20,7 +20,14 @@ import java.util.List;
  *                           engine left them at
  */
 public record CoopAllyBattleOutcome(String ownerPlayerId, List<String> destroyedMemberIds,
-                                    List<Survivor> survivors) {
+                                    List<Survivor> survivors,
+                                    List<String> recoverableDestroyedIds) {
+
+    /** Backward-compatible 3-arg constructor (no recoverable wreck list). */
+    public CoopAllyBattleOutcome(String ownerPlayerId, List<String> destroyedMemberIds,
+                                 List<Survivor> survivors) {
+        this(ownerPlayerId, destroyedMemberIds, survivors, List.of());
+    }
 
     /** One surviving ship. Hull fraction and CR are clamped to {@code [0, 1]}; NaN reads as 0. */
     public record Survivor(String memberId, float hullFraction, float cr) {
@@ -35,6 +42,7 @@ public record CoopAllyBattleOutcome(String ownerPlayerId, List<String> destroyed
         ownerPlayerId = ownerPlayerId == null ? "" : ownerPlayerId.trim();
         destroyedMemberIds = List.copyOf(withoutBlanks(destroyedMemberIds));
         survivors = List.copyOf(survivors == null ? List.of() : survivors);
+        recoverableDestroyedIds = List.copyOf(withoutBlanks(recoverableDestroyedIds));
     }
 
     /** True when the battle left nothing to apply: no ship lost and no survivor listed. */

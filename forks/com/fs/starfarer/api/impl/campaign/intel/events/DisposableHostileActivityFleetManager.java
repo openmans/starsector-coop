@@ -135,9 +135,8 @@ public class DisposableHostileActivityFleetManager extends DisposableFleetManage
 		if (Global.getSector().isInNewGameAdvance()) return null;
 		CampaignFleetAPI player = Global.getSector().getPlayerFleet();
 		if (player == null) return null;
-		// COOP FORK: resolved once per pass; null outside a co-op session, which leaves both distance
-		// tests below at their vanilla single-player values.
-		SectorEntityToken coopPresence = coopPresence();
+		// COOP FORK: resolved once per pass across all live guests.
+		java.util.List<SectorEntityToken> presences = coopPresences();
 		StarSystemAPI nearest = null;
 
 		float minDist = Float.MAX_VALUE;
@@ -157,11 +156,12 @@ public class DisposableHostileActivityFleetManager extends DisposableFleetManage
 		for (StarSystemAPI system : Misc.getSystemsWithPlayerColonies(false)) {
 			
 			float distToPlayerLY = Misc.getDistanceLY(player.getLocationInHyperspace(), system.getLocation());
-			// COOP FORK (edit 1): "distance to the player" becomes "distance to the nearest player",
-			// so a colony system the guest is sitting in is eligible to become currSpawnLoc on its own.
-			if (coopPresence != null) {
-				float coopDistLY = Misc.getDistanceLY(coopPresence.getLocationInHyperspace(), system.getLocation());
-				if (coopDistLY < distToPlayerLY) distToPlayerLY = coopDistLY;
+			// COOP FORK (edit 1): nearest of {host, all live guests}.
+			for (SectorEntityToken coopPresence : presences) {
+				if (coopPresence != null) {
+					float coopDistLY = Misc.getDistanceLY(coopPresence.getLocationInHyperspace(), system.getLocation());
+					if (coopDistLY < distToPlayerLY) distToPlayerLY = coopDistLY;
+				}
 			}
 			if (distToPlayerLY > MAX_RANGE_FROM_PLAYER_LY) continue;
 			
@@ -175,11 +175,12 @@ public class DisposableHostileActivityFleetManager extends DisposableFleetManage
 		// stick with current system longer unless something else is closer
 		if (nearest == null && currSpawnLoc != null) {
 			float distToPlayerLY = Misc.getDistanceLY(player.getLocationInHyperspace(), currSpawnLoc.getLocation());
-			// COOP FORK (edit 2): same min-over-players, so the system the guest is in keeps its
-			// spawn slot while the guest is still near it.
-			if (coopPresence != null) {
-				float coopDistLY = Misc.getDistanceLY(coopPresence.getLocationInHyperspace(), currSpawnLoc.getLocation());
-				if (coopDistLY < distToPlayerLY) distToPlayerLY = coopDistLY;
+			// COOP FORK (edit 2): same min-over-all-players.
+			for (SectorEntityToken coopPresence : presences) {
+				if (coopPresence != null) {
+					float coopDistLY = Misc.getDistanceLY(coopPresence.getLocationInHyperspace(), currSpawnLoc.getLocation());
+					if (coopDistLY < distToPlayerLY) distToPlayerLY = coopDistLY;
+				}
 			}
 			if (distToPlayerLY <= DESPAWN_RANGE_LY) {
 				nearest = currSpawnLoc;

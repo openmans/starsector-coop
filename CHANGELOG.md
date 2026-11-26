@@ -9,16 +9,76 @@ the guest connects Wingman to the host's PC once and then flies in the host's ba
 time, with real damage to their own ships, reconciled into the shared campaign by the existing
 battle-result path.
 
-- Host: opens the Wingman session at coop session start, pumps it on campaign frames, learns
-  the guest's Wingman name (new reliable `WINGMAN_HELLO` message) and reserves the guest's
-  mirror-fleet flagship for them, so the guest gets their own ship whenever their fleet
-  deploys (Fight Alongside toggle).
-- Guest: reports its Wingman name, posts a one-time hint with the host address and Wingman
-  port, and keeps the coop battle bridge in spectator mode while inside a Wingman join battle
-  (the shared pause and the host's `BATTLE_BEGIN/END` continue to drive the campaign clock).
-- Every Wingman call is reflection-only and fails closed to the classic solo own-fleet model;
-  with Wingman absent nothing changes at all.
-- New option `coop.wingmanBattles` (Coop Options page, default on).
+- Host: opens the Wingman session at coop session start, maps port `24816` (TCP+UDP) via
+  UPnP/NAT-PMP when `coop.portMapping` is `auto`, pumps Wingman on campaign frames, learns the
+  guest's Wingman name (new reliable `WINGMAN_HELLO` message), and tracks/reserves the guest's
+  current mirror-fleet flagship for them (updating automatically if the flagship changes and
+  clearing stale reservations on session reset) so the guest gets their own ship whenever their
+  fleet deploys (Fight Alongside toggle).
+- Guest: reports its Wingman name, posts a one-time hint with the configured host address and
+  Wingman port, and keeps the coop battle bridge in spectator mode while inside a Wingman join
+  battle (including when Wingman launches combat before `BATTLE_BEGIN` arrives over TCP, while
+  preserving guest-initiated local battles against mirrored NPC fleets and Dweller encounters).
+- Every Wingman call binds via sandbox-safe `java.lang.invoke.MethodHandles` (never
+  `java.lang.reflect`), checks whether Wingman is enabled before loading `WingmanAPI`, logs
+  failures once, and fails closed to the classic solo own-fleet model; with Wingman absent nothing
+  changes at all.
+- New host-policy option `coop.wingmanBattles` (Coop Options page, default on).
+- Release polish: `COOP TEST` career start is now dev-mode only (`$global.isDevMode`), and
+  `coop.version` / launcher update checks point consistently at the `openmans/starsector-coop`
+  fork.
+- **Phase 25 (Global Pause & Fast-Forward Control):** wired `coop.allowGuestPause` (default on) so
+  any player can toggle global pause (Spacebar) and global fast-forward (Shift, new `FF_INTENT`
+  message) immediately without a confirmation step, while keeping screen-open, combat, and reconnect
+  holds intact.
+- **Phase 34 (Bounties for the Guest):** host replicates active person and system bounties to guests
+  via `BOUNTY_SET` (`CoopPersonBountyIntel` / `CoopSystemBountyIntel`), suppresses the guest's
+  divergent `SystemBountyManager`, and settles person & system bounty payouts via `CREDITS_GRANT`
+  in a pre-reconcile hook before `BATTLE_RESULT` despawns the target fleet.
+- **Phase 22 (Tactical Orders for Joined Ships):** extended `BATTLE_STATUS` (5 Hz, fog-filtered)
+  with ship positions, facing, CR, objectives, and map bounds; added an opt-in GL-drawn
+  `CoopTacticalMapPanel` opened from **Intel → Coop Session** while a partner fights; added
+  `BATTLE_ORDER` / `BATTLE_ORDER_ACK` + combat-frame inbound drain so the non-fighting owner can
+  issue ENGAGE, ESCORT, DEFEND, CAPTURE, WAYPOINT, RETREAT, and CANCEL orders to their joined allied
+  ships.
+- **Phase 27 (Multi-Guest 3–4 Players):** lifted `coop.maxGuests` cap to `1..3` (default `1`) and
+  wired `coop.allowMidSessionJoin`; added multi-peer `CoopSessionState`, multi-guest presence and
+  player-mirror registries with host-side snapshot/roster relay, N-way colony income split,
+  per-guest `coop.guestFleetSnapshots` saves, per-guest departure cleanup, targeted `ENGAGE_GUEST` /
+  customs dispatch, and per-guest Wingman flagship reservations.
+- **Reliability & Cross-Platform:** added transparent chunking (`CoopMarketSnapshotChunker`, up to
+  16 MiB) for large shared storage lockers past the 1 MiB frame cap, excluded unmirrored empty NPC
+  fleets from structural `NPC_FLEET_SET` churn (S4-C), and added `Coop Launcher.sh` for Linux/macOS.
+- **Full Hardening, All Options Wired & Extended Features:**
+  - **Wingman clean path:** forward-compatible optional `MethodHandles` hooks for `join(host, port)`,
+    `disconnect()`, and `closeHost()` in `ReflectiveCoopWingmanApi` / `CoopWingmanIntegration` +
+    upstream PR specification in `docs/WINGMAN_API_PR.md`.
+  - **Colony administrators & conflict guard:** sandbox-safe `MethodHandles` read of `Market.admin`
+    without triggering lazy mutation (`CoopColonyManagement` `A|` / `B|` lines), replicating
+    `PLAYER`, `AI_CORE`, and `PERSON` admins, plus optimistic `baseContentHash` concurrent-edit
+    conflict detection.
+  - **Phase 26 system-call sync & multi-guest forks:** upgraded all 8 presence/ambient forks under
+    `forks/` + `CoopFullFidelitySystemDriver` for multi-guest iteration (`CoopPresenceRegistry.getAllForFork`),
+    added `CoopAmbientSystemSync` (`AMBIENT_CALL`) for guest-proximity abyssal encounter triggers
+    and slipsurge/flare host dispatch.
+  - **Recovery & Integrity:** per-peer reconnect grace windows in `CoopReconnectCoordinator`,
+    host-to-guest save restoration (`CoopGuestSnapshotRestorer` + `GUEST_SNAPSHOT_RESTORE`),
+    allied battle wreck recovery (`CoopAllyWreckRecovery` + `recoverableDestroyedIds`), and real
+    launcher-side mod `.jar` SHA-256 digests (`CoopModJarDigester` -> `coop.launcher.modJarDigests`).
+  - **Zero inert options:** wired all 5 remaining options (`coop.incomeSplit` `equal|host-banks`,
+    `coop.lootSplit` `equal|pilot-keeps`, `coop.guestColonizationConsent` + `COLONY_CONSENT_REQ/RES`,
+    `coop.feedVerbosity` `all|important|minimal`, and `coop.partnerColor` presets / `#RRGGBB`);
+    `CoopOptionsView.INERT_KEYS` is now empty.
+  - **Campaign content sync & functional test framework:** added `CoopCommissionRewardSync`
+    (monthly stipend & hostile-kill commission bounties for guests), `CoopContactAuthority`
+    (`CONTACT_SET` + first-come contact-mission claim arbitration), and `CoopStorySyncFramework`
+    (`STORY_STATE` for Galatia `$ga*` and Sindrian Diktat `$sd*` flags + divergence detector).
+  - **Extended capabilities:** direct player-to-player atomic trade UI (`CoopTradeSession` +
+    `CoopTradeDialogPlugin`, `TRADE_SYNC`), in-game co-op text chat (`CoopChatService` +
+    `CoopChatDialog`, `CHAT_MSG`, `coop.chatKey`), opt-in AES-256-GCM transport encryption
+    (`CoopCipher`, `coop.encryption`), standalone CGNAT TCP relay (`CoopRelayProtocol` +
+    `CoopRelayServer`, `coop.relayAddress`, `coop-launcher.jar --relay <port>`), and optional
+    Nexerelin diplomacy/invasion sync adapter (`CoopNexerelinAdapter`, `NEX_EVENT`).
 
 ## 0.2.2 (community port to 0.98.5a-RC9)
 

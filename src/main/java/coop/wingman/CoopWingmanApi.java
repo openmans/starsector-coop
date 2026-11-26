@@ -46,4 +46,27 @@ public interface CoopWingmanApi {
      * deployed and {@code name} has nothing to fly. {@code null} name clears the reservation.
      */
     void reserveShip(String name, String fleetMemberId);
+
+    /**
+     * Clean-path extension: true when the installed WingmanAPI exposes programmatic {@link #join}.
+     * Older Wingman builds lack this method and gracefully fall back to the manual connect hint.
+     */
+    default boolean supportsAutoJoin() {
+        return false;
+    }
+
+    /** Clean-path extension: programmatically joins a Wingman host on {@code host:port}. */
+    default boolean join(String host, int port) {
+        return false;
+    }
+
+    /** Clean-path extension: disconnects a Wingman client session on coop teardown. */
+    default boolean disconnect() {
+        return false;
+    }
+
+    /** Clean-path extension: closes a Wingman host session on coop teardown or role switch. */
+    default boolean closeHost() {
+        return false;
+    }
 }

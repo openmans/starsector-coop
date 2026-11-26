@@ -125,12 +125,20 @@ public record CoopHandshakeManifest(
         LinkedHashMap<String, String> checksums = new LinkedHashMap<>();
         checksums.put("mod_info.json", modInfoChecksum(spec.getId()));
 
+        Map<String, String> launcherJarDigests = parseLauncherJarDigests();
         List<String> jars = spec.getJars() == null ? List.of() : spec.getJars().stream()
                 .map(CoopHandshakeManifest::normalizePath)
                 .sorted()
                 .toList();
+        String folder = normalizePath(spec.getPath());
+        String folderName = folder.contains("/") ? folder.substring(folder.lastIndexOf('/') + 1) : folder;
         for (String jar : jars) {
-            checksums.put(jar, CoopChecksum.unavailable("script-sandbox"));
+            String digest = launcherJarDigests.get(folderName + "/" + jar);
+            if (digest == null) {
+                digest = launcherJarDigests.get(spec.getId() + "/" + jar);
+            }
+            checksums.put(jar, digest != null && !digest.isEmpty()
+                    ? digest : CoopChecksum.unavailable("script-sandbox"));
         }
 
         return new ModEntry(
@@ -150,6 +158,33 @@ public record CoopHandshakeManifest(
      * whole capture. Jar checksums stay unavailable: no engine surface hands back jar bytes and the
      * sandbox forbids opening them directly.
      */
+    private static Map<String, String> parseLauncherJarDigests() {
+        String raw = System.getProperty(coop.config.CoopOptionsRegistry.LAUNCHER_MOD_JAR_DIGESTS, "");
+        if (raw == null || raw.isBlank()) {
+            try {
+                raw = coop.config.CoopOptionsStore.system()
+                        .rawOneShot(coop.config.CoopOptionsRegistry.LAUNCHER_MOD_JAR_DIGESTS);
+            } catch (RuntimeException | LinkageError ignored) {
+                raw = "";
+            }
+        }
+        if (raw == null || raw.isBlank()) {
+            return Collections.emptyMap();
+        }
+        LinkedHashMap<String, String> result = new LinkedHashMap<>();
+        for (String token : raw.split(";")) {
+            int eq = token.indexOf('=');
+            if (eq > 0 && eq < token.length() - 1) {
+                String k = normalizePath(token.substring(0, eq).trim());
+                String v = token.substring(eq + 1).trim();
+                if (!k.isEmpty() && !v.isEmpty()) {
+                    result.put(k, v);
+                }
+            }
+        }
+        return result;
+    }
+
     private static String modInfoChecksum(String modId) {
         try {
             String text = Global.getSettings().loadText("mod_info.json", modId);

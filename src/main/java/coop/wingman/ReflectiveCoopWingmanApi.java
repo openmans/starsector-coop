@@ -4,13 +4,20 @@ import com.fs.starfarer.api.Global;
 
 import coop.util.CoopLog;
 
-import java.lang.reflect.Method;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.function.BooleanSupplier;
 
 /**
- * Production {@link CoopWingmanApi}: reaches {@code wingman.api.WingmanAPI} by reflection so the
- * coop mod has no compile-time dependency on The Wingman Project.
+ * Production {@link CoopWingmanApi}: reaches {@code wingman.api.WingmanAPI} through
+ * {@link MethodHandles} so the coop mod has no compile-time dependency on The Wingman Project and
+ * stays strictly inside Starsector's script sandbox (which forbids {@code java.lang.reflect.Method}
+ * at runtime).
  *
  * <p>Every call fails closed: a missing Wingman, a renamed API, or a sandbox refusal all behave
  * exactly as if Wingman were not installed, and each failure is logged once per cause rather
@@ -22,82 +29,205 @@ import java.util.List;
 public final class ReflectiveCoopWingmanApi implements CoopWingmanApi {
 
     private static final String API_CLASS = "wingman.api.WingmanAPI";
+    private static final String WINGMAN_MOD_ID = "wingman_project";
 
-    private Class<?> apiClass;
-    private boolean resolveFailed;
+    private final BooleanSupplier modEnabledCheck;
+    private final String apiClassName;
+    private final Class<?> preloadedApiClass;
+
+    private boolean resolveAttempted;
+    private MethodHandle isJoinedHandle;
+    private MethodHandle localNameHandle;
+    private MethodHandle openHostHandle;
+    private boolean openHostReturnsBoolean;
+    private MethodHandle pumpHandle;
+    private MethodHandle playersHandle;
+    private MethodHandle playerNameHandle;
+    private MethodHandle reserveShipHandle;
+    private MethodHandle joinHandle;
+    private boolean joinReturnsBoolean;
+    private MethodHandle disconnectHandle;
+    private boolean disconnectReturnsBoolean;
+    private MethodHandle closeHostHandle;
+    private boolean closeHostReturnsBoolean;
+    private boolean apiAvailable;
+
+    private final Set<String> loggedFailures = new HashSet<>();
+
+    public ReflectiveCoopWingmanApi() {
+        this(API_CLASS, null, ReflectiveCoopWingmanApi::wingmanModEnabled);
+    }
+
+    /** Test seam: bind against a synthetic static API class without loading the game engine. */
+    ReflectiveCoopWingmanApi(Class<?> apiClass, BooleanSupplier modEnabledCheck) {
+        this(apiClass == null ? API_CLASS : apiClass.getName(), apiClass, modEnabledCheck);
+    }
+
+    private ReflectiveCoopWingmanApi(String apiClassName, Class<?> preloadedApiClass,
+                                     BooleanSupplier modEnabledCheck) {
+        this.apiClassName = apiClassName;
+        this.preloadedApiClass = preloadedApiClass;
+        this.modEnabledCheck = modEnabledCheck;
+    }
 
     /** Wingman's own mod id; the guard every caller checks first. */
     public static boolean wingmanModEnabled() {
         try {
-            return Global.getSettings().getModManager().isModEnabled("wingman_project");
+            return Global.getSettings().getModManager().isModEnabled(WINGMAN_MOD_ID);
         } catch (RuntimeException | LinkageError ex) {
             return false;
         }
     }
 
-    private Class<?> api() {
-        if (apiClass != null) {
-            return apiClass;
+    private boolean ensureResolved() {
+        if (resolveAttempted) {
+            return apiAvailable;
         }
-        if (resolveFailed) {
-            return null;
-        }
+        resolveAttempted = true;
         try {
-            apiClass = Class.forName(API_CLASS);
+            Class<?> apiClass = preloadedApiClass != null
+                    ? preloadedApiClass
+                    : Class.forName(apiClassName);
+            MethodHandles.Lookup lookup = MethodHandles.publicLookup();
+            isJoinedHandle = findOptional(lookup, apiClass, "isJoined",
+                    MethodType.methodType(boolean.class));
+            localNameHandle = findOptional(lookup, apiClass, "localName",
+                    MethodType.methodType(String.class));
+            openHostHandle = findOptional(lookup, apiClass, "openHost",
+                    MethodType.methodType(void.class));
+            if (openHostHandle == null) {
+                openHostHandle = findOptional(lookup, apiClass, "openHost",
+                        MethodType.methodType(boolean.class));
+                openHostReturnsBoolean = openHostHandle != null;
+            }
+            pumpHandle = findOptional(lookup, apiClass, "pump",
+                    MethodType.methodType(List.class));
+            playersHandle = findOptional(lookup, apiClass, "players",
+                    MethodType.methodType(int[].class));
+            playerNameHandle = findOptional(lookup, apiClass, "playerName",
+                    MethodType.methodType(String.class, int.class));
+            reserveShipHandle = findOptional(lookup, apiClass, "reserveShip",
+                    MethodType.methodType(void.class, String.class, String.class));
+            joinHandle = findOptional(lookup, apiClass, "join",
+                    MethodType.methodType(boolean.class, String.class, int.class));
+            if (joinHandle != null) {
+                joinReturnsBoolean = true;
+            } else {
+                joinHandle = findOptional(lookup, apiClass, "join",
+                        MethodType.methodType(void.class, String.class, int.class));
+            }
+            disconnectHandle = findOptional(lookup, apiClass, "disconnect",
+                    MethodType.methodType(boolean.class));
+            if (disconnectHandle != null) {
+                disconnectReturnsBoolean = true;
+            } else {
+                disconnectHandle = findOptional(lookup, apiClass, "disconnect",
+                        MethodType.methodType(void.class));
+            }
+            closeHostHandle = findOptional(lookup, apiClass, "closeHost",
+                    MethodType.methodType(boolean.class));
+            if (closeHostHandle != null) {
+                closeHostReturnsBoolean = true;
+            } else {
+                closeHostHandle = findOptional(lookup, apiClass, "closeHost",
+                        MethodType.methodType(void.class));
+            }
+            apiAvailable = true;
         } catch (Throwable t) {
-            resolveFailed = true;
-            CoopLog.warn(ReflectiveCoopWingmanApi.class,
+            apiAvailable = false;
+            logOnce("resolve",
                     "Coop wingman: Wingman API class not found; wingman battles are off", t);
         }
-        return apiClass;
+        return apiAvailable;
     }
 
-    private Object invoke(String method, Class<?>[] paramTypes, Object[] args) {
-        Class<?> c = api();
-        if (c == null) {
+    private MethodHandle findOptional(MethodHandles.Lookup lookup, Class<?> apiClass,
+                                      String name, MethodType type) {
+        try {
+            return lookup.findStatic(apiClass, name, type);
+        } catch (NoSuchMethodException | IllegalAccessException ex) {
             return null;
         }
-        try {
-            Method m = c.getMethod(method, paramTypes);
-            return m.invoke(null, args);
-        } catch (ReflectiveOperationException ex) {
-            CoopLog.warn(ReflectiveCoopWingmanApi.class,
-                    "Coop wingman: WingmanAPI." + method + " call failed", ex);
-            return null;
-        } catch (RuntimeException | LinkageError ex) {
-            CoopLog.warn(ReflectiveCoopWingmanApi.class,
-                    "Coop wingman: WingmanAPI." + method + " threw", ex);
-            return null;
+    }
+
+    private void logOnce(String key, String message, Throwable cause) {
+        if (loggedFailures.add(key)) {
+            if (cause == null) {
+                CoopLog.warn(ReflectiveCoopWingmanApi.class, message);
+            } else {
+                CoopLog.warn(ReflectiveCoopWingmanApi.class, message, cause);
+            }
         }
     }
 
     @Override
     public boolean wingmanEnabled() {
-        return api() != null && wingmanModEnabled();
+        // Check mod presence first so installs without Wingman never attempt Class.forName or log.
+        if (!modEnabledCheck.getAsBoolean()) {
+            return false;
+        }
+        return ensureResolved();
     }
 
     @Override
     public boolean isJoined() {
-        Object v = invoke("isJoined", new Class<?>[]{}, new Object[]{});
-        return Boolean.TRUE.equals(v);
+        if (!wingmanEnabled() || isJoinedHandle == null) {
+            return false;
+        }
+        try {
+            return (boolean) isJoinedHandle.invoke();
+        } catch (Throwable t) {
+            logOnce("isJoined", "Coop wingman: WingmanAPI.isJoined failed", t);
+            return false;
+        }
     }
 
     @Override
     public String localName() {
-        Object v = invoke("localName", new Class<?>[]{}, new Object[]{});
-        return v instanceof String s ? s : "";
+        if (!wingmanEnabled() || localNameHandle == null) {
+            return "";
+        }
+        try {
+            String value = (String) localNameHandle.invoke();
+            return value == null ? "" : value;
+        } catch (Throwable t) {
+            logOnce("localName", "Coop wingman: WingmanAPI.localName failed", t);
+            return "";
+        }
     }
 
     @Override
     public boolean openHost() {
-        Object v = invoke("openHost", new Class<?>[]{}, new Object[]{});
-        return Boolean.TRUE.equals(v) || v == null; // openHost() is void; a clean return means ok
+        if (!wingmanEnabled()) {
+            return false;
+        }
+        if (openHostHandle == null) {
+            logOnce("openHost.missing",
+                    "Coop wingman: WingmanAPI.openHost method not found", null);
+            return false;
+        }
+        try {
+            if (openHostReturnsBoolean) {
+                return (boolean) openHostHandle.invoke();
+            }
+            openHostHandle.invoke();
+            return true;
+        } catch (Throwable t) {
+            logOnce("openHost", "Coop wingman: WingmanAPI.openHost failed", t);
+            return false;
+        }
     }
 
     @Override
     public String pumpHost() {
-        Object v = invoke("pump", new Class<?>[]{}, new Object[]{});
-        if (v instanceof List<?> lines) {
+        if (!wingmanEnabled() || pumpHandle == null) {
+            return "";
+        }
+        try {
+            List<?> lines = (List<?>) pumpHandle.invoke();
+            if (lines == null || lines.isEmpty()) {
+                return "";
+            }
             StringBuilder sb = new StringBuilder();
             for (Object line : lines) {
                 if (line instanceof String s && !s.isEmpty()) {
@@ -108,28 +238,105 @@ public final class ReflectiveCoopWingmanApi implements CoopWingmanApi {
                 }
             }
             return sb.toString();
+        } catch (Throwable t) {
+            logOnce("pump", "Coop wingman: WingmanAPI.pump failed", t);
+            return "";
         }
-        return "";
     }
 
     @Override
     public List<String> playerNames() {
-        Object v = invoke("players", new Class<?>[]{}, new Object[]{});
         List<String> out = new ArrayList<>();
-        if (v instanceof int[] ids) {
+        if (!wingmanEnabled() || playersHandle == null || playerNameHandle == null) {
+            return out;
+        }
+        try {
+            int[] ids = (int[]) playersHandle.invoke();
+            if (ids == null) {
+                return out;
+            }
             for (int id : ids) {
-                Object name = invoke("playerName", new Class<?>[]{int.class}, new Object[]{id});
-                if (name instanceof String s && !s.isEmpty()) {
-                    out.add(s);
+                String name = (String) playerNameHandle.invoke(id);
+                if (name != null && !name.isEmpty()) {
+                    out.add(name);
                 }
             }
+        } catch (Throwable t) {
+            logOnce("players", "Coop wingman: WingmanAPI.players/playerName failed", t);
         }
         return out;
     }
 
     @Override
     public void reserveShip(String name, String fleetMemberId) {
-        invoke("reserveShip", new Class<?>[]{String.class, String.class},
-                new Object[]{name, fleetMemberId});
+        if (!wingmanEnabled()) {
+            return;
+        }
+        if (reserveShipHandle == null) {
+            logOnce("reserveShip.missing",
+                    "Coop wingman: WingmanAPI.reserveShip method not found", null);
+            return;
+        }
+        try {
+            reserveShipHandle.invoke(name, fleetMemberId);
+        } catch (Throwable t) {
+            logOnce("reserveShip", "Coop wingman: WingmanAPI.reserveShip failed", t);
+        }
+    }
+
+    @Override
+    public boolean supportsAutoJoin() {
+        return wingmanEnabled() && joinHandle != null;
+    }
+
+    @Override
+    public boolean join(String host, int port) {
+        if (!wingmanEnabled() || joinHandle == null || host == null || host.isBlank() || port <= 0) {
+            return false;
+        }
+        try {
+            if (joinReturnsBoolean) {
+                return (boolean) joinHandle.invoke(host.trim(), port);
+            }
+            joinHandle.invoke(host.trim(), port);
+            return true;
+        } catch (Throwable t) {
+            logOnce("join", "Coop wingman: WingmanAPI.join failed", t);
+            return false;
+        }
+    }
+
+    @Override
+    public boolean disconnect() {
+        if (!wingmanEnabled() || disconnectHandle == null) {
+            return false;
+        }
+        try {
+            if (disconnectReturnsBoolean) {
+                return (boolean) disconnectHandle.invoke();
+            }
+            disconnectHandle.invoke();
+            return true;
+        } catch (Throwable t) {
+            logOnce("disconnect", "Coop wingman: WingmanAPI.disconnect failed", t);
+            return false;
+        }
+    }
+
+    @Override
+    public boolean closeHost() {
+        if (!wingmanEnabled() || closeHostHandle == null) {
+            return false;
+        }
+        try {
+            if (closeHostReturnsBoolean) {
+                return (boolean) closeHostHandle.invoke();
+            }
+            closeHostHandle.invoke();
+            return true;
+        } catch (Throwable t) {
+            logOnce("closeHost", "Coop wingman: WingmanAPI.closeHost failed", t);
+            return false;
+        }
     }
 }

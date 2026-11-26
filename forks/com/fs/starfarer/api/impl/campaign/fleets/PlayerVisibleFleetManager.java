@@ -67,6 +67,11 @@ public abstract class PlayerVisibleFleetManager extends BaseLimitedFleetManager 
 		return coop.presence.CoopPresenceRegistry.getForFork("PlayerVisibleFleetManager");
 	}
 
+	/** COOP FORK (Phase 27): all live guest presence entities for multi-guest visibility & spawning. */
+	protected static java.util.List<SectorEntityToken> coopPresences() {
+		return coop.presence.CoopPresenceRegistry.getAllForFork("PlayerVisibleFleetManager");
+	}
+
 	// ---- end COOP FORK block ---------------------------------------------------------------------
 
 
@@ -117,11 +122,11 @@ public abstract class PlayerVisibleFleetManager extends BaseLimitedFleetManager 
 	protected abstract boolean isOkToDespawnAssumingNotPlayerVisible(CampaignFleetAPI fleet);
 	
 	protected boolean isVisibleToPlayer(CampaignFleetAPI fleet) {
-		// COOP FORK (edit 1): a fleet the co-op guest can see is being watched by a real player and must
-		// not be culled. Evaluated first and only ever short-circuits to true, so with no presence
-		// registered the remainder of this method is reached in exactly vanilla's state.
-		SectorEntityToken coopPresence = coopPresence();
-		if (coopPresence != null && isVisibleToCoopPresence(fleet, coopPresence)) return true;
+		// COOP FORK (edit 1): a fleet any co-op guest can see is being watched by a real player and
+		// must not be culled.
+		for (SectorEntityToken coopPresence : coopPresences()) {
+			if (coopPresence != null && isVisibleToCoopPresence(fleet, coopPresence)) return true;
+		}
 
 		CampaignFleetAPI player = Global.getSector().getPlayerFleet();
 		if (player == null) return false;

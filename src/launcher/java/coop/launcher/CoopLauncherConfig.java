@@ -66,6 +66,8 @@ public final class CoopLauncherConfig {
     public static final String EXPECTED_CAMPAIGN_ID = CoopOptionsRegistry.EXPECTED_CAMPAIGN_ID;
     public static final String ALLOW_GAME_VERSION_MISMATCH =
             CoopOptionsRegistry.ALLOW_GAME_VERSION_MISMATCH;
+    public static final String LAUNCHER_MOD_JAR_DIGESTS =
+            CoopOptionsRegistry.LAUNCHER_MOD_JAR_DIGESTS;
 
     /**
      * The order launcher-owned keys are written in, so two runs over the same settings produce the
@@ -96,7 +98,8 @@ public final class CoopLauncherConfig {
             DEBUG_INTERACTION_DELAY_MS,
             ALLOW_GAME_VERSION_MISMATCH,
             ADOPT_CAMPAIGN_ID,
-            EXPECTED_CAMPAIGN_ID);
+            EXPECTED_CAMPAIGN_ID,
+            LAUNCHER_MOD_JAR_DIGESTS);
 
     /** The bridge port a hosting launcher uses when no port was typed. */
     public static final int HOST_BRIDGE_PORT = 7801;

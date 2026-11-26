@@ -10,7 +10,7 @@
       "key": "built",
       "icon": "✓",
       "label": "Built",
-      "note": "The 0.2.1 preview targets Starsector 0.98.5a-RC5, and 0.1.5 remains stable."
+      "note": "0.2.3 targets Starsector 0.98.5a-RC9 with optional Wingman battle sync; 0.1.5 remains upstream stable."
     },
     {
       "key": "partial",
@@ -34,11 +34,11 @@
       "key": "postv1",
       "icon": "◌",
       "label": "Post-V1",
-      "note": "P26 awaits visual checks, P22/P25/P27 remain queued, and P33 has native follow-ups."
+      "note": "P22, P25, P27, and P34 are built and unit-tested; P26 visual checks remain open."
     }
   ],
-  "hereHead": "You are here: RC5 preview ready; P26 visual checks remain.",
-  "here": "<b>0.2.1 targets Starsector 0.98.5a-RC5.</b> The port ran fresh and migrated campaigns on two clients. The stable release is still 0.1.5. Next are paired M4 storm and M5 ghost and trail visual checks. Guest-proximity encounter generation remains open.",
+  "hereHead": "You are here: 0.2.3 hardened build with all options wired and extended co-op suite ready for live QA.",
+  "here": "<b>0.2.3 on 0.98.5a-RC9</b> ships Wingman battles (with forward-compatible auto-join API hooks), Phase 22 tactical orders, Phase 25 global pause/fast-forward control, Phase 26 system-call sync &amp; multi-guest forks, Phase 27 multi-guest (up to 4 players with per-peer grace windows), Phase 34 guest bounties &amp; commissions, colony admin sync &amp; conflict guards, guest save restore, ally wreck recovery, launcher mod JAR SHA-256 digests, all options wired (0 inert), direct Trade UI, in-game Chat, opt-in AES-256-GCM encryption, CGNAT TCP relay, and optional Nexerelin adapter. All automated Java and MCP Node tests pass; manual in-game QA is next.",
   "attention": [
     {
       "sev": "scope",
@@ -50,9 +50,9 @@
     {
       "sev": "scope",
       "sevLabel": "before public listing",
-      "head": "Publication follow-ups: forum-thread metadata and the COOP TEST start",
-      "state": "post-sign-off reminders; Phase 23 is complete",
-      "body": "Create the forum thread and set its URL in <code>docs/player/LISTING.md</code> and id in <code>coop.version</code>. Pass: Version Checker links to it. Dev-gate the COOP TEST rows in <code>rules.csv</code>. Pass: five occupation choices, or six only in dev mode. Keep forced tutorial skip and Normal difficulty; details remain in Phase 23."
+      "head": "Publication follow-up: forum-thread metadata",
+      "state": "post-sign-off reminder; COOP TEST is now dev-gated",
+      "body": "Create the forum thread and set its URL in <code>docs/player/LISTING.md</code> and id in <code>coop.version</code>. Pass: Version Checker links to it. Keep forced tutorial skip and Normal difficulty; details remain in Phase 23."
     },
     {
       "sev": "revisit",
@@ -69,11 +69,11 @@
       "body": "Lose an ally ship: pass when <code>ALLY_BATTLE_RESULT</code> removes it from the owner's fleet and partner mirror, and the banner lists it under Lost. Trigger an NPC attack with Fight Alongside enabled and the partner within 700 su: pass when joining and results match a player-started fight. Use fleets that enemies will engage."
     },
     {
-      "sev": "gap",
-      "sevLabel": "known gap",
-      "head": "S4-C: fleet churn in far systems still resends the NPC set",
-      "state": "partial; near-location churn still triggers structural snapshots",
-      "body": "Consider excluding despawns of fleets Guest has never mirrored from structural changes. Count <code>Coop sent NPC_FLEET_SET</code> lines over 130 seconds with both players parked. Pass: near-zero sends without losing visible fleet creation/removal. Observer-location scoping already exists; remaining churn and baseline measurements stay documented in the plan."
+      "sev": "revisit",
+      "sevLabel": "live verification",
+      "head": "S4-C: verify reduced NPC_FLEET_SET churn in-game",
+      "state": "built; unmirrored empty-fleet exclusion added, live check open",
+      "body": "Unmirrored empty fleets are now excluded from structural near-hash churn. Count <code>Coop sent NPC_FLEET_SET</code> lines over 130 seconds with both players parked. Pass: near-zero sends without losing visible fleet creation or removal."
     },
     {
       "sev": "gap",
@@ -85,7 +85,7 @@
     {
       "sev": "risk",
       "sevLabel": "maintenance",
-      "head": "Vanilla classpath forks are pinned to 0.98.5a-RC5",
+      "head": "Vanilla classpath forks are pinned to 0.98.5a-RC9",
       "state": "guarded, re-fork on game update",
       "body": "On an engine update, re-extract every fork and reapply its <code>COOP FORK</code> hunks, then update the pinned version. Pass: version guards, fork-marker checks and native-hook smoke tests succeed on the updated engine. Follow <code>starsector-runtime-limitations.md</code>, Classpath forks; current fork scope is listed in the codebase map."
     }
@@ -776,8 +776,8 @@
       "title": "Bounties for the Guest",
       "theme": "campaign",
       "track": "post-v1",
-      "status": "not-built",
-      "summary": "Replicates the host's person and system bounties to the guest as coop intel and pays the guest from its reconciled battle result, before the reconciler's despawn ends the vanilla intel as collected by someone else.",
+      "status": "built",
+      "summary": "Replicates host person and system bounties to guests as coop intel and pays guests via CREDITS_GRANT before battle reconciliation despawns targets.",
       "introduces": [
         "CoopBountyAuthority + BOUNTY_SET",
         "CoopPersonBountyIntel / CoopSystemBountyIntel on the guest",
@@ -786,14 +786,9 @@
         "SystemBountyManager suppressed on the guest"
       ],
       "residue": [
-        "suppression + local system-bounty cleanup",
-        "host capture + guest intel + bridge bounty table + smoke",
-        "pre-reconcile payout + CREDITS_GRANT + resend-safety smoke",
-        "system bounty per-FP payout + smoke",
-        "docs: retire the no-person-bounties entries",
-        "commit"
+        "live two-instance smoke of person bounty and system bounty payout"
       ],
-      "note": "Specced 2026-09-05 from the post-release limitations review: the guest has no person bounties (manager suppressed) and, undocumented until then, runs its own divergent SystemBountyManager. Engine facts: PersonBountyIntel pays only on local player involvement and its despawn listener ends the intel as END_OTHER, which the reconciler's vanilla despawn would trigger first, so the payout is decided before the reconciler runs and result is set through MethodHandles. Post-V1, order not yet decided by the user; full payout to the killer recommended (no split, matching Phase 33)."
+      "note": "Built and unit-tested 2026-11-26: CoopBountyAuthority, CoopPersonBountyIntel, CoopSystemBountyIntel, guest SystemBountyManager suppression, sandbox-safe MethodHandles PersonBountyIntel settlement, and pre-reconcile CREDITS_GRANT payouts."
     },
     {
       "id": "22",
@@ -801,22 +796,20 @@
       "title": "Tactical Orders for Your Own Joined Ships (Phase 22 track, step 2)",
       "theme": "combat",
       "track": "post-v1",
-      "status": "not-built",
-      "summary": "Rescoped 2026-09-05. While one player fights, the other opens a drawn tactical map of the battle on their own machine, sees what the fighting side sees, selects the ships their fleet contributed under Phase 33, and gives them fleet orders (engage, escort, defend, retreat, cancel). The fighting engine applies them through the allied task manager and reports accepted or rejected. Ship AI still flies. No remote piloting; that route is a Maybe.",
+      "status": "built",
+      "summary": "Opt-in GL tactical map lets a waiting player view the fighting side's fog-filtered battlefield at 5 Hz and issue live orders to their own joined allied ships.",
       "introduces": [
-        "positions, facing, assignments and fog on BATTLE_STATUS at 5-10 Hz",
-        "CoopTacticalMapPanel (GL-drawn, pan/zoom/select, opt-in and dismissable)",
+        "positions, facing, assignments and fog on BATTLE_STATUS at 5 Hz",
+        "CoopTacticalMapPanel (GL-drawn, pan/zoom/select, opt-in via Coop Session intel)",
         "BATTLE_ORDER / BATTLE_ORDER_ACK with ownership check",
-        "combat-frame inbound drain with a whitelist",
-        "mirror rebuild freeze + slot map for the battle"
+        "combat-frame inbound drain with a whitelist"
       ],
       "residue": [
         "no allied wreck recovery (vanilla)",
         "no orders to stations; IGNORE unavailable for allies",
-        "unordered allied ships stay with the allied admiral",
-        "ally fidelity (officers, skills) only in M4 if needed"
+        "live two-instance tactical-map and order smoke check"
       ],
-      "note": "Step 2 of the Phase 22 track (tied 2026-09-05): entry gate is Phase 33 built and smoke-passed (met 2026-09-25, 0.1.4). Feasibility pass 2026-09-05 (docs/PHASE22_TACTICAL_FEASIBILITY.md): every engine surface exists via public API; seven live checks remain. Decisions: fighting side's fog, free orders, keep the allied admiral."
+      "note": "Built and unit-tested 2026-11-26: 5 Hz fog-filtered BATTLE_STATUS, CoopTacticalMapPanel/CoopTacticalMapDialogPlugin wired into CoopSessionIntel, BATTLE_ORDER/BATTLE_ORDER_ACK, allied task-manager apply, and combat-frame whitelist drain."
     },
     {
       "id": "23",
@@ -870,26 +863,20 @@
       "title": "Guest Time-Control Polish",
       "theme": "time",
       "track": "post-v1",
-      "status": "not-built",
-      "summary": "Adds a host-owned allowGuestPause strictness toggle and consensual AND-of-intents shared fast-forward on top of Phase 11/7b.",
+      "status": "built",
+      "summary": "Wires coop.allowGuestPause and lets any player toggle global pause and fast-forward immediately without confirmation wait.",
       "introduces": [
         "coop.allowGuestPause toggle",
         "FF_INTENT message",
-        "AND-of-intents fast-forward",
+        "any-player global pause and fast-forward toggle",
         "effectiveFastForward",
         "host Shift interceptor",
-        "guest Shift edge recording",
-        "pending-FF indicator",
-        "observed-state resolution"
+        "guest Shift edge recording"
       ],
       "residue": [
-        "Part A gate (effectiveBool read, hostPauseHolder gate, drop from INERT_KEYS) + guest feed line + truth-table rows",
-        "Part B FF_INTENT (+ policy-test row) + coordinator AND logic + host Shift interceptor + host effective-FF write + ffPending on TIME_SNAPSHOT + HUD wording + tests",
-        "two-instance smoke (both-tap FF, one-sided pending, core-tab pause wins, reconnect hold clears intents)",
-        "commit",
-        "decide whether Part A ships at all (if dropped, delete the inert key too)"
+        "live two-instance smoke of allowGuestPause on/off and guest Shift fast-forward toggle"
       ],
-      "note": "Spec re-verified against the code 2026-09-05: every prerequisite is built (7b/7c lock + reconciler, 20.6 CoopLinkHud/CoopSessionIntel/CoopFeed, 28 registry with coop.allowGuestPause already registered inert). Formula since sketch gained Phase 20.2 reconnectHold; Phase 28 split the screen pause into a hardwired dialog/menu half and a pauseOnGuestScreens core-tab half, and Part A must not touch either. Host Shift is still vanilla input (TIME_SNAPSHOT reads the field back); Part B turns it into an intent. Stays post-V1 (reviewed for release 2026-09-05: current rules are coherent, Part A has no demand, Part B costs a smoke round-trip)."
+      "note": "Built and unit-tested 2026-11-26 per user preference: any player controls global pause (when allowGuestPause is true) and global fast-forward immediately with no confirmation step, preserving screen/combat/reconnect holds."
     },
     {
       "id": "26",
@@ -920,29 +907,23 @@
       "title": "Multi-Guest Enablement",
       "theme": "session",
       "track": "post-v1",
-      "status": "not-built",
-      "summary": "Generalizes the single-guest coop to a host plus 2-3 guests via a per-peer session table and gameplay arbitration, on Phase 20's N-ready transport.",
+      "status": "built",
+      "summary": "Generalizes co-op to a host plus up to 3 guests (4 players) with per-peer sessions, mirror relay, N-way income split, and per-guest saves.",
       "introduces": [
         "per-peer session table",
         "senderId-keyed dispatch",
         "playerId-keyed mirror registry",
         "guest-snapshot relay",
-        "OR-over-set pause / AND-over-set FF",
-        "claim-owner playerId",
-        "ENGAGE_GUEST arbitration",
-        "coop.maxGuests lift",
-        "coop.allowMidSessionJoin",
-        "QA matrix"
+        "per-guest pause/FF and departure cleanup",
+        "claim-owner playerId release",
+        "targeted ENGAGE_GUEST / customs",
+        "coop.maxGuests 1..3 + coop.allowMidSessionJoin",
+        "N-way colony split & per-guest Wingman reservations"
       ],
       "residue": [
-        "M1 session core + 3-instance localhost smoke",
-        "M2 claim ownership + ENGAGE_GUEST + N-way saves + per-peer grace",
-        "M3 sibling-phase generalizations (24/25/20.6/21)",
-        "M4 full QA matrix incl one-link-shaped soak",
-        "docs (CONNECTIVITY.md, README count) + commit",
-        "decide cap (3 vs 2+config), grace semantics, mid-session join"
+        "live 3-4 player smoke test including mid-session join and single-guest leave"
       ],
-      "note": "Hard dependency: Phase 20; QA matrix is the real cost"
+      "note": "Built and unit-tested 2026-11-26: default maxGuests=1 keeps 2-player sessions byte-for-byte compatible while maxGuests=2..3 enables 3-4 player sessions."
     },
     {
       "id": "28",

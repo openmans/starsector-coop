@@ -113,6 +113,11 @@ public abstract class SourceBasedFleetManager implements FleetEventListener, Eve
 		return coop.presence.CoopPresenceRegistry.getForFork("SourceBasedFleetManager");
 	}
 
+	/** COOP FORK (Phase 27): all live guest mirrors. */
+	protected static java.util.List<SectorEntityToken> coopPresences() {
+		return coop.presence.CoopPresenceRegistry.getAllForFork("SourceBasedFleetManager");
+	}
+
 	// ---- end COOP FORK block ---------------------------------------------------------------------
 
 	public void advance(float amount) {
@@ -146,16 +151,16 @@ public abstract class SourceBasedFleetManager implements FleetEventListener, Eve
 			}
 		}
 		
-		// COOP FORK: resolved once per pass; null outside a co-op session, which leaves both distance
-		// tests below at their vanilla single-player values.
-		SectorEntityToken coopPresence = coopPresence();
+		// COOP FORK: resolved once per pass across all live guests.
+		java.util.List<SectorEntityToken> presences = coopPresences();
 
 		float distFromSource = Misc.getDistanceLY(player.getLocationInHyperspace(), sourceLocation);
-		// COOP FORK (edit 1): the garrison ramps up for whichever player is nearer the source, so the
-		// guest approaching a Remnant station sees the same build-up the host would.
-		if (coopPresence != null) {
-			float coopDistFromSource = Misc.getDistanceLY(coopPresence.getLocationInHyperspace(), sourceLocation);
-			if (coopDistFromSource < distFromSource) distFromSource = coopDistFromSource;
+		// COOP FORK (edit 1): garrison ramps up for whichever player (host or any guest) is nearer.
+		for (SectorEntityToken coopPresence : presences) {
+			if (coopPresence != null) {
+				float coopDistFromSource = Misc.getDistanceLY(coopPresence.getLocationInHyperspace(), sourceLocation);
+				if (coopDistFromSource < distFromSource) distFromSource = coopDistFromSource;
+			}
 		}
 		float f = 0f;
 		if (distFromSource < thresholdLY) {
@@ -173,11 +178,12 @@ public abstract class SourceBasedFleetManager implements FleetEventListener, Eve
 		if (currMax < fleets.size()) {
 			for (CampaignFleetAPI fleet : new ArrayList<CampaignFleetAPI>(fleets)) {
 				float distFromPlayer = Misc.getDistanceLY(player.getLocationInHyperspace(), fleet.getLocationInHyperspace());
-				// COOP FORK (edit 2): a surplus fleet is only far away if it is far from BOTH players,
-				// so one is never yanked out from under the guest because the host left.
-				if (coopPresence != null) {
-					float coopDistFromPlayer = Misc.getDistanceLY(coopPresence.getLocationInHyperspace(), fleet.getLocationInHyperspace());
-					if (coopDistFromPlayer < distFromPlayer) distFromPlayer = coopDistFromPlayer;
+				// COOP FORK (edit 2): surplus fleet is only far away if far from host AND all guests.
+				for (SectorEntityToken coopPresence : presences) {
+					if (coopPresence != null) {
+						float coopDistFromPlayer = Misc.getDistanceLY(coopPresence.getLocationInHyperspace(), fleet.getLocationInHyperspace());
+						if (coopDistFromPlayer < distFromPlayer) distFromPlayer = coopDistFromPlayer;
+					}
 				}
 				if (distFromPlayer > DESPAWN_MIN_DIST_LY && distFromPlayer > thresholdLY + DESPAWN_THRESHOLD_PAD_LY) {
 					fleet.despawn(FleetDespawnReason.PLAYER_FAR_AWAY, null);

@@ -36,7 +36,8 @@ class CoopMessageTypePolicyTest {
             CoopMessages.Type.HANDSHAKE_MANIFEST, CoopMessages.Type.HANDSHAKE_RESULT,
             CoopMessages.Type.SEED_LOCK_REQUEST, CoopMessages.Type.SEED_LOCK_ACK,
             CoopMessages.Type.SEED_LOCK_REJECT, CoopMessages.Type.TIME_SNAPSHOT,
-            CoopMessages.Type.PAUSE_INTENT, CoopMessages.Type.FLEET_SNAPSHOT,
+            CoopMessages.Type.PAUSE_INTENT, CoopMessages.Type.FF_INTENT,
+            CoopMessages.Type.FLEET_SNAPSHOT,
             CoopMessages.Type.FLEET_ROSTER, CoopMessages.Type.INTERACTION_CLAIM,
             CoopMessages.Type.INTERACTION_ACCEPT, CoopMessages.Type.INTERACTION_REJECT,
             CoopMessages.Type.INTERACTION_RELEASE, CoopMessages.Type.REP_DELTA,
@@ -48,7 +49,8 @@ class CoopMessageTypePolicyTest {
             CoopMessages.Type.WORLD_DELTA, CoopMessages.Type.RAID_RESULT,
             CoopMessages.Type.COLONY_FOUNDED, CoopMessages.Type.COLONY_ABANDONED,
             CoopMessages.Type.COLONY_MGMT, CoopMessages.Type.COLONY_INCOME,
-            CoopMessages.Type.EXPEDITION_WARNING, CoopMessages.Type.ABILITY_ACTIVATE,
+            CoopMessages.Type.EXPEDITION_WARNING, CoopMessages.Type.BOUNTY_SET,
+            CoopMessages.Type.ABILITY_ACTIVATE,
             CoopMessages.Type.ORBIT_SNAPSHOT, CoopMessages.Type.NPC_FLEET_SET,
             CoopMessages.Type.NPC_FLEET_MOTION, CoopMessages.Type.BASE_SET, CoopMessages.Type.ENC_SET,
             CoopMessages.Type.STREAM_SET, CoopMessages.Type.STREAM_ADD,
@@ -60,6 +62,7 @@ class CoopMessageTypePolicyTest {
             CoopMessages.Type.STORM_SET, CoopMessages.Type.STORM_GRID, CoopMessages.Type.STORM_CONTROL,
             CoopMessages.Type.BATTLE_BEGIN, CoopMessages.Type.BATTLE_STATUS,
             CoopMessages.Type.BATTLE_END, CoopMessages.Type.BATTLE_RESULT,
+            CoopMessages.Type.BATTLE_ORDER, CoopMessages.Type.BATTLE_ORDER_ACK,
             CoopMessages.Type.ENGAGE_GUEST, CoopMessages.Type.DIALOG_BEGIN,
             CoopMessages.Type.GUEST_SNAPSHOT, CoopMessages.Type.SAVE_CHECKPOINT,
             CoopMessages.Type.RESPAWN_PLAYER, CoopMessages.Type.PING, CoopMessages.Type.PONG,
@@ -74,7 +77,12 @@ class CoopMessageTypePolicyTest {
             CoopMessages.Type.RELIABLE_ACK, CoopMessages.Type.SAVE_CHECKPOINT_RESULT,
             CoopMessages.Type.SESSION_LEAVE, CoopMessages.Type.MARK,
             CoopMessages.Type.ALLY_BATTLE_JOIN, CoopMessages.Type.ALLY_BATTLE_RESULT,
-            CoopMessages.Type.WINGMAN_HELLO);
+            CoopMessages.Type.WINGMAN_HELLO,
+            CoopMessages.Type.AMBIENT_CALL, CoopMessages.Type.GUEST_SNAPSHOT_RESTORE,
+            CoopMessages.Type.COLONY_CONSENT_REQ, CoopMessages.Type.COLONY_CONSENT_RES,
+            CoopMessages.Type.CONTACT_SET, CoopMessages.Type.STORY_STATE,
+            CoopMessages.Type.TRADE_SYNC, CoopMessages.Type.CHAT_MSG,
+            CoopMessages.Type.NEX_EVENT);
 
     // ---- table: CoopNetService.coalesceKey(Message) ------------------------------------------
     // Whitelist of whole-state snapshots that may supersede a queued copy of themselves; every
@@ -147,7 +155,11 @@ class CoopMessageTypePolicyTest {
             // ships. Nothing re-sends it, and losing it leaves the owner flying wrecks.
             CoopMessages.Type.ALLY_BATTLE_RESULT,
             // Phase 34: the guest's Wingman name; losing it only costs the flagship reservation.
-            CoopMessages.Type.WINGMAN_HELLO);
+            CoopMessages.Type.WINGMAN_HELLO,
+            // Extended sync: guest restore, chat messages, optional Nexerelin state events.
+            CoopMessages.Type.GUEST_SNAPSHOT_RESTORE,
+            CoopMessages.Type.CHAT_MSG,
+            CoopMessages.Type.NEX_EVENT);
 
     // ---- table: CoopNetPump.allowedDuringReconnectGrace(Type) --------------------------------
     // The only vocabulary an unproven peer may speak while a reconnect grace window is open: the
@@ -169,7 +181,8 @@ class CoopMessageTypePolicyTest {
             CoopMessages.Type.RAID_RESULT, CoopMessages.Type.SHIP_LOST,
             CoopMessages.Type.COLONY_FOUNDED, CoopMessages.Type.COLONY_ABANDONED,
             CoopMessages.Type.COLONY_MGMT, CoopMessages.Type.COLONY_INCOME,
-            CoopMessages.Type.EXPEDITION_WARNING, CoopMessages.Type.MISSION_POOL_SNAPSHOT,
+            CoopMessages.Type.EXPEDITION_WARNING, CoopMessages.Type.BOUNTY_SET,
+            CoopMessages.Type.MISSION_POOL_SNAPSHOT,
             CoopMessages.Type.MISSION_CLAIM_REQUEST, CoopMessages.Type.MISSION_CLAIM_ACCEPT,
             CoopMessages.Type.MISSION_CLAIM_REJECT, CoopMessages.Type.REP_DELTA,
             CoopMessages.Type.GUEST_REP_DELTA, CoopMessages.Type.PLAYER_REP_SNAPSHOT,
@@ -192,7 +205,8 @@ class CoopMessageTypePolicyTest {
             CoopMessages.Type.FLEET_SNAPSHOT, CoopMessages.Type.FLEET_ROSTER,
             CoopMessages.Type.GUEST_SNAPSHOT, CoopMessages.Type.SESSION_STATS,
             CoopMessages.Type.STATE_DATAGRAM, CoopMessages.Type.TIME_SNAPSHOT,
-            CoopMessages.Type.PAUSE_INTENT, CoopMessages.Type.OPTIONS_SNAPSHOT,
+            CoopMessages.Type.PAUSE_INTENT, CoopMessages.Type.FF_INTENT,
+            CoopMessages.Type.OPTIONS_SNAPSHOT,
             CoopMessages.Type.OPTIONS_APPLIED,
             // Phase 32 addition B: the sender debited itself before this was queued, so dropping it
             // on the drop edge would destroy the money. Reliable TCP either side of the edge, and
@@ -215,7 +229,12 @@ class CoopMessageTypePolicyTest {
             CoopMessages.Type.ALLY_BATTLE_JOIN, CoopMessages.Type.ALLY_BATTLE_RESULT,
             // Phase 34: a fact about the guest, not the socket, and reliable by the cross-table
             // rule anyway.
-            CoopMessages.Type.WINGMAN_HELLO);
+            CoopMessages.Type.WINGMAN_HELLO,
+            CoopMessages.Type.GUEST_SNAPSHOT_RESTORE,
+            CoopMessages.Type.CONTACT_SET,
+            CoopMessages.Type.STORY_STATE,
+            CoopMessages.Type.CHAT_MSG,
+            CoopMessages.Type.NEX_EVENT);
 
     // ---- table: CoopNetPump.isTerminalRejectType(Type) ---------------------------------------
     // The peer's verdicts on a join, dispatched a few lines early out of the pre-drop drain so

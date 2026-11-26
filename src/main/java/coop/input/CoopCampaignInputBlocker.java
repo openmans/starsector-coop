@@ -13,9 +13,10 @@ public class CoopCampaignInputBlocker implements CampaignInputListener {
     // The engine resolves these via Enum.valueOf on the obfuscated control enum in
     // starfarer_obf.jar. An unknown name throws IllegalArgumentException.
     private static final String GENERAL_PAUSE = "GENERAL_PAUSE";
+    private static final String FAST_FORWARD = "FAST_FORWARD";
     private static final Set<String> LOCKED_CONTROLS = Set.of(
             GENERAL_PAUSE,
-            "FAST_FORWARD");
+            FAST_FORWARD);
 
     // Phase 11 shared pause: instead of unconditionally swallowing GENERAL_PAUSE, a guest pause-key
     // press flips the shared-pause intent here; the host folds it into effectivePaused and the
@@ -79,8 +80,12 @@ public class CoopCampaignInputBlocker implements CampaignInputListener {
             // On the press edge of GENERAL_PAUSE, record a guest pause-key press; the pump forwards it
             // to the host next frame (resolved against the observed pause state). Consume on all edges
             // so vanilla never pauses the guest's clock locally.
-            if (pauseCoordinator != null && matchesControlDown(event, GENERAL_PAUSE)) {
-                pauseCoordinator.recordGuestPauseKeyPress();
+            if (pauseCoordinator != null) {
+                if (matchesControlDown(event, GENERAL_PAUSE)) {
+                    pauseCoordinator.recordGuestPauseKeyPress();
+                } else if (matchesControlDown(event, FAST_FORWARD)) {
+                    pauseCoordinator.recordGuestFastForwardKeyPress();
+                }
             }
             event.consume();
         }

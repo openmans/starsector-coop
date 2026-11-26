@@ -1,85 +1,72 @@
 package coop.time;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /**
- * Phase 11: shared pause coordinator. A small, foundational extension of the Phase 7 time lock that
- * lets either player assert a <b>shared</b> pause so both clocks stop together and never desync.
+ * Shared pause and fast-forward coordinator (Phases 11, 25, 27).
  *
- * <p><b>Authority model.</b> The host is authoritative. It tracks the intents and computes the
- * effective pause as their OR:
- * <pre>effectivePaused = hostPauseIntent || guestKeyPauseIntent || guestScreenPauseIntent || eitherInCombat</pre>
- * The host applies {@code effectivePaused} to its own {@code Sector} clock; the value then rides the
- * existing Phase 7 {@code TIME_SNAPSHOT} to the guest, whose clock always follows the host snapshot.
- * The guest never calls {@code setPaused} locally to drive divergence — it only reports its
- * <i>intent</i> to the host via {@code PAUSE_INTENT} and waits for the host's snapshot.
+ * <p><b>Authority model.</b> The host is authoritative. It tracks pause intents across the host and
+ * every connected guest (Phase 27 multi-guest ready) and computes the effective pause as their OR:
+ * <pre>effectivePaused = hostPauseIntent || (allowGuestPause &amp;&amp; anyGuestKeyPause)
+ *                       || anyGuestScreenPause || eitherInCombat || reconnectHold</pre>
+ * The host applies {@code effectivePaused} to its {@code Sector} clock and {@code effectiveFastForward}
+ * to {@code CampaignState.fastForward}; both ride {@code TIME_SNAPSHOT} to every guest.
  *
- * <p><b>Two guest intents, different override rules (v1 decision).</b> The guest has two distinct
- * pause sources and the host treats them differently:
- * <ul>
- *   <li><b>Key pause</b> ({@code guestKeyPauseIntent}) — the guest tapped the pause key. The host
- *   <i>may</i> override/resume past this (see {@link #onHostPauseKey()}), because it is a casual
- *   manual pause.</li>
- *   <li><b>Screen pause</b> ({@code guestScreenPauseIntent}) — the guest opened a vanilla-blocking
- *   screen (map/fleet/character/refit/cargo/intel/menu/dialog). The host <i>cannot</i> override this:
- *   it exists so the guest can read/plan without the host's world running on. It clears only when the
- *   guest closes the screen.</li>
- * </ul>
- *
- * <p><b>No guest-side sticky key bit (avoids desync).</b> Because the host may force-clear the key
- * pause, the guest does not keep its own copy of it: it sends the key intent on <i>every</i> press
- * (resolved against the observed pause state), so a host override can never leave the two out of
- * sync. The screen intent is a level the guest sends on open/close. The pause KEY is resolved against
- * {@link #observedPaused() observedPaused} so a tap always means "give me the opposite of what I see"
- * rather than a blind toggle — without it the guest could queue a phantom pause while the host already
- * holds the world paused, surfacing when the host later releases.
- *
- * <p>Phase 14 feeds combat-start/-end into {@link #setEitherInCombat(boolean)}; this phase does not
- * wire the combat trigger itself.
- *
- * <p>All methods are synchronized: the guest pause-key press arrives from the campaign input listener
- * while the rest is driven from the campaign pump; the two run on the campaign thread but may
- * interleave around input dispatch.
+ * <p><b>Global control by any player (Phase 25).</b> Both manual pause (when {@code allowGuestPause}
+ * is {@code true}) and fast-forward work the same way: any player pressing Spacebar or Shift toggles
+ * the global state against what they currently observe, with no confirmation wait. Screen pauses,
+ * combat pauses, and reconnect holds remain non-overridable correctness holds.
  */
 public final class CoopSharedPauseCoordinator {
-    // ---- Host authority state (also the guest's view of its own reported intents) ----
+
+    private static final String DEFAULT_GUEST_KEY = "guest";
+
+    // ---- Host authority state ----
     private boolean hostPauseIntent;
-    private boolean guestKeyPauseIntent;     // guest manual pause — host MAY override
-    private boolean guestScreenPauseIntent;  // guest screen-open pause — host may NOT override
+    private boolean allowGuestPause = true;
+    private final Map<String, Boolean> guestKeyPauseIntents = new HashMap<>();
+    private final Map<String, Boolean> guestScreenPauseIntents = new HashMap<>();
+    private final Map<String, Long> appliedGuestSeqs = new HashMap<>();
     private boolean eitherInCombat;
     private boolean reconnectHold;
-    private long appliedGuestSeq = Long.MIN_VALUE;
+
+    // ---- Phase 25: global fast-forward state (any player toggles directly) ----
+    private boolean effectiveFastForward;
+    private boolean observedFastForward;
+    private boolean pendingGuestFfKeyPress;
 
     // ---- Guest local outgoing state ----
-    private boolean guestScreenLevel;        // current local screen-open state (change-detected)
-    private boolean pendingGuestKeyPress;    // a pause key press waiting to be forwarded
+    private boolean guestScreenLevel;
+    private boolean pendingGuestKeyPress;
     private long localSeqCounter;
 
     // ---- Shared: the pause state this client currently observes on its own clock ----
     private boolean observedPaused;
 
-    /* ===================== Host side ===================== */
+    /* ===================== Host side: pause ===================== */
 
-    /**
-     * Record the host's own pause intent. The pump uses this for vanilla <i>auto</i>-pause edges
-     * (combat/messages, which reach the clock without the pause key); the pause key itself routes
-     * through {@link #onHostPauseKey()}.
-     */
+    public synchronized void setAllowGuestPause(boolean allowed) {
+        allowGuestPause = allowed;
+    }
+
+    public synchronized boolean allowGuestPause() {
+        return allowGuestPause;
+    }
+
     public synchronized void setHostPauseIntent(boolean paused) {
         hostPauseIntent = paused;
     }
 
     /**
      * Host pressed the pause key. Resolved against the observed pause state:
-     * <ul>
-     *   <li>running &rarr; assert the host pause;</li>
-     *   <li>paused &rarr; resume: clear the host intent <i>and</i> force-clear the guest's manual
-     *   (key) pause. The guest's screen pause is deliberately left alone, so the host can resume a
-     *   guest's casual pause but cannot interrupt a guest reading a menu.</li>
-     * </ul>
+     * running &rarr; assert host pause; paused &rarr; clear host pause and all guests' manual key
+     * pauses (never clears screen pauses, combat, or reconnect hold).
      */
     public synchronized void onHostPauseKey() {
         if (observedPaused) {
             hostPauseIntent = false;
-            guestKeyPauseIntent = false;
+            guestKeyPauseIntents.clear();
         } else {
             hostPauseIntent = true;
         }
@@ -89,81 +76,104 @@ public final class CoopSharedPauseCoordinator {
         return hostPauseIntent;
     }
 
-    /**
-     * Apply a guest manual (key) pause intent with last-writer-wins debounce: an intent whose
-     * {@code seq} is not strictly greater than the last applied seq is stale and ignored. Returns true
-     * if applied.
-     *
-     * <p><b>Phase 20 M6 latency audit — why this cannot strand the host's clock.</b> The failure this
-     * debounce would produce is "the guest unpaused, the host stayed paused" (or the reverse): an
-     * intent overtaking its successor and the newer one then being discarded as stale. It is
-     * unreachable on this transport. {@code PAUSE_INTENT} travels TCP over the single
-     * {@code activeChannel}, JSON-line framed, and the pump drains that channel in arrival order —
-     * so at 200 ms RTT with 2% loss the loss becomes a retransmit, i.e. <em>delay</em>, and delay
-     * cannot reorder a byte stream. The guest stamps every intent from one monotonic
-     * {@link #nextLocalSeq()} counter shared by both sources, so seqs arrive strictly increasing and
-     * <em>every</em> intent is applied; the debounce never actually discards anything in production.
-     * It is kept as the guard for the one case that can go backwards — a resumed session whose peer is
-     * a fresh process counting from zero, which {@link #resetGuestIntentWatermark()} handles — and for
-     * any future carriage that is not a single ordered stream.
-     *
-     * <p>The two sources sharing one watermark is safe for the same reason: they also share the
-     * sender's counter, so a SCREEN intent can never carry a seq that makes a later KEY intent look
-     * stale.
-     */
+    /** Single-guest compatibility overload. */
     public synchronized boolean applyGuestKeyPauseIntent(boolean paused, long seq) {
-        if (seq <= appliedGuestSeq) {
+        return applyGuestKeyPauseIntent(DEFAULT_GUEST_KEY, paused, seq);
+    }
+
+    /**
+     * Records a guest's manual key pause intent with per-sender last-writer-wins debounce.
+     * Used directly by low-level tests and truth tables without altering {@code hostPauseIntent}.
+     */
+    public synchronized boolean applyGuestKeyPauseIntent(String senderId, boolean paused, long seq) {
+        String key = normalizeSender(senderId);
+        if (seq <= appliedGuestSeqs.getOrDefault(key, Long.MIN_VALUE)) {
             return false;
         }
-        appliedGuestSeq = seq;
-        guestKeyPauseIntent = paused;
+        appliedGuestSeqs.put(key, seq);
+        if (paused) {
+            guestKeyPauseIntents.put(key, Boolean.TRUE);
+        } else {
+            guestKeyPauseIntents.remove(key);
+        }
         return true;
     }
 
-    /** Apply a guest screen-open pause intent with the same last-writer-wins debounce. */
-    public synchronized boolean applyGuestScreenPauseIntent(boolean paused, long seq) {
-        if (seq <= appliedGuestSeq) {
+    /**
+     * Production guest pause-key toggle handler: when {@link #allowGuestPause()} is enabled and a
+     * guest requests unpause ({@code paused == false}), clears both guest manual pauses and
+     * {@code hostPauseIntent} so any player can pause and unpause the shared world equally. Screen
+     * pauses, combat, and reconnect holds are never cleared here.
+     */
+    public synchronized boolean applyGuestKeyPauseToggle(String senderId, boolean paused, long seq) {
+        String key = normalizeSender(senderId);
+        if (seq <= appliedGuestSeqs.getOrDefault(key, Long.MIN_VALUE)) {
             return false;
         }
-        appliedGuestSeq = seq;
-        guestScreenPauseIntent = paused;
+        appliedGuestSeqs.put(key, seq);
+        if (!allowGuestPause) {
+            return true;
+        }
+        if (paused) {
+            guestKeyPauseIntents.put(key, Boolean.TRUE);
+        } else {
+            guestKeyPauseIntents.clear();
+            hostPauseIntent = false;
+        }
         return true;
+    }
+
+    /** Single-guest compatibility overload. */
+    public synchronized boolean applyGuestScreenPauseIntent(boolean paused, long seq) {
+        return applyGuestScreenPauseIntent(DEFAULT_GUEST_KEY, paused, seq);
+    }
+
+    /** Records a guest's screen-open pause intent with per-sender last-writer-wins debounce. */
+    public synchronized boolean applyGuestScreenPauseIntent(String senderId, boolean paused, long seq) {
+        String key = normalizeSender(senderId);
+        if (seq <= appliedGuestSeqs.getOrDefault(key, Long.MIN_VALUE)) {
+            return false;
+        }
+        appliedGuestSeqs.put(key, seq);
+        if (paused) {
+            guestScreenPauseIntents.put(key, Boolean.TRUE);
+        } else {
+            guestScreenPauseIntents.remove(key);
+        }
+        return true;
+    }
+
+    /** Clears all pause intents and seq watermark belonging to one departing guest (Phase 27). */
+    public synchronized void removeGuest(String senderId) {
+        String key = normalizeSender(senderId);
+        guestKeyPauseIntents.remove(key);
+        guestScreenPauseIntents.remove(key);
+        appliedGuestSeqs.remove(key);
     }
 
     public synchronized boolean guestKeyPauseIntent() {
-        return guestKeyPauseIntent;
+        return !guestKeyPauseIntents.isEmpty();
     }
 
     public synchronized boolean guestScreenPauseIntent() {
-        return guestScreenPauseIntent;
+        return !guestScreenPauseIntents.isEmpty();
     }
 
-    /**
-     * Session resume: forget the last applied guest intent seq without touching any pause state.
-     *
-     * <p>Found by the Phase 20 M6 audit. The watermark is a property of the <em>sender's counter</em>,
-     * and a guest that comes back as a fresh process (the supported rejoin: restart, load the
-     * coordinated autosave, resume the same session id) starts that counter at zero again while the
-     * host still holds whatever the old process reached. Every pause intent the returning guest sends
-     * is then silently discarded as stale until it counts back past the old high-water mark — the host
-     * ignoring the guest's pause key and screen opens for the first several presses, with nothing in
-     * the log to say why.
-     *
-     * <p>Safe to do unconditionally at resume: the socket that could have carried an older intent is
-     * gone with the old connection, so there is nothing in flight for the watermark to protect
-     * against. The intents themselves are deliberately left alone — the world's pause state must
-     * survive the outage, only the sequencing does not.
-     */
+    /** Clears all guest seq watermarks (single-guest resume or full reconnect). */
     public synchronized void resetGuestIntentWatermark() {
-        appliedGuestSeq = Long.MIN_VALUE;
+        appliedGuestSeqs.clear();
     }
 
-    /** Host override: force-clear the guest's manual (key) pause only; never the screen pause. */
+    /** Clears one guest's seq watermark on that peer's resume (Phase 27). */
+    public synchronized void resetGuestIntentWatermark(String senderId) {
+        appliedGuestSeqs.remove(normalizeSender(senderId));
+    }
+
+    /** Host override: force-clear all guests' manual (key) pauses; never screen pauses. */
     public synchronized void forceClearGuestKeyPauseIntent() {
-        guestKeyPauseIntent = false;
+        guestKeyPauseIntents.clear();
     }
 
-    /** Phase 14 hook: combat start/end. */
     public synchronized void setEitherInCombat(boolean inCombat) {
         eitherInCombat = inCombat;
     }
@@ -172,53 +182,104 @@ public final class CoopSharedPauseCoordinator {
         return eitherInCombat;
     }
 
-    /**
-     * Phase 20.2: the host holds the world for the whole reconnect grace window. Unlike every other
-     * intent this one is not a player's choice — it is the session refusing to advance past a partner
-     * who is not there to see it — so no pause key clears it and it outranks the rest in the HUD's
-     * holder wording. Cleared when the window closes, whichever way it closes.
-     */
     public synchronized void setReconnectHold(boolean held) {
         reconnectHold = held;
+        if (held) {
+            effectiveFastForward = false;
+        }
     }
 
     public synchronized boolean reconnectHold() {
         return reconnectHold;
     }
 
-    /** The host-authoritative effective pause: the OR of all intents. */
+    /** The host-authoritative effective pause: the OR of all active intents. */
     public synchronized boolean effectivePaused() {
-        return hostPauseIntent || guestKeyPauseIntent || guestScreenPauseIntent || eitherInCombat
+        return hostPauseIntent
+                || (allowGuestPause && !guestKeyPauseIntents.isEmpty())
+                || !guestScreenPauseIntents.isEmpty()
+                || eitherInCombat
                 || reconnectHold;
     }
 
-    /* ===================== Guest side ===================== */
+    /* ===================== Phase 25: global fast-forward ===================== */
 
     /**
-     * Guest pressed the pause key. Records a pending press; the pump forwards it next frame as the
-     * opposite of the observed pause state. Not stored as a sticky intent so a host force-clear can
-     * never desync the two.
+     * Host pressed the fast-forward key: immediately toggles global fast-forward against what the
+     * host currently observes.
      */
+    public synchronized void onHostFastForwardKey() {
+        effectiveFastForward = !observedFastForward;
+    }
+
+    /** Single-guest compatibility overload. */
+    public synchronized boolean applyGuestFastForwardIntent(boolean fastForward, long seq) {
+        return applyGuestFastForwardIntent(DEFAULT_GUEST_KEY, fastForward, seq);
+    }
+
+    /**
+     * Guest pressed the fast-forward key: immediately applies the requested global fast-forward
+     * state with per-sender last-writer-wins debounce (shares the monotonic per-guest seq counter).
+     */
+    public synchronized boolean applyGuestFastForwardIntent(String senderId, boolean fastForward, long seq) {
+        String key = normalizeSender(senderId);
+        if (seq <= appliedGuestSeqs.getOrDefault(key, Long.MIN_VALUE)) {
+            return false;
+        }
+        appliedGuestSeqs.put(key, seq);
+        effectiveFastForward = fastForward;
+        return true;
+    }
+
+    public synchronized void setEffectiveFastForward(boolean fastForward) {
+        effectiveFastForward = fastForward;
+    }
+
+    public synchronized boolean effectiveFastForward() {
+        return effectiveFastForward;
+    }
+
+    public synchronized void setObservedFastForward(boolean fastForward) {
+        observedFastForward = fastForward;
+    }
+
+    public synchronized boolean observedFastForward() {
+        return observedFastForward;
+    }
+
+    /** Guest pressed Shift (FAST_FORWARD): record edge to be forwarded as {@code FF_INTENT}. */
+    public synchronized void recordGuestFastForwardKeyPress() {
+        pendingGuestFfKeyPress = true;
+    }
+
+    /** Pump: consume a pending guest fast-forward key press (true once per press). */
+    public synchronized boolean consumeGuestFastForwardKeyPress() {
+        boolean pending = pendingGuestFfKeyPress;
+        pendingGuestFfKeyPress = false;
+        return pending;
+    }
+
+    /** The fast-forward value to send for a Shift press: the opposite of what the guest observes. */
+    public synchronized boolean desiredFastForward() {
+        return !observedFastForward;
+    }
+
+    /* ===================== Guest side: pause ===================== */
+
     public synchronized void recordGuestPauseKeyPress() {
         pendingGuestKeyPress = true;
     }
 
-    /** Pump: consume a pending guest pause-key press (true once per press). */
     public synchronized boolean consumeGuestKeyPress() {
         boolean pending = pendingGuestKeyPress;
         pendingGuestKeyPress = false;
         return pending;
     }
 
-    /** The manual pause value to send for a key press: the opposite of what the guest observes. */
     public synchronized boolean desiredKeyPause() {
         return !observedPaused;
     }
 
-    /**
-     * Guest: update the local screen-open level. Returns true if it changed (and therefore needs to be
-     * forwarded to the host).
-     */
     public synchronized boolean updateGuestScreenLevel(boolean open) {
         if (open == guestScreenLevel) {
             return false;
@@ -231,7 +292,6 @@ public final class CoopSharedPauseCoordinator {
         return guestScreenLevel;
     }
 
-    /** Record the pause state this client currently observes on its own clock. */
     public synchronized void setObservedPaused(boolean paused) {
         observedPaused = paused;
     }
@@ -240,7 +300,6 @@ public final class CoopSharedPauseCoordinator {
         return observedPaused;
     }
 
-    /** Next monotonic seq for an outgoing {@code PAUSE_INTENT} (last-writer-wins on the host). */
     public synchronized long nextLocalSeq() {
         return ++localSeqCounter;
     }
@@ -248,14 +307,22 @@ public final class CoopSharedPauseCoordinator {
     /** Clear all transient intent state on session end so nothing leaks across sessions. */
     public synchronized void reset() {
         hostPauseIntent = false;
-        guestKeyPauseIntent = false;
-        guestScreenPauseIntent = false;
+        allowGuestPause = true;
+        guestKeyPauseIntents.clear();
+        guestScreenPauseIntents.clear();
+        appliedGuestSeqs.clear();
         eitherInCombat = false;
         reconnectHold = false;
-        appliedGuestSeq = Long.MIN_VALUE;
+        effectiveFastForward = false;
+        observedFastForward = false;
+        pendingGuestFfKeyPress = false;
         guestScreenLevel = false;
         pendingGuestKeyPress = false;
         localSeqCounter = 0L;
         observedPaused = false;
+    }
+
+    private static String normalizeSender(String senderId) {
+        return (senderId == null || senderId.isBlank()) ? DEFAULT_GUEST_KEY : senderId;
     }
 }

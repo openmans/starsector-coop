@@ -27,7 +27,7 @@ public final class CoopUpdateCheck {
 
     /** The release the launcher is built from. */
     public static final String RELEASES_URL =
-            "https://api.github.com/repos/AyoKeito/starsector-coop/releases/latest";
+            "https://api.github.com/repos/openmans/starsector-coop/releases/latest";
 
     private static final int TIMEOUT_MILLIS = 5000;
 

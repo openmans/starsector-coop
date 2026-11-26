@@ -82,7 +82,7 @@ class CoopWreckCodecTest {
             CoopWreckRecord.Recovery captured = CoopWreckCodec.captureRecovery(original);
             CoopWreckRecord encoded = specialRecord(captured);
             CoopWreckRecord decoded = CoopWreckRecord.decode(encoded.encode());
-            assertEquals(captured, decoded.recovery(), original.getClass().getSimpleName());
+            assertEquals(captured, decoded.recovery(), original.getClass().getName());
             assertEquals(captured, decoded.previousRecovery());
             assertEquals(captured, CoopWreckCodec.captureRecovery(CoopWreckCodec.buildSpecial(decoded.recovery())));
         }

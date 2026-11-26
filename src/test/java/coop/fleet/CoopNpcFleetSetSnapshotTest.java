@@ -199,6 +199,20 @@ class CoopNpcFleetSetSnapshotTest {
     }
 
     @Test
+    void s4c_emptyUnmirroredFleetDoesNotFlipNearHash() {
+        CoopNpcFleetSnapshot live = fleet("f1", "hegemony", "corvus", "lasher");
+        CoopNpcFleetSnapshot emptyNew = CoopNpcFleetSnapshot.create("f-ephemeral", "pirates", "Empty",
+                "corvus", 1f, 2f, 0f, 0f, true, sensors(100f, 50f), "", List.of());
+
+        String base = CoopNpcFleetSetSnapshot.computeNearHash(List.of(live), CORVUS, Set.of("f1"));
+        assertEquals(base, CoopNpcFleetSetSnapshot.computeNearHash(List.of(live, emptyNew), CORVUS, Set.of("f1")),
+                "an already-empty fleet the guest never mirrored must not trigger a structural send");
+        assertNotEquals(base, CoopNpcFleetSetSnapshot.computeNearHash(List.of(live, emptyNew), CORVUS,
+                        Set.of("f1", "f-ephemeral")),
+                "an empty fleet the guest DID mirror still triggers immediately so the mirror cleans up");
+    }
+
+    @Test
     void twoObserversInDifferentSystemsBothCount() {
         // Host in Corvus, guest in Magec: a structural change in either is immediate, one in a third
         // system is not.
