@@ -576,7 +576,7 @@ namespace StarsectorCoopBootstrap
             }
         }
 
-        private static int ExtractModZip(string zipPath, string modRoot, string leadingPrefix)
+        internal static int ExtractModZip(string zipPath, string modRoot, string leadingPrefix)
         {
             Directory.CreateDirectory(modRoot);
             string normRoot = Path.GetFullPath(modRoot).TrimEnd('\\') + "\\";
@@ -778,6 +778,7 @@ namespace StarsectorCoopBootstrap
         private readonly Button browseButton;
         private readonly Button langButton;
         private readonly CheckBox wingmanBox;
+        private readonly CheckBox russianBox;
         private readonly Label statusLabel;
         private readonly ProgressBar progressBar;
         private readonly Button installButton;
@@ -791,9 +792,9 @@ namespace StarsectorCoopBootstrap
         public InstallerForm(string initialInstallRoot, bool autoStart, bool initialWingman)
         {
             this.autoStart = autoStart;
-            this.russian = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName.Equals("ru", StringComparison.OrdinalIgnoreCase);
+            this.russian = true;
             Text = "Starsector Coop Launcher";
-            ClientSize = new Size(580, 308);
+            ClientSize = new Size(580, 336);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
@@ -853,16 +854,25 @@ namespace StarsectorCoopBootstrap
                 Checked = initialWingman
             };
 
+            russianBox = new CheckBox
+            {
+                ForeColor = TextColor,
+                BackColor = BgColor,
+                Location = new Point(24, 170),
+                Size = new Size(532, 24),
+                Checked = false
+            };
+
             statusLabel = new Label
             {
                 ForeColor = initialInstallRoot != null ? OkColor : WarnColor,
-                Location = new Point(24, 174),
+                Location = new Point(24, 200),
                 Size = new Size(532, 34)
             };
 
             progressBar = new ProgressBar
             {
-                Location = new Point(24, 212),
+                Location = new Point(24, 238),
                 Size = new Size(532, 14),
                 Minimum = 0,
                 Maximum = 100,
@@ -871,7 +881,7 @@ namespace StarsectorCoopBootstrap
 
             var footer = new Panel
             {
-                Location = new Point(0, 244),
+                Location = new Point(0, 272),
                 Size = new Size(580, 64),
                 BackColor = CardColor
             };
@@ -895,6 +905,7 @@ namespace StarsectorCoopBootstrap
             Controls.Add(pathBox);
             Controls.Add(browseButton);
             Controls.Add(wingmanBox);
+            Controls.Add(russianBox);
             Controls.Add(statusLabel);
             Controls.Add(progressBar);
             Controls.Add(footer);
@@ -925,6 +936,9 @@ namespace StarsectorCoopBootstrap
             wingmanBox.Text = Tr(
                 "Also install The Wingman Project (optional: manual co-op piloting)",
                 "Также установить The Wingman Project (опционально: ручное пилотирование)");
+            russianBox.Text = Tr(
+                "Also install Starsector Russian translation (local .zip)",
+                "Также установить русификатор Starsector (локальный .zip)");
             launchOnlyButton.Text = Tr("Launch installed", "Запустить лаунчер");
             if (!busy)
             {
@@ -996,6 +1010,7 @@ namespace StarsectorCoopBootstrap
             bool ready = valid && Program.IsModReady(root);
             browseButton.Enabled = !busy;
             wingmanBox.Enabled = !busy;
+            russianBox.Enabled = !busy;
             langButton.Enabled = !busy;
             installButton.Enabled = !busy;
             installButton.Text = valid
@@ -1056,24 +1071,47 @@ namespace StarsectorCoopBootstrap
                 }
             }
 
+            string localRuZip = null;
+            if (russianBox.Checked)
+            {
+                using (var dlg = new OpenFileDialog())
+                {
+                    dlg.Title = Tr("Select Russian translation .zip archive", "Выберите .zip архив русификатора Starsector");
+                    dlg.Filter = "ZIP (*.zip)|*.zip";
+                    dlg.CheckFileExists = true;
+                    if (dlg.ShowDialog(this) == DialogResult.OK)
+                    {
+                        localRuZip = dlg.FileName;
+                    }
+                }
+            }
+
             busy = true;
             UpdateButtons();
             progressBar.Value = 0;
             statusLabel.ForeColor = TextColor;
-            statusLabel.Text = "Starting installation...";
+            statusLabel.Text = Tr("Starting installation...", "Начинаем установку...");
 
             bool includeWingman = wingmanBox.Checked;
             try
             {
-                string version = await Task.Run(() => Program.InstallAndConfigure(root, includeWingman, (msg, pct) =>
+                string version = await Task.Run(() =>
                 {
-                    if (IsDisposed) return;
-                    BeginInvoke((Action)(() =>
+                    string v = Program.InstallAndConfigure(root, includeWingman, (msg, pct) =>
                     {
-                        statusLabel.Text = msg;
-                        if (pct >= 0 && pct <= 100) progressBar.Value = pct;
-                    }));
-                }));
+                        if (IsDisposed) return;
+                        BeginInvoke((Action)(() =>
+                        {
+                            statusLabel.Text = msg;
+                            if (pct >= 0 && pct <= 100) progressBar.Value = pct;
+                        }));
+                    });
+                    if (!string.IsNullOrEmpty(localRuZip) && File.Exists(localRuZip))
+                    {
+                        Program.ExtractModZip(localRuZip, Path.Combine(root, "starsector-core"), "starsector-core");
+                    }
+                    return v;
+                });
 
                 statusLabel.ForeColor = OkColor;
                 statusLabel.Text = "Installed v" + version + "! Starting Coop Launcher...";

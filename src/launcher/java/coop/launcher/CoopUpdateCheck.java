@@ -190,6 +190,84 @@ public final class CoopUpdateCheck {
         return null;
     }
 
+    /** Optional HTTPS override for a Russian translation zip asset. */
+    public static final String RUSSIAN_URL_PROPERTY = "coop.ruUrl";
+
+    /**
+     * Resolves an optional Russian translation archive ({@code *ru*.zip} / {@code *rus*.zip}) from
+     * {@code -Dcoop.ruUrl} or attached to the {@code openmans/starsector-coop} GitHub release.
+     * Returns {@code null} when no remote russifier asset is published.
+     */
+    public static ReleaseAsset resolveLatestRussianAsset(String currentVersion) {
+        return resolveLatestRussianAsset(currentVersion, CoopUpdateCheck::fetch);
+    }
+
+    static ReleaseAsset resolveLatestRussianAsset(String currentVersion, Fetcher fetcher) {
+        String override = System.getProperty(RUSSIAN_URL_PROPERTY, "").trim();
+        if (!override.isEmpty()) {
+            String name = override.substring(override.lastIndexOf('/') + 1);
+            if (name.isEmpty()) {
+                name = "starsector-ru.zip";
+            }
+            return new ReleaseAsset("custom", RELEASES_PAGE_URL, override, name);
+        }
+        String agent = userAgent(currentVersion);
+        try {
+            Response latest = fetcher.get(RELEASES_URL, agent);
+            if (latest != null && latest.status() == 200) {
+                ReleaseAsset asset = extractRussianAsset(new JSONObject(latest.body()));
+                if (asset != null) {
+                    return asset;
+                }
+            }
+            Response list = fetcher.get(RELEASES_LIST_URL, agent);
+            if (list != null && list.status() == 200) {
+                JSONArray array = new JSONArray(list.body());
+                for (int i = 0; i < array.length(); i++) {
+                    JSONObject rel = array.optJSONObject(i);
+                    if (rel == null || rel.optBoolean("draft", false)) {
+                        continue;
+                    }
+                    ReleaseAsset asset = extractRussianAsset(rel);
+                    if (asset != null) {
+                        return asset;
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    static ReleaseAsset extractRussianAsset(JSONObject release) {
+        if (release == null) {
+            return null;
+        }
+        String version = normalise(release.optString("tag_name", ""));
+        String pageUrl = release.optString("html_url", RELEASES_PAGE_URL);
+        JSONArray assets = release.optJSONArray("assets");
+        if (assets == null) {
+            return null;
+        }
+        for (int i = 0; i < assets.length(); i++) {
+            JSONObject item = assets.optJSONObject(i);
+            if (item == null) {
+                continue;
+            }
+            String name = item.optString("name", "").trim();
+            String lower = name.toLowerCase(Locale.ROOT);
+            String downloadUrl = item.optString("browser_download_url", "").trim();
+            if (downloadUrl.isEmpty() || !lower.endsWith(".zip") || lower.startsWith("coop-")) {
+                continue;
+            }
+            if (lower.contains("rus") || lower.contains("-ru") || lower.contains("_ru")
+                    || lower.startsWith("ru-") || lower.startsWith("ru_")) {
+                return new ReleaseAsset(version.isEmpty() ? "ru" : version, pageUrl, downloadUrl, name);
+            }
+        }
+        return null;
+    }
+
     /**
      * Resolves the newest downloadable {@code Wingman-*.zip} archive (excluding the separate
      * {@code WingmanPvP-*.zip} addon) from {@code NEOysod/TheWingmanProject}.

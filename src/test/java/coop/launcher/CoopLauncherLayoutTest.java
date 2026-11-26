@@ -70,6 +70,7 @@ class CoopLauncherLayoutTest {
             assertNotNull(find(frame, "reinstallButton"), "Reinstall button must be visible");
             assertNotNull(find(frame, "launchButton"), "Launch button must be visible");
             assertNotNull(find(frame, "installWingmanBox"), "Optional Wingman checkbox must be present");
+            assertNotNull(find(frame, "installRussianBox"), "Optional Russian translation checkbox must be present");
             assertNull(find(frame, "hostSegment"), "Host tab must not clutter the minimal external launcher");
             assertNull(find(frame, "guestSegment"), "Join tab must not clutter the minimal external launcher");
 
@@ -154,6 +155,16 @@ class CoopLauncherLayoutTest {
                     "0.2.5", false);
             assertTrue(field("updateActionButton", JButton.class).isEnabled(),
                     "Update must re-enable when a newer version is available");
+
+            // Back to up-to-date, ticking Russian translation checkbox activates Install
+            app.applyUpdateOutcome(
+                    new CoopUpdateCheck.Outcome(CoopUpdateCheck.Kind.UP_TO_DATE, "0.2.5",
+                            "https://github.com/openmans/starsector-coop/releases/tag/v0.2.5", ""),
+                    "0.2.5", false);
+            assertFalse(field("updateActionButton", JButton.class).isEnabled());
+            field("installRussianBox", JCheckBox.class).doClick();
+            assertTrue(field("updateActionButton", JButton.class).isEnabled(),
+                    "Ticking Russian translation must enable the Install button");
         });
     }
 

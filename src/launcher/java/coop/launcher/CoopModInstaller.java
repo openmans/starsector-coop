@@ -99,15 +99,21 @@ public final class CoopModInstaller {
     }
 
     /**
-     * Full one-click install/update against GitHub, optionally also downloading and enabling
-     * The Wingman Project ({@code mods/Wingman}, {@code "wingman_project"}) for manual co-op
-     * battle piloting.
+     * Full one-click install/update against GitHub, optionally also installing The Wingman Project
+     * and/or a Starsector Russian translation archive (from GitHub release or local {@code .zip}).
      */
     public static InstallResult installLatest(CoopInstallLayout layout, String currentVersion,
                                               boolean includeWingman, ProgressListener progress) {
-        return installLatest(layout, currentVersion, includeWingman,
+        return installLatest(layout, currentVersion, includeWingman, false, null, progress);
+    }
+
+    public static InstallResult installLatest(CoopInstallLayout layout, String currentVersion,
+                                              boolean includeWingman, boolean includeRussian,
+                                              Path localRussianZip, ProgressListener progress) {
+        return installLatest(layout, currentVersion, includeWingman, includeRussian, localRussianZip,
                 CoopUpdateCheck::resolveLatestAsset,
                 CoopUpdateCheck::resolveLatestWingmanAsset,
+                CoopUpdateCheck::resolveLatestRussianAsset,
                 CoopModInstaller::downloadHttps, progress);
     }
 
@@ -116,16 +122,35 @@ public final class CoopModInstaller {
         CoopUpdateCheck.ReleaseAsset resolve(String currentVersion) throws IOException;
     }
 
+    @FunctionalInterface
+    interface OptionalAssetResolver {
+        CoopUpdateCheck.ReleaseAsset resolve(String currentVersion);
+    }
+
     static InstallResult installLatest(CoopInstallLayout layout, String currentVersion,
                                        AssetResolver resolver, Downloader downloader,
                                        ProgressListener progress) {
-        return installLatest(layout, currentVersion, false, resolver, null, downloader, progress);
+        return installLatest(layout, currentVersion, false, false, null,
+                resolver, null, null, downloader, progress);
     }
 
     static InstallResult installLatest(CoopInstallLayout layout, String currentVersion,
                                        boolean includeWingman,
                                        AssetResolver coopResolver,
                                        AssetResolver wingmanResolver,
+                                       Downloader downloader,
+                                       ProgressListener progress) {
+        return installLatest(layout, currentVersion, includeWingman, false, null,
+                coopResolver, wingmanResolver, null, downloader, progress);
+    }
+
+    static InstallResult installLatest(CoopInstallLayout layout, String currentVersion,
+                                       boolean includeWingman,
+                                       boolean includeRussian,
+                                       Path localRussianZip,
+                                       AssetResolver coopResolver,
+                                       AssetResolver wingmanResolver,
+                                       OptionalAssetResolver russianResolver,
                                        Downloader downloader,
                                        ProgressListener progress) {
         Objects.requireNonNull(layout, "layout");
@@ -208,8 +233,43 @@ public final class CoopModInstaller {
                 }
             }
 
+            String russianSuffix = "";
+            if (includeRussian) {
+                Path ruZip = localRussianZip;
+                boolean deleteRuTemp = false;
+                if (ruZip == null && russianResolver != null) {
+                    listener.onProgress("Checking Russian translation on GitHub...", -1);
+                    CoopUpdateCheck.ReleaseAsset ruAsset = russianResolver.resolve(currentVersion);
+                    if (ruAsset != null) {
+                        details.add("Found Russian translation (" + ruAsset.assetName() + ").");
+                        ruZip = Files.createTempFile("starsector-ru-", ".zip");
+                        deleteRuTemp = true;
+                        listener.onProgress("Downloading " + ruAsset.assetName() + "...", 0);
+                        downloader.download(ruAsset.zipUrl(), agent, ruZip, listener);
+                        details.add("Downloaded " + ruAsset.assetName() + " (" + Files.size(ruZip) + " bytes).");
+                    } else {
+                        details.add("No *ru*.zip asset attached to GitHub release (skipped Russian translation).");
+                    }
+                }
+                if (ruZip != null && Files.isRegularFile(ruZip)) {
+                    try {
+                        listener.onProgress("Installing Russian translation...", -1);
+                        int ruFiles = installRussianArchive(ruZip, layout, details);
+                        totalFiles += ruFiles;
+                        russianSuffix = " + RU";
+                    } finally {
+                        if (deleteRuTemp) {
+                            try {
+                                Files.deleteIfExists(ruZip);
+                            } catch (IOException ignored) {
+                            }
+                        }
+                    }
+                }
+            }
+
             listener.onProgress("Installed v" + asset.version(), 100);
-            String summary = "Installed Starsector Coop v" + asset.version() + wingmanSuffix
+            String summary = "Installed Starsector Coop v" + asset.version() + wingmanSuffix + russianSuffix
                     + " (" + totalFiles + " files)"
                     + (extracted.pendingFiles().isEmpty()
                     ? "."
@@ -231,6 +291,99 @@ public final class CoopModInstaller {
                 try {
                     Files.deleteIfExists(tempZip);
                 } catch (IOException ignored) {
+                }
+            }
+        }
+    }
+
+    /**
+     * Installs a Starsector Russian translation archive, auto-detecting its layout:
+     * <ul>
+     *   <li><b>Mod format</b> (contains {@code mod_info.json}): extracts into {@code mods/<folder>}
+     *       and enables its mod id in {@code enabled_mods.json}.</li>
+     *   <li><b>Core overlay format</b> (contains {@code starsector-core/} or {@code data/strings/}):
+     *       creates a one-time backup of {@code starsector-core/data/strings} and unpacks over
+     *       {@code starsector-core}.</li>
+     * </ul>
+     */
+    static int installRussianArchive(Path zipPath, CoopInstallLayout layout, List<String> details)
+            throws IOException {
+        String modInfoEntry = null;
+        boolean hasCorePrefix = false;
+        try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(Files.newInputStream(zipPath)))) {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                String norm = entry.getName().replace('\\', '/');
+                while (norm.startsWith("/")) norm = norm.substring(1);
+                String lower = norm.toLowerCase(Locale.ROOT);
+                if (lower.equals("mod_info.json") || lower.endsWith("/mod_info.json")) {
+                    if (modInfoEntry == null || norm.length() < modInfoEntry.length()) {
+                        modInfoEntry = norm;
+                    }
+                }
+                if (lower.startsWith("starsector-core/")) {
+                    hasCorePrefix = true;
+                }
+                zis.closeEntry();
+            }
+        }
+
+        if (modInfoEntry != null) {
+            int slash = modInfoEntry.lastIndexOf('/');
+            String prefix = slash > 0 ? modInfoEntry.substring(0, slash) : "";
+            String folderName = prefix.isEmpty() ? "starsector_ru"
+                    : prefix.contains("/") ? prefix.substring(prefix.lastIndexOf('/') + 1) : prefix;
+            Path targetModDir = layout.installRoot().toPath().resolve("mods").resolve(folderName);
+            ExtractOutcome out = extractArchive(zipPath, targetModDir, prefix);
+            details.add("Extracted Russian translation mod (" + out.filesExtracted() + " files) to "
+                    + targetModDir + ".");
+            String modId = readModId(targetModDir.resolve("mod_info.json"));
+            if (!modId.isEmpty()) {
+                CoopInstallFixer.Result enable = CoopInstallFixer.applyEnabledMod(layout, modId);
+                details.add(enable.message());
+            }
+            return out.filesExtracted();
+        }
+
+        // Core overlay format (replaces starsector-core/data/* & graphics/fonts/*)
+        Path coreRoot = layout.starsectorCore().toPath();
+        Path stringsDir = coreRoot.resolve("data").resolve("strings");
+        Path backupDir = coreRoot.resolve("data").resolve("strings.en-backup");
+        if (Files.isDirectory(stringsDir) && !Files.exists(backupDir)) {
+            copyDirectory(stringsDir, backupDir);
+            details.add("Backed up original strings to " + backupDir + ".");
+        }
+        ExtractOutcome out = extractArchive(zipPath, coreRoot, hasCorePrefix ? "starsector-core" : "");
+        details.add("Extracted Russian translation overlay (" + out.filesExtracted() + " files) into "
+                + coreRoot + ".");
+        return out.filesExtracted();
+    }
+
+    private static String readModId(Path modInfoPath) {
+        try {
+            if (!Files.isRegularFile(modInfoPath)) {
+                return "";
+            }
+            String raw = Files.readString(modInfoPath, java.nio.charset.StandardCharsets.UTF_8);
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("\"id\"\\s*:\\s*\"([^\"]+)\"").matcher(raw);
+            return m.find() ? m.group(1).trim() : "";
+        } catch (IOException | RuntimeException ex) {
+            return "";
+        }
+    }
+
+    private static void copyDirectory(Path src, Path dst) throws IOException {
+        try (java.util.stream.Stream<Path> walk = Files.walk(src)) {
+            for (Path p : walk.toList()) {
+                Path target = dst.resolve(src.relativize(p));
+                if (Files.isDirectory(p)) {
+                    Files.createDirectories(target);
+                } else {
+                    if (target.getParent() != null) {
+                        Files.createDirectories(target.getParent());
+                    }
+                    Files.copy(p, target, StandardCopyOption.REPLACE_EXISTING);
                 }
             }
         }

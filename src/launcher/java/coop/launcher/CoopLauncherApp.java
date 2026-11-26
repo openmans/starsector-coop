@@ -159,6 +159,7 @@ public final class CoopLauncherApp {
     private JTextField installPathField;
     private JTextArea installModeSummary;
     private JCheckBox installWingmanBox;
+    private JCheckBox installRussianBox;
     private JButton installModeFixButton;
     private JButton installModeCheckButton;
     private javax.swing.JProgressBar installProgressBar;
@@ -654,6 +655,16 @@ public final class CoopLauncherApp {
                 + " enabled_mods.json. Optional — tactical map co-op battles work without it.");
         installWingmanBox.addActionListener(event -> updateLaunchGate());
         form.raw(installWingmanBox);
+
+        installRussianBox = new JCheckBox("Also install Starsector Russian translation (GitHub release or local .zip)");
+        installRussianBox.setName("installRussianBox");
+        installRussianBox.setOpaque(false);
+        installRussianBox.setForeground(CoopTheme.TEXT);
+        installRussianBox.setToolTipText("Installs a Russian translation archive from the GitHub release"
+                + " (*ru*.zip) or lets you select a local .zip archive (supports both mod format and"
+                + " starsector-core overlay with backup).");
+        installRussianBox.addActionListener(event -> updateLaunchGate());
+        form.raw(installRussianBox);
 
         installModeFixButton = CoopTheme.secondary("Fix vmparams & mods");
         installModeFixButton.addActionListener(event -> applyInstallFix(
@@ -1687,7 +1698,8 @@ public final class CoopLauncherApp {
         boolean blocked = layout != null && CoopInstallCheck.blocked(installRows);
         boolean wantsNewWingman = layout != null && installWingmanBox != null
                 && installWingmanBox.isSelected() && !layout.isWingmanInstalled();
-        boolean updateNeeded = !modPresent || updateAvailable || wantsNewWingman;
+        boolean wantsRussian = layout != null && installRussianBox != null && installRussianBox.isSelected();
+        boolean updateNeeded = !modPresent || updateAvailable || wantsNewWingman || wantsRussian;
 
         if (openFolderButton != null) {
             openFolderButton.setEnabled(layout != null);
@@ -1703,7 +1715,7 @@ public final class CoopLauncherApp {
             updateActionButton.setEnabled(layout != null && !installing && !gameRunning && updateNeeded);
             CoopIcons.apply(updateActionButton, installing ? CoopIcons.Symbol.BUSY : CoopIcons.Symbol.CHECK);
             updateActionButton.setText(installing ? t("Installing...")
-                    : (!modPresent || wantsNewWingman) && !updateAvailable ? t("Install") : t("Update"));
+                    : (!modPresent || wantsNewWingman || wantsRussian) && !updateAvailable ? t("Install") : t("Update"));
             updateActionButton.setToolTipText(updateNeeded
                     ? tr("Download and install the latest release from GitHub.",
                             "Скачать и установить актуальную версию с GitHub.")
@@ -3266,9 +3278,31 @@ public final class CoopLauncherApp {
         CoopInstallLayout targetLayout = layout;
         String current = effectiveVersion();
         boolean includeWingman = installWingmanBox != null && installWingmanBox.isSelected();
+        boolean includeRussian = installRussianBox != null && installRussianBox.isSelected();
+        java.nio.file.Path localRussianZip = null;
+        if (includeRussian && CoopUpdateCheck.resolveLatestRussianAsset(current) == null) {
+            javax.swing.JFileChooser chooser = new javax.swing.JFileChooser(
+                    targetLayout.installRoot());
+            chooser.setDialogTitle(tr("Select Russian translation .zip archive",
+                    "Выберите .zip архив русификатора Starsector"));
+            chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
+                    tr("ZIP archives (*.zip)", "ZIP-архивы (*.zip)"), "zip"));
+            int chosen = chooser.showOpenDialog(frame);
+            if (chosen == javax.swing.JFileChooser.APPROVE_OPTION && chooser.getSelectedFile() != null) {
+                localRussianZip = chooser.getSelectedFile().toPath();
+            } else {
+                includeRussian = false;
+                append(tr("Russian translation skipped (no .zip selected).",
+                        "Установка русификатора пропущена (архив .zip не выбран)."));
+            }
+        }
+        final boolean installRussianFinal = includeRussian;
+        final java.nio.file.Path localRuPathFinal = localRussianZip;
         LOG.info("One-click GitHub install requested for " + targetLayout
-                + (includeWingman ? " (+ Wingman)" : ""));
+                + (includeWingman ? " (+ Wingman)" : "")
+                + (installRussianFinal ? " (+ RU)" : ""));
         append("Installing latest Starsector Coop" + (includeWingman ? " + The Wingman Project" : "")
+                + (installRussianFinal ? " + Russian translation" : "")
                 + " from GitHub into " + targetLayout.modRoot() + "...");
         setDrawerVisible(true);
         SwingUtilities.invokeLater(() -> {
@@ -3292,7 +3326,8 @@ public final class CoopLauncherApp {
         Thread worker = new Thread(() -> {
             CoopModInstaller.InstallResult result;
             try {
-                result = CoopModInstaller.installLatest(targetLayout, current, includeWingman, (stage, percent) ->
+                result = CoopModInstaller.installLatest(targetLayout, current, includeWingman,
+                        installRussianFinal, localRuPathFinal, (stage, percent) ->
                         SwingUtilities.invokeLater(() -> {
                             if (updateChip != null) {
                                 updateChip.setText(percent >= 0

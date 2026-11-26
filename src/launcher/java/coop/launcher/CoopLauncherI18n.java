@@ -88,6 +88,8 @@ final class CoopLauncherI18n {
                 "Также установить The Wingman Project (опционально: ручное пилотирование)");
         put("Also update The Wingman Project (installed — optional manual co-op piloting)",
                 "Также обновить The Wingman Project (установлен — ручное пилотирование)");
+        put("Also install Starsector Russian translation (GitHub release or local .zip)",
+                "Также установить русификатор Starsector (с GitHub-релиза или локальный .zip)");
         put("Fix vmparams & mods", "Починить vmparams и моды");
         put("Check GitHub", "Проверить GitHub");
         put("All checks", "Все проверки");
@@ -245,7 +247,7 @@ final class CoopLauncherI18n {
         EN_TO_RU.put(en, ru);
     }
 
-    /** Detects saved preference, falling back to OS locale (RU on Russian Windows, EN otherwise). */
+    /** Detects saved preference, defaulting to Russian (RU) unless EN was explicitly chosen. */
     static Lang loadPreferred() {
         try {
             String saved = Preferences.userNodeForPackage(CoopLauncherI18n.class).get(PREF_KEY, "");
@@ -253,7 +255,7 @@ final class CoopLauncherI18n {
             if ("en".equalsIgnoreCase(saved)) return Lang.EN;
         } catch (RuntimeException ignored) {
         }
-        return "ru".equalsIgnoreCase(Locale.getDefault().getLanguage()) ? Lang.RU : Lang.EN;
+        return Lang.RU;
     }
 
     static void savePreferred(Lang lang) {

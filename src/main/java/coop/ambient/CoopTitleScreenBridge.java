@@ -285,7 +285,7 @@ public final class CoopTitleScreenBridge {
         }
     }
 
-    /** Loads the shared RU/EN preference (synchronized with the desktop launcher). */
+    /** Loads the shared RU/EN preference (defaults to Russian unless EN was explicitly saved). */
     public static boolean loadPreferRussian() {
         try {
             Preferences prefs = Preferences.userRoot().node(PREF_NODE);
@@ -297,9 +297,8 @@ public final class CoopTitleScreenBridge {
                 return false;
             }
         } catch (Throwable ignored) {
-            // Fall through to OS locale.
         }
-        return "ru".equalsIgnoreCase(Locale.getDefault().getLanguage());
+        return true;
     }
 
     /** Persists the shared RU/EN preference so both in-game UI and desktop launcher stay in sync. */
