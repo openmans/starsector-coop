@@ -65,6 +65,9 @@ public class CoopOptionsPage extends BaseIntelPlugin {
     /** Button id for "hand the typed amount to the partner" (Phase 32 addition B). */
     public static final Object BUTTON_SEND_CREDITS = new Object();
 
+    /** Button id for live RU / EN UI language switching inside Intel -> Coop Options. */
+    public static final Object BUTTON_TOGGLE_LANG = new Object();
+
     /** Heading of the credit-transfer block. */
     static final String CREDITS_HEADING = "Send credits";
 
@@ -436,6 +439,8 @@ public class CoopOptionsPage extends BaseIntelPlugin {
         Color warn = Misc.getNegativeHighlightColor();
         float buttonWidth = Math.max(120f, Math.min(width * 0.45f, 260f));
 
+        addButton(info, CoopUiLang.toggleButtonLabel(), BUTTON_TOGGLE_LANG, Math.max(buttonWidth, 260f));
+
         for (CoopOptionsView.Section section : view.sections()) {
             if (section.rows().isEmpty()) {
                 continue;
@@ -463,32 +468,32 @@ public class CoopOptionsPage extends BaseIntelPlugin {
             return;
         }
         switch (row.control()) {
-            case TOGGLE -> addButton(info, Boolean.parseBoolean(row.rawValue()) ? "Turn off" : "Turn on",
+            case TOGGLE -> addButton(info,
+                    Boolean.parseBoolean(row.rawValue())
+                            ? CoopUiLang.tr("Turn off", "Выключить")
+                            : CoopUiLang.tr("Turn on", "Включить"),
                     new Press(row.key(), 1), width);
             case CYCLE -> {
                 String next = CoopOptionsView.nextValue(row.key(), row.rawValue(), 1);
                 if (next != null) {
-                    addButton(info, "Change to " + next, new Press(row.key(), 1), width);
+                    addButton(info, CoopUiLang.tr("Change to ", "Переключить на ") + next,
+                            new Press(row.key(), 1), width);
                 }
             }
             case STEPPER -> {
-                // Two stacked buttons rather than one row of two: the intel tooltip lays widgets out
-                // vertically and hand-positioning them is the kind of layout maths that breaks on a
-                // screen size nobody tested.
                 if (CoopOptionsView.nextValue(row.key(), row.rawValue(), -1) != null) {
-                    addButton(info, "Less", new Press(row.key(), -1), width);
+                    addButton(info, CoopUiLang.tr("Less", "Меньше"), new Press(row.key(), -1), width);
                 }
                 if (CoopOptionsView.nextValue(row.key(), row.rawValue(), 1) != null) {
-                    addButton(info, "More", new Press(row.key(), 1), width);
+                    addButton(info, CoopUiLang.tr("More", "Больше"), new Press(row.key(), 1), width);
                 }
             }
             case CLEAR -> {
                 if (!row.rawValue().isEmpty()) {
-                    addButton(info, "Clear", new Press(row.key(), 0), width);
+                    addButton(info, CoopUiLang.tr("Clear", "Очистить"), new Press(row.key(), 0), width);
                 }
             }
             default -> {
-                // No control for this row; the value is read-only here by design.
             }
         }
     }
@@ -630,7 +635,8 @@ public class CoopOptionsPage extends BaseIntelPlugin {
             // the wallet cannot cover, or a typo, produced no dialog and no change on the page.
             info.addPara(BULLET + lastCreditRefusal, warn, 2f);
         }
-        ButtonAPI send = addButton(info, "Send credits", BUTTON_SEND_CREDITS, width);
+        ButtonAPI send = addButton(info, CoopUiLang.tr("Send credits", "Отправить кредиты"),
+                BUTTON_SEND_CREDITS, width);
         if (send != null && !row.sendEnabled()) {
             send.setEnabled(false);
         }
@@ -695,7 +701,7 @@ public class CoopOptionsPage extends BaseIntelPlugin {
     }
 
     private void addResetButton(TooltipMakerAPI info, float width) {
-        addButton(info, "Reset to defaults", BUTTON_RESET, width);
+        addButton(info, CoopUiLang.tr("Reset to defaults", "Сбросить настройки"), BUTTON_RESET, width);
     }
 
     /** @return the widget, or null when the engine refused to build it (already logged). */
@@ -771,6 +777,13 @@ public class CoopOptionsPage extends BaseIntelPlugin {
     @Override
     public void buttonPressConfirmed(Object buttonId, IntelUIAPI ui) {
         try {
+            if (buttonId == BUTTON_TOGGLE_LANG) {
+                CoopUiLang.toggle();
+                if (ui != null) {
+                    ui.updateUIForItem(this);
+                }
+                return;
+            }
             if (buttonId == BUTTON_RESET) {
                 resetToDefaults();
             } else if (buttonId == BUTTON_SEND_CREDITS) {

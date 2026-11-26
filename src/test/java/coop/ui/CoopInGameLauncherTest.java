@@ -18,6 +18,25 @@ class CoopInGameLauncherTest {
     @AfterEach
     void clearSeedProp() {
         System.clearProperty(CoopOptionsRegistry.NEW_GAME_SEED);
+        CoopUiLang.resetForTests();
+    }
+
+    @Test
+    void inGameLanguageToggleSwitchesSharedUiLangBetweenEnAndRu() {
+        CoopUiLang.setRussian(false);
+        assertFalse(CoopUiLang.isRussian());
+        assertEquals("EN / RU", CoopUiLang.shortToggleLabel());
+        assertEquals("Turn on", CoopUiLang.tr("Turn on", "Включить"));
+
+        CoopOptionsPage optionsPage = new CoopOptionsPage();
+        optionsPage.buttonPressConfirmed(CoopOptionsPage.BUTTON_TOGGLE_LANG, null);
+        assertTrue(CoopUiLang.isRussian());
+        assertEquals("RU / EN", CoopUiLang.shortToggleLabel());
+        assertEquals("Включить", CoopUiLang.tr("Turn on", "Включить"));
+
+        CoopSessionIntel sessionIntel = new CoopSessionIntel();
+        sessionIntel.buttonPressConfirmed(CoopSessionIntel.BUTTON_TOGGLE_LANG, null);
+        assertFalse(CoopUiLang.isRussian());
     }
 
     @Test

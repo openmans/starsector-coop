@@ -65,6 +65,7 @@ public class CoopModPlugin extends BaseModPlugin {
     public void onApplicationLoad() throws Exception {
         super.onApplicationLoad();
         CoopLog.info(CoopModPlugin.class, "CoopModPlugin loaded");
+        coop.ui.CoopUiLang.initFromPreferences();
         publishLauncherProperties();
         publishStormRole();
         checkGameVersion();

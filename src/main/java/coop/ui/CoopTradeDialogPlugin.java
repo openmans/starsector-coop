@@ -140,21 +140,26 @@ public final class CoopTradeDialogPlugin implements InteractionDialogPlugin {
         CoopTradeSession.Offer mine = session.offerOf(localPlayerId);
         CoopTradeSession.Offer theirs = session.offerOf(partnerId);
 
-        text.addPara("Direct Player Trade with " + partnerName + " [" + session.state() + "]",
+        text.addPara(CoopUiLang.tr(
+                "Direct Player Trade with " + partnerName + " [" + session.state() + "]",
+                "Прямой обмен с " + partnerName + " [" + session.state() + "]"),
                 Misc.getHighlightColor());
-        text.addPara("Your offer: " + formatOffer(mine));
-        text.addPara(partnerName + "'s offer: " + formatOffer(theirs));
+        text.addPara(CoopUiLang.tr("Your offer: ", "Ваше предложение: ") + formatOffer(mine));
+        text.addPara(CoopUiLang.tr(partnerName + "'s offer: ", "Предложение " + partnerName + ": ")
+                + formatOffer(theirs));
 
-        opts.addOption("Add +10,000 credits", OPT_ADD_10K);
-        opts.addOption("Add +50,000 credits", OPT_ADD_50K);
-        opts.addOption("Add +50 supplies", OPT_ADD_SUPPLIES);
-        opts.addOption("Add +50 fuel", OPT_ADD_FUEL);
-        opts.addOption("Clear my offer", OPT_CLEAR);
-        opts.addOption(mine.locked() ? "Offer locked (waiting for partner)" : "Lock offer", OPT_LOCK);
+        opts.addOption(CoopUiLang.tr("Add +10,000 credits", "Добавить +10 000 кредитов"), OPT_ADD_10K);
+        opts.addOption(CoopUiLang.tr("Add +50,000 credits", "Добавить +50 000 кредитов"), OPT_ADD_50K);
+        opts.addOption(CoopUiLang.tr("Add +50 supplies", "Добавить +50 припасов"), OPT_ADD_SUPPLIES);
+        opts.addOption(CoopUiLang.tr("Add +50 fuel", "Добавить +50 топлива"), OPT_ADD_FUEL);
+        opts.addOption(CoopUiLang.tr("Clear my offer", "Очистить предложение"), OPT_CLEAR);
+        opts.addOption(mine.locked()
+                ? CoopUiLang.tr("Offer locked (waiting for partner)", "Зафиксировано (ждём напарника)")
+                : CoopUiLang.tr("Lock offer", "Зафиксировать предложение"), OPT_LOCK);
         if (session.state() == CoopTradeSession.State.LOCKED) {
-            opts.addOption("Confirm atomic swap", OPT_CONFIRM);
+            opts.addOption(CoopUiLang.tr("Confirm atomic swap", "Подтвердить обмен"), OPT_CONFIRM);
         }
-        opts.addOption("Cancel trade", OPT_CANCEL);
+        opts.addOption(CoopUiLang.tr("Cancel trade", "Отменить обмен"), OPT_CANCEL);
     }
 
     private static String formatOffer(CoopTradeSession.Offer offer) {

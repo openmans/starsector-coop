@@ -36,7 +36,6 @@ public final class CoopInGameLauncherSession {
         return SHARED;
     }
 
-    private boolean russian;
     private Tab activeTab = Tab.HOST;
 
     // Host fields
@@ -66,11 +65,11 @@ public final class CoopInGameLauncherSession {
     private boolean initialized;
 
     public CoopInGameLauncherSession() {
-        this.russian = CoopTitleScreenBridge.loadPreferRussian();
     }
 
     /** Populates fields once from current {@link CoopOptionsStore} / startup config. */
     public void ensureInitialized() {
+        CoopUiLang.initFromPreferences();
         if (initialized) {
             return;
         }
@@ -132,20 +131,19 @@ public final class CoopInGameLauncherSession {
     }
 
     public boolean isRussian() {
-        return russian;
+        return CoopUiLang.isRussian();
     }
 
     public void toggleLanguage() {
-        russian = !russian;
-        CoopTitleScreenBridge.savePreferRussian(russian);
+        CoopUiLang.toggle();
     }
 
     public void setRussian(boolean russian) {
-        this.russian = russian;
+        CoopUiLang.setRussian(russian);
     }
 
     public String tr(String en, String ru) {
-        return russian ? ru : en;
+        return CoopUiLang.tr(en, ru);
     }
 
     public Tab activeTab() { return activeTab; }

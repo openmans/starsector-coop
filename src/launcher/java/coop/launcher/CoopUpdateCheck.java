@@ -146,6 +146,10 @@ public final class CoopUpdateCheck {
             }
         }
         if (latest != null && (latest.status() == 403 || latest.status() == 429)) {
+            ReleaseAsset fallback = resolveDirectAssetFromVersionFile(agent, fetcher);
+            if (fallback != null) {
+                return fallback;
+            }
             throw new IOException("GitHub API rate limit (HTTP " + latest.status()
                     + "). Try again later or open " + RELEASES_PAGE_URL);
         }
@@ -156,9 +160,34 @@ public final class CoopUpdateCheck {
                 return asset;
             }
         }
+        ReleaseAsset fallback = resolveDirectAssetFromVersionFile(agent, fetcher);
+        if (fallback != null) {
+            return fallback;
+        }
         int status = latest == null ? 0 : latest.status();
         throw new IOException("No downloadable coop-*.zip release found on GitHub"
                 + (status > 0 ? " (HTTP " + status + ")" : ""));
+    }
+
+    /**
+     * Fallback when GitHub's REST API is rate-limited (HTTP 403/429 on shared CGNAT IPs): reads
+     * the canonical version from raw {@code coop.version} and builds the direct GitHub release
+     * archive URL {@code https://github.com/openmans/starsector-coop/releases/download/v<v>/coop-<v>.zip}.
+     */
+    private static ReleaseAsset resolveDirectAssetFromVersionFile(String agent, Fetcher fetcher) {
+        try {
+            Response raw = fetcher.get(MASTER_VERSION_URL, agent);
+            Outcome parsed = evaluateVersionFile("0.0.0", raw);
+            if (parsed.kind() != Kind.UNAVAILABLE && !parsed.version().isEmpty()) {
+                String version = parsed.version();
+                String name = "coop-" + version + ".zip";
+                String tagUrl = RELEASES_PAGE_URL + "/tag/v" + version;
+                String zipUrl = RELEASES_PAGE_URL + "/download/v" + version + "/" + name;
+                return new ReleaseAsset(version, tagUrl, zipUrl, name);
+            }
+        } catch (IOException | RuntimeException ignored) {
+        }
+        return null;
     }
 
     /**

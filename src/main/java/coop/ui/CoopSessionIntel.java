@@ -125,6 +125,7 @@ public class CoopSessionIntel extends BaseIntelPlugin {
     static final String BUTTON_TACTICAL_MAP = "coop_open_tactical_map";
     static final String BUTTON_OPEN_CHAT = "coop_open_chat";
     static final String BUTTON_OPEN_TRADE = "coop_open_trade";
+    static final String BUTTON_TOGGLE_LANG = "coop_toggle_lang";
 
     /** Log-once guard for a broken render. Static: one warning per process, not one per open. */
     private static boolean renderFailureLogged;
@@ -395,18 +396,24 @@ public class CoopSessionIntel extends BaseIntelPlugin {
         Color highlight = Misc.getHighlightColor();
         Color gray = Misc.getGrayColor();
 
-        info.addPara("Role: %s", 10f, highlight,
+        info.addPara(CoopUiLang.tr("Role: %s", "Роль: %s"), 10f, highlight,
                 CoopSessionIntelModel.roleText(value.localRole()));
-        info.addPara("Session: %s", 3f, highlight,
-                value.sessionState().isEmpty() ? "no session" : value.sessionState());
-        info.addPara("Partner: %s", 3f, highlight,
+        info.addPara(CoopUiLang.tr("Session: %s", "Сессия: %s"), 3f, highlight,
+                value.sessionState().isEmpty()
+                        ? CoopUiLang.tr("no session", "нет сессии")
+                        : value.sessionState());
+        info.addPara(CoopUiLang.tr("Partner: %s", "Напарник: %s"), 3f, highlight,
                 value.partnerName().isEmpty() ? CoopSessionIntelModel.UNKNOWN : value.partnerName());
 
+        info.addButton(CoopUiLang.toggleButtonLabel(), BUTTON_TOGGLE_LANG, 260f, 24f, 8f);
+
         if (CoopSessionIntelFeed.isTacticalMapAvailable()) {
-            info.addButton("Open Tactical Map", BUTTON_TACTICAL_MAP, 220f, 26f, 8f);
+            info.addButton(CoopUiLang.tr("Open Tactical Map", "Открыть тактическую карту"),
+                    BUTTON_TACTICAL_MAP, 240f, 26f, 8f);
         }
         if (CoopSessionIntelFeed.isChatAvailable()) {
-            info.addButton("Open Co-op Chat", BUTTON_OPEN_CHAT, 220f, 26f, 6f);
+            info.addButton(CoopUiLang.tr("Open Co-op Chat", "Открыть чат коопа"),
+                    BUTTON_OPEN_CHAT, 240f, 26f, 6f);
         }
         if (CoopSessionIntelFeed.isTradeAvailable()) {
             info.addButton("Trade with Partner", BUTTON_OPEN_TRADE, 220f, 26f, 6f);
@@ -510,7 +517,12 @@ public class CoopSessionIntel extends BaseIntelPlugin {
 
     @Override
     public void buttonPressConfirmed(Object buttonId, IntelUIAPI ui) {
-        if (BUTTON_TACTICAL_MAP.equals(buttonId)) {
+        if (BUTTON_TOGGLE_LANG.equals(buttonId)) {
+            CoopUiLang.toggle();
+            if (ui != null) {
+                ui.updateUIForItem(this);
+            }
+        } else if (BUTTON_TACTICAL_MAP.equals(buttonId)) {
             CoopSessionIntelFeed.requestOpenTacticalMap();
         } else if (BUTTON_OPEN_CHAT.equals(buttonId)) {
             CoopSessionIntelFeed.requestOpenChat();

@@ -264,13 +264,13 @@ public final class CoopTitleScreenOverlay {
         title.getPosition().inTL(pad, 14f);
 
         float closeW = 76f;
-        float langW = 54f;
+        float langW = 76f;
         ButtonAPI closeBtn = ui.addButton(s.tr("Close", "Закрыть"), ID_CLOSE,
                 ACTION_TEXT, ACTION_BG, Alignment.MID, CutStyle.ALL, closeW, 24f, 0f);
         closeBtn.getPosition().inTR(pad, 11f);
         closeBtn.setShortcut(Keyboard.KEY_ESCAPE, true);
 
-        ButtonAPI langBtn = ui.addButton(s.isRussian() ? "EN" : "RU", ID_LANG,
+        ButtonAPI langBtn = ui.addButton(CoopUiLang.shortToggleLabel(), ID_LANG,
                 GREEN_BRIGHT, GREEN_BG, Alignment.MID, CutStyle.ALL, langW, 24f, 0f);
         langBtn.getPosition().inTR(pad + closeW + 8f, 11f);
 

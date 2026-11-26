@@ -202,7 +202,9 @@ public final class CoopLobbyDialog implements InteractionDialogPlugin, CoopDismi
             // clear()-and-rebuild: the roster is a handful of short lines and, now that the ticking
             // numbers are handled separately, it changes only on player actions.
             text.clear();
-            text.addPara("Co-op lobby - the campaign is held until every player is ready.");
+            text.addPara(CoopUiLang.tr(
+                    "Co-op lobby - the campaign is held until every player is ready.",
+                    "Лобби коопа — кампания на паузе, пока все игроки не нажмут «Готов»."));
             for (CoopLobbyView.Row row : view.rows()) {
                 text.addPara(row.line());
             }
@@ -236,46 +238,59 @@ public final class CoopLobbyDialog implements InteractionDialogPlugin, CoopDismi
             }
             options.clearOptions();
             if (confirmingStartAnyway) {
-                options.addOption(TEXT_START_ANYWAY_CONFIRM, OPTION_START_ANYWAY_CONFIRM,
-                        "Starts the session with a player who has not readied. They will join a"
-                                + " world that is already running.");
-                options.addOption(TEXT_START_ANYWAY_BACK, OPTION_START_ANYWAY_BACK,
-                        "Keeps waiting.");
+                options.addOption(CoopUiLang.tr(TEXT_START_ANYWAY_CONFIRM, "Да, начать без ожидания"),
+                        OPTION_START_ANYWAY_CONFIRM,
+                        CoopUiLang.tr("Starts the session with a player who has not readied. They will join a"
+                                + " world that is already running.",
+                                "Запустит сессию, не дожидаясь готовности гостя."));
+                options.addOption(CoopUiLang.tr(TEXT_START_ANYWAY_BACK, "Назад"), OPTION_START_ANYWAY_BACK,
+                        CoopUiLang.tr("Keeps waiting.", "Продолжить ожидание."));
                 return true;
             }
-            // The same predicate the structural key uses, so "a countdown started" always reaches
-            // the option panel even though the seconds inside it never do.
             boolean counting = view.countingDown();
             if (view.localRole() == CoopConnectionRole.HOST) {
                 if (counting) {
-                    options.addOption(TEXT_CANCEL_COUNTDOWN, OPTION_CANCEL_COUNTDOWN,
-                            "Stops the countdown; the campaign stays held.");
+                    options.addOption(CoopUiLang.tr(TEXT_CANCEL_COUNTDOWN, "Отменить отсчёт"),
+                            OPTION_CANCEL_COUNTDOWN,
+                            CoopUiLang.tr("Stops the countdown; the campaign stays held.",
+                                    "Остановит отсчёт; кампания останется на паузе."));
                     return true;
                 }
-                options.addOption(view.startLabel(), OPTION_START,
+                options.addOption(
+                        CoopUiLang.isRussian() ? "Начать игру" : view.startLabel(),
+                        OPTION_START,
                         view.allReady()
-                                ? "Starts the session after a short countdown either player can cancel."
-                                : "Arms once every player is ready.");
+                                ? CoopUiLang.tr("Starts the session after a short countdown either player can cancel.",
+                                        "Запустит сессию после короткого отсчёта.")
+                                : CoopUiLang.tr("Arms once every player is ready.",
+                                        "Станет доступно, когда все игроки нажмут «Готов»."));
                 options.setEnabled(OPTION_START, view.allReady());
                 if (!view.allReady()) {
-                    options.addOption(TEXT_START_ANYWAY, OPTION_START_ANYWAY,
-                            "Overrides the ready gate. Asks for confirmation first.");
+                    options.addOption(CoopUiLang.tr(TEXT_START_ANYWAY, "Начать всё равно (гость не готов)"),
+                            OPTION_START_ANYWAY,
+                            CoopUiLang.tr("Overrides the ready gate. Asks for confirmation first.",
+                                    "Запустить принудительно (с подтверждением)."));
                 }
                 return true;
             }
             if (counting) {
-                options.addOption(TEXT_CANCEL_COUNTDOWN, OPTION_CANCEL_COUNTDOWN,
-                        "Stops the countdown; the campaign stays held. Any player may cancel.");
+                options.addOption(CoopUiLang.tr(TEXT_CANCEL_COUNTDOWN, "Отменить отсчёт"),
+                        OPTION_CANCEL_COUNTDOWN,
+                        CoopUiLang.tr("Stops the countdown; the campaign stays held. Any player may cancel.",
+                                "Остановит отсчёт; любой игрок может отменить."));
                 return true;
             }
             if (view.localReady()) {
-                options.addOption(TEXT_NOT_READY, OPTION_NOT_READY,
-                        "Takes your ready back. You can do this at any point before the session starts.");
+                options.addOption(CoopUiLang.tr(TEXT_NOT_READY, "Не готов"), OPTION_NOT_READY,
+                        CoopUiLang.tr("Takes your ready back. You can do this at any point before the session starts.",
+                                "Снять статус готовности."));
             } else {
-                options.addOption(TEXT_READY, OPTION_READY,
+                options.addOption(CoopUiLang.tr(TEXT_READY, "Готов"), OPTION_READY,
                         view.canReady()
-                                ? "Tells the host you are ready to start."
-                                : "Available once your campaign has the host's world.");
+                                ? CoopUiLang.tr("Tells the host you are ready to start.",
+                                        "Сообщить хосту о готовности.")
+                                : CoopUiLang.tr("Available once your campaign has the host's world.",
+                                        "Станет доступно после синхронизации сектора с хостом."));
                 options.setEnabled(OPTION_READY, view.canReady());
             }
             return true;

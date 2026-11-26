@@ -44,17 +44,26 @@ public final class CoopAllyJoinDialogPlugin implements InteractionDialogPlugin {
         text.clear();
         opts.clearOptions();
 
-        text.addPara("Partner Battle Reinforcement", Misc.getHighlightColor());
-        text.addPara(offer.fighterName() + " is engaging " + offer.enemySummary()
-                + " (" + offer.distanceSu() + " su away).");
-        text.addPara("Choose how your fleet should participate in this battle:", Misc.getGrayColor());
+        text.addPara(CoopUiLang.tr("Partner Battle Reinforcement", "Подкрепление напарнику в бой"),
+                Misc.getHighlightColor());
+        text.addPara(CoopUiLang.tr(
+                offer.fighterName() + " is engaging " + offer.enemySummary()
+                        + " (" + offer.distanceSu() + " su away).",
+                offer.fighterName() + " вступает в бой с " + offer.enemySummary()
+                        + " (дистанция: " + offer.distanceSu() + " su)."));
+        text.addPara(CoopUiLang.tr("Choose how your fleet should participate in this battle:",
+                "Выберите, как ваш флот примет участие в этом бою:"), Misc.getGrayColor());
 
-        opts.addOption("Join battle + Tactical Map (command your ships)", JoinChoice.JOIN_TACTICAL);
+        opts.addOption(CoopUiLang.tr("Join battle + Tactical Map (command your ships)",
+                "Войти в бой + Тактическая карта (отдавать приказы кораблям)"), JoinChoice.JOIN_TACTICAL);
         if (offer.wingmanAvailable()) {
-            opts.addOption("Join battle + Direct Piloting (Wingman)", JoinChoice.JOIN_WINGMAN);
+            opts.addOption(CoopUiLang.tr("Join battle + Direct Piloting (Wingman)",
+                    "Войти в бой + Ручное пилотирование (Wingman)"), JoinChoice.JOIN_WINGMAN);
         }
-        opts.addOption("Join battle (AI officers only)", JoinChoice.JOIN_AI);
-        opts.addOption("Decline (stay out of this battle)", JoinChoice.DECLINE);
+        opts.addOption(CoopUiLang.tr("Join battle (AI officers only)",
+                "Войти в бой (управляет ИИ)"), JoinChoice.JOIN_AI);
+        opts.addOption(CoopUiLang.tr("Decline (stay out of this battle)",
+                "Отказаться (не участвовать в бою)"), JoinChoice.DECLINE);
     }
 
     @Override

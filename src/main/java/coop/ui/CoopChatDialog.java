@@ -72,21 +72,25 @@ public final class CoopChatDialog implements InteractionDialogPlugin {
         text.clear();
         opts.clearOptions();
 
-        text.addPara("Co-op Comms Channel", Misc.getHighlightColor());
+        text.addPara(CoopUiLang.tr("Co-op Comms Channel", "Чат коопа"), Misc.getHighlightColor());
         List<CoopChatService.ChatMessage> recent = chatService.recent(12);
         if (recent.isEmpty()) {
-            text.addPara("No messages yet.", Misc.getGrayColor());
+            text.addPara(CoopUiLang.tr("No messages yet.", "Сообщений пока нет."), Misc.getGrayColor());
         } else {
             for (CoopChatService.ChatMessage m : recent) {
                 text.addPara("[" + m.senderName() + "] " + m.text());
             }
         }
 
-        opts.addOption("Send: \"Ready to move out.\"", OPT_SEND_READY);
-        opts.addOption("Send: \"Regroup on my position.\"", OPT_SEND_REGROUP);
-        opts.addOption("Send: \"Hold on — managing fleet/market.\"", OPT_SEND_WAIT);
-        opts.addOption("Send: \"Engaging hostile fleet!\"", OPT_SEND_ENGAGE);
-        opts.addOption("Close comms", OPT_CLOSE);
+        opts.addOption(CoopUiLang.tr("Send: \"Ready to move out.\"", "Отправить: «Готов выдвигаться.»"),
+                OPT_SEND_READY);
+        opts.addOption(CoopUiLang.tr("Send: \"Regroup on my position.\"", "Отправить: «Сбор у меня.»"),
+                OPT_SEND_REGROUP);
+        opts.addOption(CoopUiLang.tr("Send: \"Hold on — managing fleet/market.\"",
+                "Отправить: «Подожди — разбираю флот/рынок.»"), OPT_SEND_WAIT);
+        opts.addOption(CoopUiLang.tr("Send: \"Engaging hostile fleet!\"",
+                "Отправить: «Атакую вражеский флот!»"), OPT_SEND_ENGAGE);
+        opts.addOption(CoopUiLang.tr("Close comms", "Закрыть чат"), OPT_CLOSE);
     }
 
     @Override

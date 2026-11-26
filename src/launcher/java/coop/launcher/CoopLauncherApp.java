@@ -1134,11 +1134,7 @@ public final class CoopLauncherApp {
 
 
     private void setDrawerVisible(boolean visible) {
-        if (visible) {
-            showPanel(logDialog);
-        } else {
-            logDialog.setVisible(false);
-        }
+        // The live log panel is embedded directly in the main window; never pop up an empty dialog.
     }
 
     private void showPanel(JDialog dialog) {
@@ -3269,7 +3265,8 @@ public final class CoopLauncherApp {
                 result = CoopModInstaller.installLatest(targetLayout, current, includeWingman, (stage, percent) ->
                         SwingUtilities.invokeLater(() -> {
                             if (updateChip != null) {
-                                updateChip.setText(percent >= 0 ? "Downloading " + percent + "%" : stage);
+                                updateChip.setText(percent >= 0
+                                        ? tr("Downloading ", "Скачивание ") + percent + "%" : stage);
                             }
                             if (installProgressBar != null) {
                                 if (percent >= 0) {
@@ -3281,10 +3278,15 @@ public final class CoopLauncherApp {
                                 installProgressBar.setString(stage);
                             }
                         }));
+            } catch (Throwable ex) {
+                LOG.error("One-click installer threw an unexpected error", ex);
+                String msg = "Install failed: " + (ex.getMessage() == null ? ex.toString() : ex.getMessage());
+                result = new CoopModInstaller.InstallResult(false, false, false, "", 0, msg, List.of(msg));
             } finally {
                 modInstallRunning.set(false);
             }
-            SwingUtilities.invokeLater(() -> finishOneClickInstall(result));
+            CoopModInstaller.InstallResult finalResult = result;
+            SwingUtilities.invokeLater(() -> finishOneClickInstall(finalResult));
         }, "coop-launcher-installer");
         worker.setDaemon(true);
         worker.start();

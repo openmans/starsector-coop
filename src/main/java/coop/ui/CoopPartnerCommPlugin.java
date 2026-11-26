@@ -23,6 +23,7 @@ public final class CoopPartnerCommPlugin implements InteractionDialogPlugin {
     private static final String OPT_TRADE = "comm_trade";
     private static final String OPT_CHAT = "comm_chat";
     private static final String OPT_TOGGLE_ALLY = "comm_toggle_ally";
+    private static final String OPT_TOGGLE_LANG = "comm_toggle_lang";
     private static final String OPT_CLOSE = "comm_close";
 
     private final String partnerName;
@@ -54,6 +55,10 @@ public final class CoopPartnerCommPlugin implements InteractionDialogPlugin {
                 toggleAllyAbility();
                 render();
             }
+            case OPT_TOGGLE_LANG -> {
+                CoopUiLang.toggle();
+                render();
+            }
             case OPT_CLOSE -> dismiss();
             default -> {
             }
@@ -72,17 +77,29 @@ public final class CoopPartnerCommPlugin implements InteractionDialogPlugin {
         boolean allyOn = isAllyAbilityActive();
         int rangeSu = CoopAllyReinforceCoordinator.configuredJoinRangeSu();
 
-        text.addPara("Co-op Comm Link: " + partnerName, Misc.getHighlightColor());
-        text.addPara("Fight Alongside status: " + (allyOn ? "ON" : "OFF")
-                + "  |  Partner battle join range: " + rangeSu + " su");
-        text.addPara("When either player starts a battle within " + rangeSu
-                + " su, the partner receives an interactive prompt to join (Tactical Map, Wingman, or AI).",
+        text.addPara(CoopUiLang.tr("Co-op Comm Link: ", "Канал связи коопа: ") + partnerName,
+                Misc.getHighlightColor());
+        text.addPara(CoopUiLang.tr(
+                "Fight Alongside status: " + (allyOn ? "ON" : "OFF")
+                        + "  |  Partner battle join range: " + rangeSu + " su",
+                "Совместный бой: " + (allyOn ? "ВКЛ" : "ВЫКЛ")
+                        + "  |  Дальность подкрепления в бой: " + rangeSu + " su"));
+        text.addPara(CoopUiLang.tr(
+                "When either player starts a battle within " + rangeSu
+                        + " su, the partner receives an interactive prompt to join (Tactical Map, Wingman, or AI).",
+                "Если один из игроков начнёт бой в пределах " + rangeSu
+                        + " su, напарник получит запрос на участие (Тактическая карта, Wingman или ИИ)."),
                 Misc.getGrayColor());
 
-        opts.addOption("Trade with " + partnerName + " (credits / supplies / fuel)", OPT_TRADE);
-        opts.addOption("Open Co-op Chat", OPT_CHAT);
-        opts.addOption(allyOn ? "Turn Fight Alongside OFF" : "Turn Fight Alongside ON", OPT_TOGGLE_ALLY);
-        opts.addOption("Close comm link", OPT_CLOSE);
+        opts.addOption(CoopUiLang.tr(
+                "Trade with " + partnerName + " (credits / supplies / fuel)",
+                "Торговля с " + partnerName + " (кредиты / припасы / топливо)"), OPT_TRADE);
+        opts.addOption(CoopUiLang.tr("Open Co-op Chat", "Открыть чат коопа"), OPT_CHAT);
+        opts.addOption(allyOn
+                ? CoopUiLang.tr("Turn Fight Alongside OFF", "Выключить «Сражаться вместе»")
+                : CoopUiLang.tr("Turn Fight Alongside ON", "Включить «Сражаться вместе»"), OPT_TOGGLE_ALLY);
+        opts.addOption(CoopUiLang.toggleButtonLabel(), OPT_TOGGLE_LANG);
+        opts.addOption(CoopUiLang.tr("Close comm link", "Закрыть канал связи"), OPT_CLOSE);
     }
 
     private static boolean isAllyAbilityActive() {
