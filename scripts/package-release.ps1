@@ -370,15 +370,16 @@ try {
     New-Item -ItemType Directory -Path $stagedMod -Force | Out-Null
 
     # Files at the mod root.
-    $rootFiles = @('mod_info.json', 'coop.version', 'LICENSE', 'CHANGELOG.md', 'README.md', 'Coop Launcher.cmd')
+    $rootFiles = @('mod_info.json', 'coop.version', 'LICENSE', 'CHANGELOG.md', 'README.md',
+        'Coop Launcher.cmd', 'Starsector Coop Launcher.exe', 'Install Starsector Coop.cmd')
     foreach ($name in $rootFiles) {
         $source = Join-Path $modRoot $name
         if (Test-Path -LiteralPath $source -PathType Leaf) {
             Copy-Item -LiteralPath $source -Destination (Join-Path $stagedMod $name) -Force
         }
-        elseif ($name -eq 'Coop Launcher.cmd') {
-            Write-Warning ("`"Coop Launcher.cmd`" is missing from the mod root, so the archive" +
-                " ships without the launcher entry point.")
+        elseif ($name -in @('Coop Launcher.cmd', 'Starsector Coop Launcher.exe', 'Install Starsector Coop.cmd')) {
+            Write-Warning ("`"$name`" is missing from the mod root, so the archive" +
+                " ships without it.")
         }
         else {
             throw "Missing $source - the release archive has to carry it."

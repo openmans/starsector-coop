@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.5 (3-mode Starsector launcher + .exe installer + 3000 su tactical battles & partner comm link)
+
+- **Transparent ally battle reinforcement (up to 3,000 su):** added host-configurable
+  `coop.allyJoinRange` (default `3000`, range `700..10000`) and interactive reinforcement dialog
+  (`CoopAllyReinforceCoordinator`, `CoopAllyJoinDialogPlugin`) letting nearby partners join any
+  battle via **Tactical Map** (live ship orders without Wingman), **Wingman** (optional manual
+  piloting when installed), **AI ally**, or **Decline**.
+- **Partner Comm Link & live Trade:** clicking a partner's mirrored fleet on the campaign map now
+  opens live Comm Link (`CoopPartnerCampaignPlugin`, `CoopPartnerCommPlugin`) with working
+  `TRADE_SYNC` credit/cargo settlement in `CoopNetPump`.
+- **Native Windows `.exe` launcher & one-click bootstrapper** (`Starsector Coop Launcher.exe`):
+  single standalone GUI `.exe` (no console window) that detects/picks `starsector.exe`, requests
+  UAC elevation when needed, downloads the latest GitHub release (plus optional Wingman),
+  repairs/patches `vmparams`, enables mods in `enabled_mods.json`, swaps `.pending` jars, and
+  opens the main launcher.
+- **Universal 3-mode launcher (`Install / Update` · `Host a game` · `Join a game`):** redesigned in
+  Starsector's native cyan/teal palette with high-contrast amber primary accent; added multi-source
+  GitHub version checker (`releases/latest` -> `releases?per_page=5` -> raw `coop.version` for
+  CGNAT rate limits), optional **The Wingman Project** (`NEOysod/TheWingmanProject`) install
+  checkbox, and `vmparams` tuning-pack classpath integrity guard & repair.
+
 ## 0.2.4 (Wingman battles + phases 22/25/26/27/34 + hardening)
 
 Release build of the expanded 0.2.3 tree. Everything below is new relative to the
@@ -7,25 +28,6 @@ released 0.2.3: global pause/fast-forward, guest bounties, tactical orders and m
 3-4 players, ambient system-call sync, the hardened Wingman path (MethodHandles, auto-join,
 UPnP), chat, trade UI, transport encryption, the CGNAT relay server, guest snapshot restore,
 allied wreck recovery, the Nexerelin adapter and the Linux/macOS launcher.
-
-- Launcher GitHub version checker: added multi-source fallback (`releases/latest` ->
-  `releases?per_page=5` for pre-releases -> `raw.githubusercontent.com/.../main/coop.version`
-  on 404 or CGNAT API rate limit), visible header status/check button (`Check updates` /
-  `Up to date` / `Update X.Y.Z`), re-checking on `Refresh`, and `mod_info.json` fallback when
-  running unpacked dev builds.
-- Native Windows `.exe` launcher & one-click bootstrapper (`Starsector Coop Launcher.exe`,
-  built from `src/launcher-exe/StarsectorCoopLauncher.cs` via `scripts/build-launcher-exe.ps1`):
-  single standalone `.exe` with Starsector-styled GUI and no console window that detects or picks
-  `starsector.exe`, requests UAC elevation when needed, downloads the latest GitHub release,
-  configures `vmparams` + `enabled_mods.json`, applies `.pending` jar updates, and launches the
-  3-mode Starsector Coop Launcher directly.
-- Universal 3-mode launcher (`Install / Update` · `Host a game` · `Join a game`): added dedicated
-  **Install / Update** mode directly in the top mode switcher (auto-selected when Starsector is
-  unconfigured, with `starsector.exe` picker, live GitHub version status, optional **The Wingman
-  Project** install checkbox pulling from `NEOysod/TheWingmanProject` into `mods\Wingman` and
-  enabling `wingman_project`, download progress bar, one-click `Install / Update` button, and
-  one-click `Fix vmparams & mods`), plus standalone JRE auto-detection in `Coop Launcher.cmd` and
-  standalone one-click `Install Starsector Coop.cmd`.
 
 ## 0.2.3 (Wingman battles)
 
