@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.16 (Allow mid-campaign resume on matching campaignId + seedString despite live sector fingerprint drift)
+
+- **Fixed false-positive `COOP-SEED` rejection when resuming an existing co-op campaign (`CoopNetPump.handleSeedLockRequest`):**
+  on campaigns saved separately (e.g. in hyperspace) after runtime market, faction, or system
+  changes drifted the live `CoopSectorFingerprint`, guests with the **exact same `campaignId` and
+  `seedString`** were erroneously blocked with `COOP-SEED`. When resuming a matching `campaignId`
+  (`minted=false`) and matching `seedString`, live `sectorFingerprint` drift now logs a warning and
+  canonical dump while allowing the session to resume cleanly; fresh campaigns and mismatched seeds
+  still enforce strict fingerprint verification.
+
 ## 0.2.15 (Shared host save download & synced load, persistent host password, zero port leak on exit)
 
 - **Shared Host Save download & automatic synced load (`CoopPreGameLobby`, `CoopTitleScreenBridge`, `CoopModPlugin`):**

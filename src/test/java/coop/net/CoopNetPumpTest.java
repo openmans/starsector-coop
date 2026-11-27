@@ -296,6 +296,29 @@ class CoopNetPumpTest {
     }
 
     @Test
+    void guestAllowsResumedCampaignWhenCampaignIdAndSeedMatchDespiteFingerprintDrift() {
+        RecordingNetService service = new RecordingNetService(CoopConnectionRole.GUEST);
+        CoopSessionState session = guestSessionReadyForSeedLock();
+        service.inbound.add(CoopMessages.seedLockRequest(
+                "session-a", 4L, 13000L, 123456789L, "coop-seed", "fingerprint-host", "campaign-1", false));
+        CoopNetPump pump = pumpForGuestSeedLock(service, session,
+                new java.util.concurrent.atomic.AtomicReference<>("campaign-1"),
+                false, false, "fingerprint-guest", () -> "sys||0||1|2");
+
+        pump.advance(0f);
+
+        assertNotEquals(CoopLobbyState.REJECTED, session.connectionState());
+        assertEquals(123456789L, session.seedLong());
+        assertEquals("coop-seed", session.seedString());
+        assertEquals("fingerprint-host", session.sectorFingerprint());
+        assertEquals(1, service.sent.size());
+        CoopMessages.Message ack = service.sent.get(0);
+        assertEquals(CoopMessages.Type.SEED_LOCK_ACK, ack.type());
+        assertEquals("fingerprint-host",
+                CoopMessages.requiredPayloadString(ack, "sectorFingerprint"));
+    }
+
+    @Test
     void guestRejectsSeedLockWhenLocalSeedStringDiffers() {
         RecordingNetService service = new RecordingNetService(CoopConnectionRole.GUEST);
         CoopSessionState session = new CoopSessionState(() -> "guest-player");

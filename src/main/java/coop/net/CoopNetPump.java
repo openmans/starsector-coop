@@ -6731,6 +6731,16 @@ public class CoopNetPump implements EveryFrameScript {
                         + " guestFingerprint=" + guestFingerprint
                         + " hostCampaignId=" + hostCampaignId);
 
+        // Check whether this guest save is resuming the exact same campaign before checkOrAdoptCampaignId
+        // may adopt a new id into storedCampaignIdSupplier.
+        String storedCampaignIdBeforeCheck = storedCampaignIdSupplier.get();
+        storedCampaignIdBeforeCheck = storedCampaignIdBeforeCheck == null
+                ? ""
+                : storedCampaignIdBeforeCheck.trim();
+        boolean sameCampaignResume = !hostCampaignIdMinted
+                && !storedCampaignIdBeforeCheck.isEmpty()
+                && storedCampaignIdBeforeCheck.equals(hostCampaignId);
+
         // Identity first (Phase 6b check order: campaignId -> seedString -> fingerprint), so a
         // wrong save produces the clear "not this campaign" message instead of a confusing state
         // diff. The id distinguishes this campaign from a fresh re-roll of the same seed, which
@@ -6761,19 +6771,26 @@ public class CoopNetPump implements EveryFrameScript {
 
         String mismatch = CoopSeedSync.fingerprintMismatch(hostFingerprint, guestFingerprint);
         if (!mismatch.isEmpty()) {
-            String correlationId = desyncCorrelationId();
-            sessionState.rejectHandshake(mismatch, true);
-            CoopMessages.Message reject = CoopMessages.seedLockReject(
-                    message.sessionId(),
-                    service.nextSeq(),
-                    clockMillis.getAsLong(),
-                    mismatch);
-            service.sendTo(message.senderId(), reject);
-            log("outbound", reject);
-            CoopLog.warn(CoopNetPump.class, "Coop seed lock rejected: " + mismatch);
-            dumpCanonicalFingerprint("guest fingerprint comparison failed");
-            noteDesync(mismatch, coop.ui.CoopDesyncReason.Source.SEED_LOCK, correlationId);
-            return;
+            if (!sameCampaignResume) {
+                String correlationId = desyncCorrelationId();
+                sessionState.rejectHandshake(mismatch, true);
+                CoopMessages.Message reject = CoopMessages.seedLockReject(
+                        message.sessionId(),
+                        service.nextSeq(),
+                        clockMillis.getAsLong(),
+                        mismatch);
+                service.sendTo(message.senderId(), reject);
+                log("outbound", reject);
+                CoopLog.warn(CoopNetPump.class, "Coop seed lock rejected: " + mismatch);
+                dumpCanonicalFingerprint("guest fingerprint comparison failed");
+                noteDesync(mismatch, coop.ui.CoopDesyncReason.Source.SEED_LOCK, correlationId);
+                return;
+            }
+            CoopLog.warn(CoopNetPump.class,
+                    "Coop seed lock: resuming matching campaignId=" + hostCampaignId
+                            + " seedString=" + seedString
+                            + " despite live sectorFingerprint drift (" + mismatch + "); accepting resume");
+            dumpCanonicalFingerprint("guest resumed campaign fingerprint drift");
         }
 
         sessionState.recordSeedLock(seedLong, seedString, hostFingerprint);
@@ -6784,11 +6801,12 @@ public class CoopNetPump implements EveryFrameScript {
         // silently skipped the coordinated autosave that keeps the two saves in step.
         saveCheckpoint.reset();
         CoopSeedSync.storeCurrentSectorPersistentData(new CoopSeedSync.SeedData(seedLong, seedString, hostFingerprint));
+        String ackFingerprint = sameCampaignResume && !mismatch.isEmpty() ? hostFingerprint : guestFingerprint;
         CoopMessages.Message ack = CoopMessages.seedLockAck(
                 message.sessionId(),
                 service.nextSeq(),
                 clockMillis.getAsLong(),
-                guestFingerprint);
+                ackFingerprint);
         service.sendTo(message.senderId(), ack);
         log("outbound", ack);
         CoopLog.info(CoopNetPump.class,
