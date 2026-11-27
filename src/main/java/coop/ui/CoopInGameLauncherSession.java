@@ -43,6 +43,8 @@ public final class CoopInGameLauncherSession {
     private String lastSyncedGuestLobbySeed = "";
     private boolean launchedFromPreGameLobby;
     private boolean pendingAutoEnterGame;
+    private String pendingLoadSavePath = "";
+    private boolean pendingRestoreGuestFromSharedSave;
 
     // Host fields
     private String hostAddress = "";
@@ -84,8 +86,19 @@ public final class CoopInGameLauncherSession {
         if (hostSeed.isEmpty()) {
             hostSeed = CoopInGameInvite.generateSeed();
         }
+        String savedHostPort = CoopTitleScreenBridge.loadLastHostPort();
+        if (!savedHostPort.isEmpty() && String.valueOf(DEFAULT_PORT).equals(hostPort)) {
+            hostPort = savedHostPort;
+        }
         if (hostPassword.isEmpty()) {
-            hostPassword = CoopInGameInvite.generatePassword();
+            if (CoopTitleScreenBridge.hasSavedHostPassword()) {
+                hostPassword = CoopTitleScreenBridge.loadLastHostPassword();
+            } else {
+                hostPassword = CoopInGameInvite.generatePassword();
+                if (isLiveGameRuntime()) {
+                    CoopTitleScreenBridge.saveLastHostSettings(hostPort, hostPassword);
+                }
+            }
         }
         if (hostAddress.isEmpty()) {
             hostAddress = CoopTitleScreenBridge.detectLocalLanAddress();
@@ -202,7 +215,15 @@ public final class CoopInGameLauncherSession {
     public void setHostPort(String v) { hostPort = trim(v); }
 
     public String hostPassword() { return hostPassword; }
-    public void setHostPassword(String v) { hostPassword = v == null ? "" : v.trim(); }
+    public void setHostPassword(String v) {
+        String next = v == null ? "" : v.trim();
+        if (!next.equals(hostPassword)) {
+            hostPassword = next;
+            if (isLiveGameRuntime()) {
+                CoopTitleScreenBridge.saveLastHostSettings(hostPort, hostPassword);
+            }
+        }
+    }
 
     public String hostSeed() { return hostSeed; }
     public void setHostSeed(String v) { hostSeed = trim(v); }
@@ -273,6 +294,9 @@ public final class CoopInGameLauncherSession {
 
     public void regeneratePassword() {
         hostPassword = CoopInGameInvite.generatePassword();
+        if (isLiveGameRuntime()) {
+            CoopTitleScreenBridge.saveLastHostSettings(hostPort, hostPassword);
+        }
         setStatus(tr("Generated new password.", "Сгенерирован новый пароль."),
                 new Color(110, 255, 165));
     }
@@ -369,6 +393,9 @@ public final class CoopInGameLauncherSession {
         }
         CoopModPlugin.applyRuntimeSeed(seed);
         CoopStormBridge.configureGuest(false);
+        if (store == CoopOptionsStore.system() && isLiveGameRuntime()) {
+            CoopTitleScreenBridge.saveLastHostSettings(String.valueOf(port), hostPassword);
+        }
         armedRole = CoopConnectionRole.HOST;
 
         String invite = buildHostInvite();
@@ -439,6 +466,9 @@ public final class CoopInGameLauncherSession {
 
     /** Arms HOST mode and opens the live Title Screen pre-game lobby on the configured port. */
     public boolean openHostLobby(CoopOptionsStore store) {
+        if (isLiveGameRuntime()) {
+            CoopModPlugin.shutdownActiveSessionOnTitleScreen();
+        }
         if (!applyHostConfig(store)) {
             return false;
         }
@@ -561,6 +591,27 @@ public final class CoopInGameLauncherSession {
                     new Color(110, 255, 165));
             return true;
         }
+        if (!preGameLobby.isHost()) {
+            byte[] completedZip = preGameLobby.consumeCompletedSaveZip();
+            if (completedZip != null && completedZip.length > 0) {
+                String extractedDir = isLiveGameRuntime()
+                        ? CoopTitleScreenBridge.extractSharedSaveZip(completedZip) : "";
+                if (!extractedDir.isEmpty()) {
+                    pendingLoadSavePath = extractedDir;
+                    pendingRestoreGuestFromSharedSave = true;
+                }
+            }
+        }
+        if (preGameLobby.isTransferringSave()) {
+            int pct = preGameLobby.saveTransferPercent();
+            setStatus(preGameLobby.isHost()
+                            ? tr("Sending shared save to partner: " + pct + "%",
+                                    "Отправка общего сейва напарнику: " + pct + "%")
+                            : tr("Downloading host's shared save: " + pct + "%",
+                                    "Скачивание сейва хоста: " + pct + "%"),
+                    new Color(130, 225, 255));
+            return true;
+        }
         if (preGameLobby.isLaunchTriggered()) {
             launchedFromPreGameLobby = true;
             pendingAutoEnterGame = true;
@@ -633,6 +684,20 @@ public final class CoopInGameLauncherSession {
         return true;
     }
 
+    public String consumePendingLoadSavePath() {
+        String p = pendingLoadSavePath;
+        pendingLoadSavePath = "";
+        return p == null ? "" : p;
+    }
+
+    public boolean consumePendingRestoreGuestFromSharedSave() {
+        if (!pendingRestoreGuestFromSharedSave) {
+            return false;
+        }
+        pendingRestoreGuestFromSharedSave = false;
+        return true;
+    }
+
     public boolean startGameFromLobby() {
         if (!preGameLobby.isHost() || preGameLobby.state() != CoopPreGameLobby.State.HOSTING) {
             return false;
@@ -644,6 +709,23 @@ public final class CoopInGameLauncherSession {
                             + preGameLobby.readyCount() + "/" + preGameLobby.totalCount() + ")."),
                     new Color(255, 195, 95));
             return false;
+        }
+        pendingLoadSavePath = "";
+        pendingRestoreGuestFromSharedSave = false;
+        if (isLiveGameRuntime() && preGameLobby.totalCount() > 1) {
+            String hostSavePath = CoopTitleScreenBridge.findLatestHostSaveDirPath();
+            if (!hostSavePath.isEmpty()) {
+                byte[] zip = CoopTitleScreenBridge.packageSaveDirectoryAsZip(hostSavePath);
+                if (zip != null && zip.length > 0
+                        && preGameLobby.triggerHostStartWithSave(CoopTitleScreenBridge.SHARED_SAVE_DIR_NAME,
+                                zip, System.currentTimeMillis())) {
+                    pendingLoadSavePath = hostSavePath;
+                    setStatus(tr("Sending shared save to partner: 0%",
+                            "Отправка общего сейва напарнику: 0%"),
+                            new Color(130, 225, 255));
+                    return true;
+                }
+            }
         }
         preGameLobby.triggerHostStart();
         launchedFromPreGameLobby = true;
@@ -658,6 +740,8 @@ public final class CoopInGameLauncherSession {
         preGameLobby.stop();
         launchedFromPreGameLobby = false;
         pendingAutoEnterGame = false;
+        pendingLoadSavePath = "";
+        pendingRestoreGuestFromSharedSave = false;
         setStatus(tr("Left the pre-game lobby.", "Вы вышли из лобби."), new Color(180, 200, 210));
     }
 

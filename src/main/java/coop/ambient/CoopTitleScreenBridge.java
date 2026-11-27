@@ -42,6 +42,8 @@ public final class CoopTitleScreenBridge {
     private static final String PREF_NODE = "/coop/launcher";
     private static final String PREF_LANG_KEY = "launcher.lang";
     private static final String PREF_NAME_KEY = "launcher.playerName";
+    public static final String SHARED_SAVE_DIR_NAME = "save_coop_shared";
+    private static final int MAX_SHARED_SAVE_ZIP_BYTES = 32 * 1024 * 1024;
 
     private static volatile boolean handlesResolved;
     private static volatile MethodHandle appDriverGetInstance;
@@ -49,11 +51,13 @@ public final class CoopTitleScreenBridge {
     private static volatile Class<?> titleStateClass;
     private static volatile VarHandle titleScreenPanelField;
     private static volatile VarHandle titleWidgetField;
+    private static volatile VarHandle titleSessionField;
     private static volatile MethodHandle titleIsShowingDialog;
     private static volatile MethodHandle titleMenuItemSelected;
     private static volatile Object titleContinueAction;
     private static volatile MethodHandle titleShowNewGameDialog;
     private static volatile MethodHandle titleShowLoadGameDialog;
+    private static volatile MethodHandle titleGoToState;
 
     private CoopTitleScreenBridge() {
     }
@@ -81,8 +85,17 @@ public final class CoopTitleScreenBridge {
                 MethodHandles.Lookup priv = MethodHandles.privateLookupIn(titleCls, MethodHandles.lookup());
                 titleScreenPanelField = findFieldHandle(priv, loader, titleCls, "screenPanel", "com.fs.starfarer.ui.z");
                 titleWidgetField = findFieldHandle(priv, loader, titleCls, "titleWidget", "com.fs.starfarer.title.B");
+                try {
+                    titleSessionField = priv.findVarHandle(titleCls, "session", java.util.Map.class);
+                } catch (Throwable ignored) {
+                }
                 titleIsShowingDialog = pub.findVirtual(titleCls, "isShowingDialog",
                         MethodType.methodType(boolean.class));
+                try {
+                    titleGoToState = pub.findVirtual(titleCls, "goToState",
+                            MethodType.methodType(void.class, String.class));
+                } catch (Throwable ignored) {
+                }
                 try {
                     Class<?> menuActionCls = Class.forName("com.fs.starfarer.title.C$o$o", false, loader);
                     Object[] constants = menuActionCls.getEnumConstants();
@@ -206,6 +219,216 @@ public final class CoopTitleScreenBridge {
         } catch (Throwable ignored) {
         }
         return false;
+    }
+
+    /**
+     * Loads a specific save folder path directly from the Title Screen (reproducing vanilla's
+     * {@code TitleScreenState.dialogDismissed} LoadGameDialog path without user interaction).
+     */
+    public static boolean loadSaveFromTitleScreen(String saveDirPath) {
+        if (saveDirPath == null || saveDirPath.trim().isEmpty()) {
+            return false;
+        }
+        Object state = currentTitleState();
+        if (state == null || titleSessionField == null || titleGoToState == null) {
+            return false;
+        }
+        try {
+            java.io.File dir = new java.io.File(saveDirPath.trim());
+            if (!dir.isDirectory() || !new java.io.File(dir, "campaign.xml").isFile()) {
+                return false;
+            }
+            Object sessionObj = titleSessionField.get(state);
+            if (!(sessionObj instanceof java.util.Map<?, ?> sessionMap)) {
+                return false;
+            }
+            Object campaignState = sessionMap.get("campaign state in session");
+            if (campaignState == null) {
+                return false;
+            }
+            ClassLoader loader = CoopTitleScreenBridge.class.getClassLoader();
+            MethodHandles.Lookup pub = MethodHandles.publicLookup();
+            Class<?> ceCls = Class.forName("com.fs.starfarer.campaign.CampaignEngine", false, loader);
+            MethodHandle resetInstance = pub.findStatic(ceCls, "resetInstance", MethodType.methodType(void.class));
+            resetInstance.invoke();
+
+            Class<?> cgmCls = Class.forName("com.fs.starfarer.campaign.save.CampaignGameManager", false, loader);
+            Class<?> cbIface = null;
+            Class<?> progressIface = null;
+            for (Class<?> iface : campaignState.getClass().getInterfaces()) {
+                if (iface.getName().endsWith(".CampaignEngine$o")) {
+                    progressIface = iface;
+                } else if (iface.getName().startsWith("com.fs.starfarer.campaign.oOoO")) {
+                    cbIface = iface;
+                }
+            }
+            if (cbIface == null || progressIface == null) {
+                return false;
+            }
+            MethodHandle loadMethod = pub.findStatic(cgmCls, "super",
+                    MethodType.methodType(String.class, String.class, cbIface, progressIface));
+            String err = (String) loadMethod.invoke(dir.getAbsolutePath(), campaignState, campaignState);
+            if (err == null) {
+                titleGoToState.invoke(state, "Campaign State");
+                return true;
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    /** Finds the newest non-shared {@code save_*} directory containing a valid {@code campaign.xml}. */
+    public static String findLatestHostSaveDirPath() {
+        try {
+            java.io.File[] dirs = {
+                    new java.io.File("../saves"),
+                    new java.io.File("saves")
+            };
+            java.io.File bestDir = null;
+            long bestModified = Long.MIN_VALUE;
+            for (java.io.File savesDir : dirs) {
+                if (!savesDir.isDirectory()) {
+                    continue;
+                }
+                java.io.File[] entries = savesDir.listFiles();
+                if (entries == null) {
+                    continue;
+                }
+                for (java.io.File f : entries) {
+                    if (f == null || !f.isDirectory() || !f.getName().startsWith("save_")) {
+                        continue;
+                    }
+                    if (SHARED_SAVE_DIR_NAME.equals(f.getName())) {
+                        continue;
+                    }
+                    java.io.File campaignXml = new java.io.File(f, "campaign.xml");
+                    java.io.File descriptorXml = new java.io.File(f, "descriptor.xml");
+                    if (!campaignXml.isFile() || !descriptorXml.isFile()) {
+                        continue;
+                    }
+                    long mod = campaignXml.lastModified();
+                    if (mod > bestModified) {
+                        bestModified = mod;
+                        bestDir = f;
+                    }
+                }
+            }
+            return bestDir == null ? "" : bestDir.getCanonicalPath();
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    /** Compresses {@code campaign.xml} and {@code descriptor.xml} from {@code saveDirPath} into a ZIP. */
+    public static byte[] packageSaveDirectoryAsZip(String saveDirPath) {
+        if (saveDirPath == null || saveDirPath.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            java.io.File dir = new java.io.File(saveDirPath.trim());
+            if (!dir.isDirectory()) {
+                return null;
+            }
+            String[] names = { "campaign.xml", "descriptor.xml" };
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream(256 * 1024);
+            try (java.util.zip.ZipOutputStream zos = new java.util.zip.ZipOutputStream(baos)) {
+                zos.setLevel(6);
+                byte[] buf = new byte[16 * 1024];
+                boolean wroteAny = false;
+                for (String name : names) {
+                    java.io.File src = new java.io.File(dir, name);
+                    if (!src.isFile()) {
+                        continue;
+                    }
+                    zos.putNextEntry(new java.util.zip.ZipEntry(name));
+                    try (java.io.FileInputStream fis = new java.io.FileInputStream(src)) {
+                        int n;
+                        while ((n = fis.read(buf)) > 0) {
+                            zos.write(buf, 0, n);
+                        }
+                    }
+                    zos.closeEntry();
+                    wroteAny = true;
+                }
+                if (!wroteAny) {
+                    return null;
+                }
+            }
+            byte[] zip = baos.toByteArray();
+            if (zip.length == 0 || zip.length > MAX_SHARED_SAVE_ZIP_BYTES) {
+                return null;
+            }
+            return zip;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * Extracts a shared host save ZIP into {@code <saves>/save_coop_shared/} safely (only
+     * {@code campaign.xml} and {@code descriptor.xml}). Returns the extracted directory path or {@code ""}.
+     */
+    public static String extractSharedSaveZip(byte[] zipBytes) {
+        if (zipBytes == null || zipBytes.length == 0 || zipBytes.length > MAX_SHARED_SAVE_ZIP_BYTES) {
+            return "";
+        }
+        try {
+            java.io.File savesDir = new java.io.File("../saves");
+            if (!savesDir.isDirectory()) {
+                savesDir = new java.io.File("saves");
+            }
+            if (!savesDir.isDirectory() && !savesDir.mkdirs()) {
+                return "";
+            }
+            java.io.File targetDir = new java.io.File(savesDir, SHARED_SAVE_DIR_NAME);
+            if (!targetDir.isDirectory() && !targetDir.mkdirs()) {
+                return "";
+            }
+            boolean hasCampaign = false;
+            boolean hasDescriptor = false;
+            byte[] buf = new byte[16 * 1024];
+            try (java.util.zip.ZipInputStream zis = new java.util.zip.ZipInputStream(
+                    new java.io.ByteArrayInputStream(zipBytes))) {
+                java.util.zip.ZipEntry entry;
+                while ((entry = zis.getNextEntry()) != null) {
+                    String name = entry.getName();
+                    if (!"campaign.xml".equals(name) && !"descriptor.xml".equals(name)) {
+                        zis.closeEntry();
+                        continue;
+                    }
+                    java.io.File tmp = new java.io.File(targetDir, name + ".tmp");
+                    java.io.File dest = new java.io.File(targetDir, name);
+                    try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tmp)) {
+                        int n;
+                        while ((n = zis.read(buf)) > 0) {
+                            fos.write(buf, 0, n);
+                        }
+                    }
+                    if (dest.exists()) {
+                        dest.delete();
+                    }
+                    if (!tmp.renameTo(dest)) {
+                        try (java.io.FileInputStream in = new java.io.FileInputStream(tmp);
+                             java.io.FileOutputStream out = new java.io.FileOutputStream(dest)) {
+                            int n;
+                            while ((n = in.read(buf)) > 0) {
+                                out.write(buf, 0, n);
+                            }
+                        }
+                        tmp.delete();
+                    }
+                    if ("campaign.xml".equals(name)) hasCampaign = true;
+                    if ("descriptor.xml".equals(name)) hasDescriptor = true;
+                    zis.closeEntry();
+                }
+            }
+            if (!hasCampaign || !hasDescriptor) {
+                return "";
+            }
+            return targetDir.getCanonicalPath();
+        } catch (Throwable ignored) {
+            return "";
+        }
     }
 
     private static boolean hasAnySaveGame() {
@@ -422,6 +645,9 @@ public final class CoopTitleScreenBridge {
     private static final String PREF_LAST_JOIN_HOST = "lastJoinHost";
     private static final String PREF_LAST_JOIN_PORT = "lastJoinPort";
     private static final String PREF_LAST_JOIN_PW = "lastJoinPassword";
+    private static final String PREF_LAST_HOST_PORT = "lastHostPort";
+    private static final String PREF_LAST_HOST_PW = "lastHostPassword";
+    private static final String PREF_LAST_HOST_PW_SET = "lastHostPasswordSet";
 
     /** Saves the player's lobby nickname across sessions. */
     public static void savePlayerName(String name) {
@@ -430,6 +656,46 @@ public final class CoopTitleScreenBridge {
         }
         try {
             Preferences.userRoot().node(PREF_NODE).put(PREF_NAME_KEY, name.trim());
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** True if the host has already generated or entered a saved lobby password. */
+    public static boolean hasSavedHostPassword() {
+        try {
+            return Preferences.userRoot().node(PREF_NODE).getBoolean(PREF_LAST_HOST_PW_SET, false);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /** Loads the last saved Host lobby port, or {@code ""} if never saved. */
+    public static String loadLastHostPort() {
+        try {
+            return Preferences.userRoot().node(PREF_NODE).get(PREF_LAST_HOST_PORT, "").trim();
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    /** Loads the last saved Host lobby password, or {@code ""} if empty/unset. */
+    public static String loadLastHostPassword() {
+        try {
+            return Preferences.userRoot().node(PREF_NODE).get(PREF_LAST_HOST_PW, "").trim();
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    /** Persists Host lobby port & password across game restarts and menu returns. */
+    public static void saveLastHostSettings(String port, String password) {
+        try {
+            Preferences prefs = Preferences.userRoot().node(PREF_NODE);
+            if (port != null && !port.trim().isEmpty()) {
+                prefs.put(PREF_LAST_HOST_PORT, port.trim());
+            }
+            prefs.put(PREF_LAST_HOST_PW, password == null ? "" : password.trim());
+            prefs.putBoolean(PREF_LAST_HOST_PW_SET, true);
         } catch (Throwable ignored) {
         }
     }

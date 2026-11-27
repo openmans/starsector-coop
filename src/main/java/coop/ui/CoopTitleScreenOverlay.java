@@ -113,6 +113,7 @@ public final class CoopTitleScreenOverlay {
                 detachAll();
                 return;
             }
+            coop.CoopModPlugin.shutdownActiveSessionOnTitleScreen();
             UIPanelAPI screen = CoopTitleScreenBridge.currentTitleScreenPanel();
             if (screen == null) {
                 return;
@@ -254,7 +255,11 @@ public final class CoopTitleScreenOverlay {
                 modalOpen = false;
                 removeModal();
                 removeDock();
-                if (CoopTitleScreenBridge.enterGameFromTitleScreen()) {
+                String savePath = session.consumePendingLoadSavePath();
+                boolean entered = !savePath.isEmpty()
+                        ? CoopTitleScreenBridge.loadSaveFromTitleScreen(savePath)
+                        : CoopTitleScreenBridge.enterGameFromTitleScreen();
+                if (entered) {
                     launchingIntoGame = true;
                 } else {
                     dockRebuildPending = true;
@@ -317,7 +322,11 @@ public final class CoopTitleScreenOverlay {
 
         String badgeText;
         Color badgeColor;
-        if (lobby.isConnected()) {
+        if (lobby.isTransferringSave()) {
+            badgeText = (lobby.isHost() ? session.tr("SENDING ", "ОТПРАВКА ")
+                    : session.tr("DOWNLOADING ", "СКАЧИВАНИЕ ")) + lobby.saveTransferPercent() + "%";
+            badgeColor = new Color(130, 225, 255);
+        } else if (lobby.isConnected()) {
             badgeText = session.tr("READY ", "ГОТОВЫ ") + lobby.readyCount() + "/" + lobby.totalCount();
             badgeColor = lobby.allReady() ? GREEN_BRIGHT : new Color(255, 214, 102);
         } else if (lst == coop.net.CoopPreGameLobby.State.CONNECTING) {
@@ -442,11 +451,15 @@ public final class CoopTitleScreenOverlay {
                         Alignment.MID, CutStyle.ALL, 126f, 28f, 0f);
                 readyBtn.getPosition().inTL(10f, row1Y);
 
-                boolean allReady = lobby.allReady();
+                boolean transferring = lobby.isTransferringSave();
+                boolean allReady = lobby.allReady() && !transferring;
                 ButtonAPI startBtn = ui.addButton(
-                        allReady ? session.tr("START SESSION", "СТАРТ СЕССИИ")
+                        transferring
+                                ? session.tr("SAVE " + lobby.saveTransferPercent() + "%",
+                                        "СЕЙВ " + lobby.saveTransferPercent() + "%")
+                                : (allReady ? session.tr("START SESSION", "СТАРТ СЕССИИ")
                                 : session.tr("Wait (" + lobby.readyCount() + "/" + lobby.totalCount() + ")",
-                                        "Ждём (" + lobby.readyCount() + "/" + lobby.totalCount() + ")"),
+                                        "Ждём (" + lobby.readyCount() + "/" + lobby.totalCount() + ")")),
                         ID_LOBBY_START,
                         allReady ? GREEN_BRIGHT : LABEL_MUTED,
                         allReady ? GREEN_TAB_ACTIVE_BG : TAB_INACTIVE_BG,

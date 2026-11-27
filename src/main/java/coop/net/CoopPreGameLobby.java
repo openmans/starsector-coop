@@ -10,9 +10,11 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Objects;
+import java.util.Set;
 
 /**
  * Lightweight non-blocking NIO TCP pre-game lobby used on Starsector's green Title Screen
@@ -26,7 +28,10 @@ import java.util.Objects;
 public final class CoopPreGameLobby {
 
     private static final int MAX_CLIENTS = 8;
-    private static final int MAX_LINE_BYTES = 16 * 1024;
+    private static final int MAX_LINE_BYTES = 256 * 1024;
+    private static final int SAVE_CHUNK_BYTES = 48 * 1024;
+    private static final int SAVE_CHUNKS_PER_TICK = 4;
+    private static final long SAVE_TRANSFER_TIMEOUT_MS = 30_000L;
     private static final long PING_INTERVAL_MS = 3_000L;
     private static final long PEER_TIMEOUT_MS = 12_000L;
     private static final long CONNECT_TIMEOUT_MS = 8_000L;
@@ -36,6 +41,7 @@ public final class CoopPreGameLobby {
         HOSTING,
         CONNECTING,
         IN_LOBBY,
+        TRANSFERRING_SAVE,
         LAUNCHING,
         ERROR
     }
@@ -90,16 +96,39 @@ public final class CoopPreGameLobby {
     // Shared snapshot for UI
     private List<Member> members = List.of();
     private boolean launchTriggered;
+    private boolean useSharedSaveOnStart;
     private String lastError = "";
     private long revision;
 
+    // Host save transfer state
+    private byte[] pendingSaveZip;
+    private int totalSaveChunks;
+    private int nextSaveChunkToSend;
+    private boolean saveEndSent;
+    private final Set<String> saveAckedClientIds = new HashSet<>();
+    private long saveTransferStartedAt;
+
+    // Guest save transfer state
+    private boolean receivingSave;
+    private int expectedSaveChunks;
+    private int receivedSaveChunks;
+    private byte[][] incomingSaveChunks;
+    private byte[] completedSaveZip;
+
     public State state() { return state; }
     public boolean isActive() {
-        return state == State.HOSTING || state == State.CONNECTING || state == State.IN_LOBBY;
+        return state == State.HOSTING
+                || state == State.CONNECTING
+                || state == State.IN_LOBBY
+                || state == State.TRANSFERRING_SAVE;
     }
     public boolean isHost() { return hostMode; }
-    public boolean isConnected() { return state == State.HOSTING || state == State.IN_LOBBY; }
+    public boolean isConnected() {
+        return state == State.HOSTING || state == State.IN_LOBBY || state == State.TRANSFERRING_SAVE;
+    }
+    public boolean isTransferringSave() { return state == State.TRANSFERRING_SAVE || receivingSave; }
     public boolean isLaunchTriggered() { return launchTriggered; }
+    public boolean useSharedSaveOnStart() { return useSharedSaveOnStart; }
     public boolean isLocalReady() { return localReady; }
     public int boundPort() { return boundPort; }
     public String worldSeed() { return worldSeed; }
@@ -108,6 +137,21 @@ public final class CoopPreGameLobby {
     public String lastError() { return lastError; }
     public long revision() { return revision; }
     public List<Member> members() { return members; }
+
+    public int saveTransferPercent() {
+        if (hostMode) {
+            if (totalSaveChunks <= 0) return 0;
+            return Math.min(100, Math.round((nextSaveChunkToSend * 100f) / totalSaveChunks));
+        }
+        if (expectedSaveChunks <= 0) return 0;
+        return Math.min(100, Math.round((receivedSaveChunks * 100f) / expectedSaveChunks));
+    }
+
+    public byte[] consumeCompletedSaveZip() {
+        byte[] out = completedSaveZip;
+        completedSaveZip = null;
+        return out;
+    }
 
     public int totalCount() {
         return members.size();
@@ -236,11 +280,57 @@ public final class CoopPreGameLobby {
 
     /** Host triggers campaign launch: notifies all guests with final world settings and closes the lobby port. */
     public void triggerHostStart() {
+        triggerHostStartInternal(false);
+    }
+
+    /**
+     * Host triggers campaign launch while streaming a compressed save ZIP ({@code saveZipBytes})
+     * to all connected guests first so every player loads the exact same shared save together.
+     */
+    public boolean triggerHostStartWithSave(String saveName, byte[] saveZipBytes, long nowMillis) {
         if (!hostMode || state != State.HOSTING) {
+            return false;
+        }
+        int authedCount = 0;
+        for (PeerLink link : clients) {
+            if (link.authed) authedCount++;
+        }
+        if (saveZipBytes == null || saveZipBytes.length == 0 || authedCount == 0) {
+            triggerHostStartInternal(saveZipBytes != null && saveZipBytes.length > 0);
+            return false;
+        }
+        resetTransferState();
+        this.pendingSaveZip = saveZipBytes;
+        this.totalSaveChunks = (saveZipBytes.length + SAVE_CHUNK_BYTES - 1) / SAVE_CHUNK_BYTES;
+        this.nextSaveChunkToSend = 0;
+        this.saveEndSent = false;
+        this.saveTransferStartedAt = nowMillis;
+        this.useSharedSaveOnStart = true;
+        this.state = State.TRANSFERRING_SAVE;
+
+        JSONObject begin = new JSONObject();
+        putQuiet(begin, "t", "SAVE_BEGIN");
+        putQuiet(begin, "name", saveName == null ? "save_coop_shared" : saveName);
+        putQuiet(begin, "size", saveZipBytes.length);
+        putQuiet(begin, "chunks", totalSaveChunks);
+        for (PeerLink link : clients) {
+            if (link.authed) {
+                enqueue(link, begin);
+                flush(link);
+            }
+        }
+        bumpRevision();
+        return true;
+    }
+
+    private void triggerHostStartInternal(boolean sharedSave) {
+        if (!hostMode || (state != State.HOSTING && state != State.TRANSFERRING_SAVE)) {
             return;
         }
+        this.useSharedSaveOnStart = sharedSave;
         JSONObject start = new JSONObject();
         putQuiet(start, "t", "START");
+        putQuiet(start, "useSharedSave", sharedSave);
         putQuiet(start, "seed", worldSeed);
         putQuiet(start, "size", worldSize);
         putQuiet(start, "age", worldAge);
@@ -251,6 +341,7 @@ public final class CoopPreGameLobby {
                 flush(link);
             }
         }
+        resetTransferState();
         launchTriggered = true;
         state = State.LAUNCHING;
         closeChannelsOnly();
@@ -260,9 +351,10 @@ public final class CoopPreGameLobby {
     /** Advances non-blocking I/O; call once per UI frame. Returns {@code true} if state/roster changed. */
     public boolean tick(long nowMillis) {
         long before = revision;
-        if (hostMode && state == State.HOSTING) {
+        if (hostMode && (state == State.HOSTING || state == State.TRANSFERRING_SAVE)) {
             tickHost(nowMillis);
-        } else if (!hostMode && (state == State.CONNECTING || state == State.IN_LOBBY)) {
+        } else if (!hostMode && (state == State.CONNECTING || state == State.IN_LOBBY
+                || state == State.TRANSFERRING_SAVE)) {
             tickGuest(nowMillis);
         }
         return revision != before;
@@ -271,11 +363,13 @@ public final class CoopPreGameLobby {
     /** Closes all sockets and resets lobby state to {@link State#IDLE}. */
     public void stop() {
         closeChannelsOnly();
+        resetTransferState();
         state = State.IDLE;
         hostMode = false;
         boundPort = 0;
         localReady = false;
         launchTriggered = false;
+        useSharedSaveOnStart = false;
         lastError = "";
         members = List.of();
         bumpRevision();
@@ -284,10 +378,25 @@ public final class CoopPreGameLobby {
     /** Closes sockets while preserving {@link #launchTriggered} and world settings for transition into campaign. */
     public void closeChannelsKeepSummary() {
         closeChannelsOnly();
-        if (state == State.HOSTING || state == State.CONNECTING || state == State.IN_LOBBY) {
+        if (state == State.HOSTING || state == State.CONNECTING
+                || state == State.IN_LOBBY || state == State.TRANSFERRING_SAVE) {
             state = State.IDLE;
             bumpRevision();
         }
+    }
+
+    private void resetTransferState() {
+        pendingSaveZip = null;
+        totalSaveChunks = 0;
+        nextSaveChunkToSend = 0;
+        saveEndSent = false;
+        saveAckedClientIds.clear();
+        saveTransferStartedAt = 0L;
+        receivingSave = false;
+        expectedSaveChunks = 0;
+        receivedSaveChunks = 0;
+        incomingSaveChunks = null;
+        completedSaveZip = null;
     }
 
     // ---- Host NIO loop ----
@@ -363,6 +472,54 @@ public final class CoopPreGameLobby {
             broadcastRoster();
             bumpRevision();
         }
+
+        if (state == State.TRANSFERRING_SAVE && pendingSaveZip != null) {
+            int sentThisTick = 0;
+            while (nextSaveChunkToSend < totalSaveChunks && sentThisTick < SAVE_CHUNKS_PER_TICK) {
+                int idx = nextSaveChunkToSend++;
+                int startOff = idx * SAVE_CHUNK_BYTES;
+                int len = Math.min(SAVE_CHUNK_BYTES, pendingSaveZip.length - startOff);
+                byte[] slice = new byte[len];
+                System.arraycopy(pendingSaveZip, startOff, slice, 0, len);
+                JSONObject chunkMsg = new JSONObject();
+                putQuiet(chunkMsg, "t", "SAVE_CHUNK");
+                putQuiet(chunkMsg, "i", idx);
+                putQuiet(chunkMsg, "d", Base64.getEncoder().encodeToString(slice));
+                for (PeerLink link : clients) {
+                    if (link.authed) {
+                        enqueue(link, chunkMsg);
+                    }
+                }
+                sentThisTick++;
+                bumpRevision();
+            }
+            if (nextSaveChunkToSend >= totalSaveChunks && !saveEndSent) {
+                saveEndSent = true;
+                JSONObject endMsg = new JSONObject();
+                putQuiet(endMsg, "t", "SAVE_END");
+                for (PeerLink link : clients) {
+                    if (link.authed) {
+                        enqueue(link, endMsg);
+                    }
+                }
+                bumpRevision();
+            }
+            int authedCount = 0;
+            int ackedCount = 0;
+            for (PeerLink link : clients) {
+                flush(link);
+                if (link.authed) {
+                    authedCount++;
+                    if (saveAckedClientIds.contains(link.id)) {
+                        ackedCount++;
+                    }
+                }
+            }
+            if ((authedCount == 0 || ackedCount >= authedCount)
+                    || (saveTransferStartedAt > 0L && now - saveTransferStartedAt > SAVE_TRANSFER_TIMEOUT_MS)) {
+                triggerHostStartInternal(true);
+            }
+        }
     }
 
     private boolean readAndProcessHost(PeerLink link, long now) {
@@ -407,6 +564,12 @@ public final class CoopPreGameLobby {
                     }
                     case "LEAVE" -> {
                         return false;
+                    }
+                    case "SAVE_ACK" -> {
+                        if (link.authed && state == State.TRANSFERRING_SAVE) {
+                            saveAckedClientIds.add(link.id);
+                            bumpRevision();
+                        }
                     }
                     case "PING" -> {
                         JSONObject pong = new JSONObject();
@@ -487,7 +650,7 @@ public final class CoopPreGameLobby {
             }
         }
 
-        if (now >= nextPingAt && state == State.IN_LOBBY) {
+        if (now >= nextPingAt && (state == State.IN_LOBBY || state == State.TRANSFERRING_SAVE)) {
             nextPingAt = now + PING_INTERVAL_MS;
             JSONObject ping = new JSONObject();
             putQuiet(ping, "t", "PING");
@@ -508,11 +671,12 @@ public final class CoopPreGameLobby {
         }
         for (String line : lines) {
             handleGuestMessage(line);
-            if (state != State.CONNECTING && state != State.IN_LOBBY) {
+            if (state != State.CONNECTING && state != State.IN_LOBBY && state != State.TRANSFERRING_SAVE) {
                 return;
             }
         }
-        if (state == State.IN_LOBBY && now - serverLink.lastHeardAt > PEER_TIMEOUT_MS) {
+        if ((state == State.IN_LOBBY || state == State.TRANSFERRING_SAVE)
+                && now - serverLink.lastHeardAt > PEER_TIMEOUT_MS) {
             failGuest("Host lobby timed out");
         }
     }
@@ -564,6 +728,59 @@ public final class CoopPreGameLobby {
                     }
                     bumpRevision();
                 }
+                case "SAVE_BEGIN" -> {
+                    int total = Math.max(0, msg.optInt("chunks", 0));
+                    if (total > 0) {
+                        receivingSave = true;
+                        state = State.TRANSFERRING_SAVE;
+                        expectedSaveChunks = total;
+                        receivedSaveChunks = 0;
+                        incomingSaveChunks = new byte[total][];
+                        completedSaveZip = null;
+                        bumpRevision();
+                    }
+                }
+                case "SAVE_CHUNK" -> {
+                    int idx = msg.optInt("i", -1);
+                    String b64 = msg.optString("d", "");
+                    if (receivingSave && incomingSaveChunks != null
+                            && idx >= 0 && idx < expectedSaveChunks && !b64.isEmpty()) {
+                        if (incomingSaveChunks[idx] == null) {
+                            incomingSaveChunks[idx] = Base64.getDecoder().decode(b64);
+                            receivedSaveChunks++;
+                            bumpRevision();
+                        }
+                    }
+                }
+                case "SAVE_END" -> {
+                    if (receivingSave && incomingSaveChunks != null) {
+                        int totalLen = 0;
+                        boolean complete = true;
+                        for (byte[] ch : incomingSaveChunks) {
+                            if (ch == null) {
+                                complete = false;
+                                break;
+                            }
+                            totalLen += ch.length;
+                        }
+                        if (complete && totalLen > 0) {
+                            byte[] assembled = new byte[totalLen];
+                            int pos = 0;
+                            for (byte[] ch : incomingSaveChunks) {
+                                System.arraycopy(ch, 0, assembled, pos, ch.length);
+                                pos += ch.length;
+                            }
+                            completedSaveZip = assembled;
+                        }
+                        receivingSave = false;
+                        incomingSaveChunks = null;
+                        JSONObject ack = new JSONObject();
+                        putQuiet(ack, "t", "SAVE_ACK");
+                        enqueue(serverLink, ack);
+                        flush(serverLink);
+                        bumpRevision();
+                    }
+                }
                 case "START" -> {
                     String s = msg.optString("seed", "").trim();
                     if (!s.isEmpty()) worldSeed = s;
@@ -573,6 +790,8 @@ public final class CoopPreGameLobby {
                     if (!ag.isEmpty()) worldAge = ag;
                     int p = msg.optInt("port", boundPort);
                     if (p > 0) boundPort = p;
+                    useSharedSaveOnStart = msg.optBoolean("useSharedSave", false);
+                    receivingSave = false;
                     launchTriggered = true;
                     state = State.LAUNCHING;
                     closeChannelsOnly();

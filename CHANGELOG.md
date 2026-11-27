@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.15 (Shared host save download & synced load, persistent host password, zero port leak on exit)
+
+- **Shared Host Save download & automatic synced load (`CoopPreGameLobby`, `CoopTitleScreenBridge`, `CoopModPlugin`):**
+  when the Host clicks **`СТАРТ СЕССИИ`** in the Title Screen Pre-Game Lobby, the Host's latest
+  save (`campaign.xml` + `descriptor.xml`) is compressed into a ZIP and streamed cleanly over the
+  lobby TCP connection (`SAVE_BEGIN` / `SAVE_CHUNK` / `SAVE_END` / `SAVE_ACK`) to all connected
+  Guests into `saves/save_coop_shared/` with live progress (`Отправка/Скачивание сейва: N%`). Both
+  Host and Guest then load that exact same save together from the Title Screen, and the Guest's own
+  fleet, credits, cargo, officers, and location are automatically restored from the save's embedded
+  `CoopGuestSnapshot`.
+- **Fixed `"Address already in use"` when returning to the Main Menu or reloading (`CoopModPlugin`, `CoopTitleScreenOverlay`):**
+  added `CoopModPlugin.shutdownActiveSessionOnTitleScreen()` triggered as soon as the player returns
+  to `GameState.TITLE` (and stopped the pre-game lobby socket at the top of `onGameLoad()`), so
+  port 7777 is always freed cleanly without restarting the game.
+- **Persisted Host Lobby password across restarts and menu exits (`CoopTitleScreenBridge`, `CoopInGameLauncherSession`):**
+  the Host's lobby password & port are now saved and restored (`lastHostPort` / `lastHostPassword`),
+  instead of generating a fresh random password every time the game starts.
+
 ## 0.2.14 (Live battle join NPE fix, tactical map close, >48h clock sync, tabular trade, Fleet view)
 
 - **Fixed partner live co-op battle join silently failing (`CoopNetPump.launchLiveCombatClientArena`):**

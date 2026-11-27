@@ -47,6 +47,7 @@ import coop.util.CoopLog;
 
 public class CoopModPlugin extends BaseModPlugin {
     private static volatile CoopNetPump activePump;
+    private static volatile CoopNetService activeNetService;
     private CoopNetService netService;
     /**
      * The previous game's pump, kept only so its router mapping can be released on the next load.
@@ -59,6 +60,44 @@ public class CoopModPlugin extends BaseModPlugin {
     /** Returns the active campaign's {@link CoopNetPump}, or {@code null} when not in a campaign. */
     public static CoopNetPump activeNetPump() {
         return activePump;
+    }
+
+    /**
+     * Tears down any live campaign network session when returning to the Title Screen
+     * ({@code GameState.TITLE}). Starsector has no exit-to-menu ModPlugin callback, so without
+     * this the previous host/guest TCP+UDP port stays bound ("Address already in use") until exit.
+     */
+    public static void shutdownActiveSessionOnTitleScreen() {
+        CoopNetPump pump = activePump;
+        CoopNetService svc = activeNetService;
+        if (pump == null && svc == null) {
+            return;
+        }
+        activePump = null;
+        activeNetService = null;
+        try {
+            if (pump != null) {
+                pump.sendSessionLeaveInline(coop.net.CoopMessages.LEAVE_REASON_MENU);
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+        }
+        try {
+            if (svc != null) {
+                svc.shutdown();
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+        }
+        try {
+            if (pump != null) {
+                tearDownPreviousPump(pump);
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+        }
+        try {
+            coop.ui.CoopInGameLauncherSession.shared().leavePreGameLobby();
+        } catch (RuntimeException | LinkageError ignored) {
+        }
+        CoopLog.info(CoopModPlugin.class, "Coop shut down active campaign session on return to Title Screen");
     }
 
     @Override
@@ -338,6 +377,8 @@ public class CoopModPlugin extends BaseModPlugin {
 
     @Override
     public void onGameLoad(boolean newGame) {
+        // Ensure the Title Screen pre-game lobby releases the co-op port before CoopNetService binds it.
+        coop.ui.CoopInGameLauncherSession.shared().stopPreGameLobbyOnStateExit();
         beginGameSession();
         if (netService != null) {
             // Graceful session end: loading another game tears this session's transport down, so the
@@ -364,6 +405,9 @@ public class CoopModPlugin extends BaseModPlugin {
             tearDownPreviousPump(netPump);
             netPump = null;
             activePump = null;
+            activeNetService = null;
+        } else if (activePump != null || activeNetService != null) {
+            shutdownActiveSessionOnTitleScreen();
         }
         // The held guest snapshot belongs to the session that just ended; the copy already written
         // into the previous save is untouched, which is the point of it.
@@ -380,9 +424,13 @@ public class CoopModPlugin extends BaseModPlugin {
         // this only ever adds the ability and never resets the player's answer.
         ensureAllyAbility(Global.getSector());
         netService = new CoopNetService();
+        activeNetService = netService;
         // Before the pump installs: no session can be active yet, so this only ever sees mirrors
         // orphaned by a previous session's save (see CoopMirrorOrphanSweeper).
         CoopMirrorOrphanSweeper.sweep(Global.getSector());
+        // If Guest just loaded the Host's downloaded shared save, restore their own fleet/credits/cargo
+        // from the snapshot embedded inside that save so both players share the exact same world cleanly.
+        restoreGuestFromSharedSaveIfPending(Global.getSector());
         // Tag saved native trail owners before replacing Guest's world-affecting ghost manager.
         prepareAmbientWorld(Global.getSector());
         // Before the pump, so it sits earlier in the transient script list and runs first each frame:
@@ -429,6 +477,64 @@ public class CoopModPlugin extends BaseModPlugin {
         // depends on it, and it must not stand between a load and a working session.
         installExpectedCampaignNotice(newGame);
         CoopLog.info(CoopModPlugin.class, "CoopNetPump registered");
+    }
+
+    private static void restoreGuestFromSharedSaveIfPending(com.fs.starfarer.api.campaign.SectorAPI sector) {
+        if (!coop.ui.CoopInGameLauncherSession.shared().consumePendingRestoreGuestFromSharedSave()) {
+            return;
+        }
+        if (sector == null || sector.getPersistentData() == null) {
+            return;
+        }
+        try {
+            java.util.Map<String, Object> data = sector.getPersistentData();
+            CoopGuestSnapshot snapshot = null;
+            String localPlayerId = CoopSeedSync.currentLocalPlayerId();
+            Object mapObj = data.get(CoopGuestSnapshotStore.PERSISTENT_MAP_KEY);
+            if (mapObj instanceof java.util.Map<?, ?> byPlayer) {
+                if (localPlayerId != null && !localPlayerId.trim().isEmpty()) {
+                    Object match = byPlayer.get(localPlayerId.trim());
+                    if (match instanceof CoopGuestSnapshot s) {
+                        snapshot = s;
+                    }
+                }
+                if (snapshot == null) {
+                    for (Object v : byPlayer.values()) {
+                        if (v instanceof CoopGuestSnapshot s) {
+                            snapshot = s;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (snapshot == null) {
+                Object single = data.get(CoopGuestSnapshotStore.PERSISTENT_KEY);
+                if (single instanceof CoopGuestSnapshot s) {
+                    snapshot = s;
+                }
+            }
+            if (snapshot != null) {
+                coop.save.CoopGuestSnapshotRestorer.RestoreReport report =
+                        coop.save.CoopGuestSnapshotRestorer.restore(
+                                snapshot, coop.save.CoopGuestSnapshotRestorer.liveTarget(sector));
+                if (report.applied()) {
+                    CoopLog.info(CoopModPlugin.class, "Coop restored guest fleet from shared host save: ships="
+                            + report.shipsRestored() + " credits=" + Math.round(report.creditsRestored()));
+                    coop.ui.CoopFeed.post(
+                            coop.ui.CoopUiLang.tr(
+                                    "Co-op: loaded host's shared save and restored your fleet ("
+                                            + report.shipsRestored() + " ships, "
+                                            + Math.round(report.creditsRestored()) + " credits).",
+                                    "Кооп: загружен общий сейв хоста, ваш флот и кредиты восстановлены ("
+                                            + report.shipsRestored() + " кор., "
+                                            + Math.round(report.creditsRestored()) + "¢)."),
+                            com.fs.starfarer.api.util.Misc.getPositiveHighlightColor(),
+                            coop.ui.CoopFeed.Severity.IMPORTANT);
+                }
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopModPlugin.class, "Coop could not restore guest snapshot from shared save", ex);
+        }
     }
 
     static void prepareAmbientWorld(com.fs.starfarer.api.campaign.SectorAPI sector) {

@@ -5,8 +5,10 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CoopPreGameLobbyTest {
@@ -162,6 +164,54 @@ class CoopPreGameLobbyTest {
         } finally {
             host.stop();
             guestSession.leavePreGameLobby();
+        }
+    }
+
+    @Test
+    void chunkedSharedSaveTransferDeliversExactZipToGuestBeforeStart() throws Exception {
+        CoopPreGameLobby host = new CoopPreGameLobby();
+        CoopPreGameLobby guest = new CoopPreGameLobby();
+        try {
+            assertTrue(host.startHost(0, "savedpw", "Host", "MN-11223344", "normal", "mixed", 1_000L));
+            assertTrue(guest.startGuest("127.0.0.1", host.boundPort(), "savedpw", "Guest", 1_000L));
+            pumpBoth(host, guest);
+            guest.toggleLocalReady();
+            pumpBoth(host, guest);
+            assertTrue(host.allReady());
+
+            // Multi-chunk (~140 KB) synthetic ZIP payload
+            byte[] payload = new byte[140_000];
+            for (int i = 0; i < payload.length; i++) {
+                payload[i] = (byte) ((i * 31) ^ (i >> 7));
+            }
+            assertTrue(host.triggerHostStartWithSave("save_coop_shared", payload, 15_000L));
+            assertTrue(host.isTransferringSave());
+
+            long now = 15_000L;
+            byte[] received = null;
+            for (int i = 0; i < 80; i++) {
+                now += 25L;
+                host.tick(now);
+                guest.tick(now);
+                byte[] chunked = guest.consumeCompletedSaveZip();
+                if (chunked != null) {
+                    received = chunked;
+                }
+                if (host.isLaunchTriggered() && guest.isLaunchTriggered()) {
+                    break;
+                }
+                Thread.sleep(10);
+            }
+
+            assertNotNull(received, "Guest should have assembled the full shared save zip");
+            assertArrayEquals(payload, received);
+            assertTrue(host.isLaunchTriggered());
+            assertTrue(guest.isLaunchTriggered());
+            assertTrue(host.useSharedSaveOnStart());
+            assertTrue(guest.useSharedSaveOnStart());
+        } finally {
+            host.stop();
+            guest.stop();
         }
     }
 }
