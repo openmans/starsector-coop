@@ -208,10 +208,28 @@ public final class CoopInstallLayout {
                 && new File(new File(root, "jars"), "Wingman.jar").isFile();
     }
 
-    /** True when Starsector Russian translation has been applied (strategic RC9 installer or overlay). */
+    /** True when Starsector Russian translation has been applied (RC9 installer, overlay, or Cyrillic core data). */
     public boolean isRussianInstalled() {
-        return new File(new File(installRoot, ".starsector-ru-strategic"), "active.json").isFile()
-                || new File(new File(starsectorCore(), "data"), "strings.en-backup").isDirectory();
+        if (new File(new File(installRoot, ".starsector-ru-strategic"), "active.json").isFile()
+                || new File(new File(starsectorCore(), "data"), "strings.en-backup").isDirectory()) {
+            return true;
+        }
+        File abilities = new File(new File(new File(starsectorCore(), "data"), "campaign"), "abilities.csv");
+        if (!abilities.isFile()) {
+            return false;
+        }
+        try (java.io.InputStream in = new java.io.FileInputStream(abilities)) {
+            byte[] buf = in.readNBytes(2048);
+            String head = new String(buf, java.nio.charset.StandardCharsets.UTF_8);
+            for (int i = 0; i < head.length(); i++) {
+                char c = head.charAt(i);
+                if (c >= '\u0400' && c <= '\u04FF') {
+                    return true;
+                }
+            }
+        } catch (java.io.IOException ignored) {
+        }
+        return false;
     }
 
     /** The folder holding {@code common} and every {@code save_*}. */

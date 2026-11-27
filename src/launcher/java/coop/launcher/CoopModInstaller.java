@@ -45,29 +45,6 @@ public final class CoopModInstaller {
     /** Safety ceiling for a release zip (current archive is ~3.6 MiB). */
     private static final long MAX_DOWNLOAD_BYTES = 128L * 1024L * 1024L;
     private static final int BUFFER_SIZE = 16 * 1024;
-    private static volatile Path pendingRussianHelperScript;
-
-    /**
-     * Launches a staged post-exit PowerShell helper (if {@code Starsector-RU.exe} needed the
-     * Starsector JRE {@code javaw.exe} to exit first) and returns {@code true} when the launcher
-     * should immediately exit so the helper can apply the translation and relaunch it.
-     */
-    public static boolean launchPendingRussianHelperIfAny() {
-        Path script = pendingRussianHelperScript;
-        pendingRussianHelperScript = null;
-        if (script == null || !Files.isRegularFile(script)) {
-            return false;
-        }
-        try {
-            new ProcessBuilder("powershell.exe", "-NoProfile", "-WindowStyle", "Hidden",
-                    "-ExecutionPolicy", "Bypass", "-File", script.toAbsolutePath().toString())
-                    .start();
-            return true;
-        } catch (IOException ex) {
-            LOG.warn("Failed to spawn Russian translation helper script " + script, ex);
-            return false;
-        }
-    }
 
     /** Receives human-readable progress messages and optional percentage (-1 when unknown). */
     @FunctionalInterface
@@ -292,16 +269,12 @@ public final class CoopModInstaller {
             }
 
             listener.onProgress("Installed v" + asset.version(), 100);
-            boolean pendingRu = pendingRussianHelperScript != null;
-            boolean restartNeeded = !extracted.pendingFiles().isEmpty() || pendingRu;
             String summary = "Installed Starsector Coop v" + asset.version() + wingmanSuffix + russianSuffix
                     + " (" + totalFiles + " files)"
-                    + (pendingRu
-                    ? ". Applying Starsector Russian translation (launcher will restart automatically)..."
-                    : extracted.pendingFiles().isEmpty()
+                    + (extracted.pendingFiles().isEmpty()
                     ? "."
                     : ". Restart Coop Launcher to swap the locked jar file(s).");
-            return new InstallResult(true, false, restartNeeded,
+            return new InstallResult(true, false, !extracted.pendingFiles().isEmpty(),
                     asset.version(), totalFiles, summary, details);
         } catch (AccessDeniedException ex) {
             String msg = "Windows would not let the installer write into " + layout.modRoot() + ".";
@@ -394,121 +367,132 @@ public final class CoopModInstaller {
         return out.filesExtracted();
     }
 
+    /**
+     * Runs {@code Starsector-RU.exe install --vanilla-only} against a clean temporary staging copy
+     * of the ~30 MiB vanilla core files ({@code starfarer*.jar}, {@code data/}, {@code graphics/fonts/},
+     * {@code graphics/ui/}) and copies the translated result back into {@code layout.starsectorCore()}.
+     *
+     * <p>Staging outside {@code layout.installRoot()} prevents {@code Starsector-RU.exe}'s
+     * running-process check from colliding with the launcher's own {@code <install>/jre/bin/javaw.exe},
+     * so the launcher never has to close or restart during Russian translation installation.
+     */
     private static int runStarsectorRuInstaller(Path zipPath, String ruExeEntry,
                                                 CoopInstallLayout layout, List<String> details)
             throws IOException {
-        Path stageDir = layout.installRoot().toPath().resolve(".coop-ru-installer");
-        ExtractOutcome out = extractArchive(zipPath, stageDir, "");
-        Path exePath = stageDir.resolve(ruExeEntry).normalize();
-        if (!Files.isRegularFile(exePath)) {
-            throw new IOException("Starsector-RU.exe not found after extracting archive.");
+        Path realState = layout.installRoot().toPath().resolve(".starsector-ru-strategic");
+        boolean hasStrategicReceipt = Files.isRegularFile(realState.resolve("active.json"));
+        if (!hasStrategicReceipt && layout.isRussianInstalled()) {
+            details.add("Starsector is already translated to Russian (Cyrillic detected in starsector-core); "
+                    + "keeping existing translation intact.");
+            return 0;
         }
-        if (isRunningFromInstallJre(layout)) {
-            Path helper = writeDeferredRussianHelper(exePath, stageDir, layout);
-            pendingRussianHelperScript = helper;
-            details.add("Prepared Starsector 0.98.5a-RC9 Russian installer (" + exePath.getFileName()
-                    + "); will run automatically as the launcher restarts.");
-            return out.filesExtracted();
-        }
-        details.add("Running Starsector-RU.exe --vanilla-only on " + layout.installRoot() + "...");
-        ProcessBuilder pb = new ProcessBuilder(
-                exePath.toAbsolutePath().toString(),
-                "install",
-                "--game", layout.installRoot().getAbsolutePath(),
-                "--vanilla-only");
-        pb.directory(exePath.getParent().toFile());
-        pb.redirectErrorStream(true);
-        Process proc = pb.start();
-        String output;
-        try (InputStream in = proc.getInputStream()) {
-            output = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-        }
-        int exit;
+        Path exeStageDir = Files.createTempDirectory("coop-ru-exe-");
+        Path sandboxDir = Files.createTempDirectory("coop-ru-sandbox-");
         try {
-            exit = proc.waitFor();
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Russian installer interrupted", ex);
+            extractArchive(zipPath, exeStageDir, "");
+            Path exePath = exeStageDir.resolve(ruExeEntry).normalize();
+            if (!Files.isRegularFile(exePath)) {
+                throw new IOException("Starsector-RU.exe not found after extracting archive.");
+            }
+
+            // Prepare isolated sandbox with only the vanilla core files Starsector-RU.exe patches (~30 MiB)
+            Path realCore = layout.starsectorCore().toPath();
+            Path sandboxCore = sandboxDir.resolve("starsector-core");
+            Files.createDirectories(sandboxCore);
+            Files.createDirectories(sandboxDir.resolve("mods"));
+            for (String jarName : new String[]{"starfarer_obf.jar", "starfarer.api.jar"}) {
+                Path srcJar = realCore.resolve(jarName);
+                if (Files.isRegularFile(srcJar)) {
+                    Files.copy(srcJar, sandboxCore.resolve(jarName), StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+            for (String relDir : new String[]{"data", "graphics/fonts", "graphics/ui"}) {
+                Path srcDir = realCore.resolve(relDir);
+                if (Files.isDirectory(srcDir)) {
+                    copyDirectory(srcDir, sandboxCore.resolve(relDir));
+                }
+            }
+            Path sandboxState = sandboxDir.resolve(".starsector-ru-strategic");
+            if (Files.isDirectory(realState) && hasStrategicReceipt) {
+                copyDirectory(realState, sandboxState);
+            }
+
+            details.add("Running Starsector-RU.exe --vanilla-only (in-place, keeping launcher open)...");
+            ProcessBuilder pb = new ProcessBuilder(
+                    exePath.toAbsolutePath().toString(),
+                    "install",
+                    "--game", sandboxDir.toAbsolutePath().toString(),
+                    "--vanilla-only");
+            pb.directory(exePath.getParent().toFile());
+            pb.redirectErrorStream(true);
+            Process proc = pb.start();
+            String output;
+            try (InputStream in = proc.getInputStream()) {
+                output = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            }
+            int exit;
+            try {
+                exit = proc.waitFor();
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Russian installer interrupted", ex);
+            }
+            for (String line : output.split("\\r?\\n")) {
+                String trimmed = line.trim();
+                if (!trimmed.isEmpty()) {
+                    details.add("[RU] " + trimmed);
+                }
+            }
+            if (exit != 0) {
+                throw new IOException("Starsector-RU.exe exited with code " + exit
+                        + (output.isBlank() ? "" : ": " + output.trim()));
+            }
+
+            // Copy translated files back to the real starsector-core atomically
+            int applied = copyTranslatedCoreBack(sandboxCore, sandboxState, realCore, realState);
+            details.add("Applied Starsector 0.98.5a-RC9 Russian translation (" + applied + " files).");
+            return applied;
+        } finally {
+            deleteDirectoryQuietly(exeStageDir);
+            deleteDirectoryQuietly(sandboxDir);
         }
-        for (String line : output.split("\\r?\\n")) {
-            String trimmed = line.trim();
-            if (!trimmed.isEmpty()) {
-                details.add("[RU] " + trimmed);
+    }
+
+    private static int copyTranslatedCoreBack(Path sandboxCore, Path sandboxState,
+                                              Path realCore, Path realState) throws IOException {
+        int count = 0;
+        // Prefer copying only the exact patched files recorded under .starsector-ru-strategic/sessions/*/core
+        Path patchedRoot = null;
+        Path sessionsDir = sandboxState.resolve("sessions");
+        if (Files.isDirectory(sessionsDir)) {
+            try (java.util.stream.Stream<Path> s = Files.list(sessionsDir)) {
+                for (Path session : s.toList()) {
+                    Path candidate = session.resolve("core");
+                    if (Files.isDirectory(candidate)) {
+                        patchedRoot = candidate;
+                        break;
+                    }
+                }
             }
         }
-        deleteDirectoryQuietly(stageDir);
-        if (exit != 0) {
-            throw new IOException("Starsector-RU.exe exited with code " + exit
-                    + (output.isBlank() ? "" : ": " + output.trim()));
-        }
-        details.add("Installed Starsector 0.98.5a-RC9 Russian translation (vanilla-only).");
-        return out.filesExtracted();
-    }
-
-    private static boolean isRunningFromInstallJre(CoopInstallLayout layout) {
-        try {
-            String javaHome = System.getProperty("java.home", "");
-            if (javaHome.isBlank()) {
-                return false;
+        Path sourceCore = patchedRoot != null ? patchedRoot : sandboxCore;
+        try (java.util.stream.Stream<Path> walk = Files.walk(sourceCore)) {
+            for (Path p : walk.toList()) {
+                if (Files.isDirectory(p)) {
+                    continue;
+                }
+                Path target = realCore.resolve(sourceCore.relativize(p));
+                if (target.getParent() != null) {
+                    Files.createDirectories(target.getParent());
+                }
+                Files.copy(p, target, StandardCopyOption.REPLACE_EXISTING);
+                count++;
             }
-            Path jvmPath = Path.of(javaHome).toAbsolutePath().normalize();
-            Path installPath = layout.installRoot().toPath().toAbsolutePath().normalize();
-            return jvmPath.startsWith(installPath);
-        } catch (RuntimeException ex) {
-            return false;
         }
-    }
-
-    private static Path writeDeferredRussianHelper(Path exePath, Path stageDir, CoopInstallLayout layout)
-            throws IOException {
-        long pid = ProcessHandle.current().pid();
-        Path script = Files.createTempFile("coop-apply-ru-", ".ps1");
-        String gameRoot = psQuote(layout.installRoot().getAbsolutePath());
-        String exe = psQuote(exePath.toAbsolutePath().toString());
-        String stage = psQuote(stageDir.toAbsolutePath().toString());
-        String jarsDir = psQuote(new File(layout.modRoot(), "jars").getAbsolutePath());
-        String logFile = psQuote(layout.launcherLog().getAbsolutePath());
-        File launcherExe = new File(layout.modRoot(), "Starsector Coop Launcher.exe");
-        File launcherCmd = new File(layout.modRoot(), "Coop Launcher.cmd");
-        String relaunchTarget = launcherExe.isFile()
-                ? "Start-Process -FilePath " + psQuote(launcherExe.getAbsolutePath())
-                  + " -WorkingDirectory " + psQuote(layout.modRoot().getAbsolutePath())
-                : (launcherCmd.isFile()
-                ? "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', "
-                  + psQuote(launcherCmd.getAbsolutePath())
-                  + " -WorkingDirectory " + psQuote(layout.modRoot().getAbsolutePath())
-                  + " -WindowStyle Hidden"
-                : "");
-
-        String ps = "$ErrorActionPreference = 'Continue'\n"
-                + "$pidToWait = " + pid + "\n"
-                + "for ($i = 0; $i -lt 40; $i++) {\n"
-                + "  if (-not (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue)) { break }\n"
-                + "  Start-Sleep -Milliseconds 250\n"
-                + "}\n"
-                + "Start-Sleep -Milliseconds 400\n"
-                + "$jars = " + jarsDir + "\n"
-                + "if (Test-Path -LiteralPath $jars) {\n"
-                + "  Get-ChildItem -LiteralPath $jars -Filter '*.jar.pending' -ErrorAction SilentlyContinue | ForEach-Object {\n"
-                + "    $dst = $_.FullName.Substring(0, $_.FullName.Length - 8)\n"
-                + "    try { Move-Item -LiteralPath $_.FullName -Destination $dst -Force } catch {}\n"
-                + "  }\n"
-                + "}\n"
-                + "$log = " + logFile + "\n"
-                + "$out = & " + exe + " install --game " + gameRoot + " --vanilla-only 2>&1 | Out-String\n"
-                + "$code = $LASTEXITCODE\n"
-                + "try {\n"
-                + "  Add-Content -LiteralPath $log -Encoding UTF8 -Value (\"`r`n[RU Installer exit=$code]`r`n\" + $out)\n"
-                + "} catch {}\n"
-                + "Remove-Item -LiteralPath " + stage + " -Recurse -Force -ErrorAction SilentlyContinue\n"
-                + (relaunchTarget.isEmpty() ? "" : relaunchTarget + "\n")
-                + "Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue\n";
-        Files.writeString(script, ps, java.nio.charset.StandardCharsets.UTF_8);
-        return script;
-    }
-
-    private static String psQuote(String value) {
-        return "'" + value.replace("'", "''") + "'";
+        if (Files.isDirectory(sandboxState)) {
+            copyDirectory(sandboxState, realState);
+        }
+        return count;
     }
 
     private static void deleteDirectoryQuietly(Path dir) {

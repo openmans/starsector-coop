@@ -3375,53 +3375,20 @@ public final class CoopLauncherApp {
             if (!result.version().isEmpty()) {
                 this.launcherVersion = result.version();
             }
-            if (CoopModInstaller.launchPendingRussianHelperIfAny()) {
-                append(tr(
-                        "Applying Starsector 0.98.5a-RC9 Russian translation — launcher will reopen automatically in a few seconds...",
-                        "Применяю русификатор Starsector 0.98.5a-RC9 — лаунчер перезапустится автоматически через несколько секунд..."));
-                shutdown();
-                return;
+            if (installRussianBox != null && layout != null && layout.isRussianInstalled()) {
+                installRussianBox.setSelected(false);
             }
+            refreshInstallModeView();
+            updateLaunchGate();
             startUpdateCheck(false);
-            File launcherExe = layout == null ? null
-                    : new File(layout.modRoot(), "Starsector Coop Launcher.exe");
-            File launcherCmd = layout == null ? null : new File(layout.modRoot(), "Coop Launcher.cmd");
-            boolean canRestart = (launcherExe != null && launcherExe.isFile())
-                    || (launcherCmd != null && launcherCmd.isFile());
-            if (result.restartRecommended() && canRestart) {
-                int restart = JOptionPane.showConfirmDialog(frame,
-                        result.summary()
-                                + "\n\nSome jars were in use by the running launcher and staged for"
-                                + " swap. Restart Coop Launcher now to finish applying them?",
-                        "Starsector Coop Installed",
-                        JOptionPane.YES_NO_OPTION,
-                        JOptionPane.INFORMATION_MESSAGE);
-                if (restart == JOptionPane.YES_OPTION) {
-                    try {
-                        if (launcherExe != null && launcherExe.isFile()) {
-                            new ProcessBuilder(launcherExe.getAbsolutePath())
-                                    .directory(layout.modRoot())
-                                    .start();
-                        } else {
-                            new ProcessBuilder("cmd.exe", "/c", "start", "", launcherCmd.getAbsolutePath())
-                                    .directory(layout.modRoot())
-                                    .start();
-                        }
-                        shutdown();
-                        return;
-                    } catch (Exception ex) {
-                        LOG.warn("Could not restart Coop Launcher automatically", ex);
-                    }
-                }
-            } else {
-                String extra = result.restartRecommended()
-                        ? "\n\nRestart Coop Launcher to finish swapping the updated jar files."
-                        : "";
-                JOptionPane.showMessageDialog(frame,
-                        result.summary() + extra,
-                        "Starsector Coop Installed",
-                        JOptionPane.INFORMATION_MESSAGE);
-            }
+            String extra = result.restartRecommended()
+                    ? tr("\n\nUpdated launcher jar files will swap automatically on next launcher start.",
+                            "\n\nОбновлённые файлы лаунчера применятся при следующем перезапуске.")
+                    : "";
+            JOptionPane.showMessageDialog(frame,
+                    result.summary() + extra,
+                    tr("Installation Complete", "Установка завершена"),
+                    JOptionPane.INFORMATION_MESSAGE);
         } else {
             startUpdateCheck(false);
             fail(result.summary());
