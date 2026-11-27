@@ -130,7 +130,11 @@ public final class CoopTitleScreenOverlay {
                     && !CoopTitleScreenBridge.isTitleScreenShowingDialog()) {
                 dedicatedAutoStartAttempted = true;
                 session.setDedicatedHost(true);
-                session.applyHostConfig(CoopOptionsStore.system());
+                // Preserve -D launches without overwriting normal singleplayer/client prefs in saves/common
+                if (coop.net.CoopNetStartupConfig.fromSystemProperties().role()
+                        != coop.net.CoopConnectionRole.HOST) {
+                    session.applyHostConfig(CoopOptionsStore.system());
+                }
                 String latestSave = CoopTitleScreenBridge.findLatestHostSaveDirPath();
                 if (!latestSave.isEmpty()) {
                     CoopLog.info(CoopTitleScreenOverlay.class,

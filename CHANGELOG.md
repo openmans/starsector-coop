@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.19 (Fix Dedicated Server launcher script & -D auto-start config isolation)
+
+- **Fixed `Start Dedicated Server.cmd` not launching Starsector (`Start Dedicated Server.cmd`):**
+  previously checked for `starsector.exe` inside `starsector-core/` (whereas it resides in the root
+  folder) and used a partial classpath. Now reads the install's real `vmparams` (ensuring
+  `coop-forks.jar` stays first on the classpath), passes `-Dcoop.dedicatedHost=true`,
+  `-Dcoop.hostPort`, `-Dcoop.maxGuests=4`, `-Dcoop.liveWorldInCombat=true`, and
+  `-Dcoop.allowMidSessionJoin=true`, and launches `jre\bin\java.exe` with `WorkingDirectory`
+  in `starsector-core`.
+- **Clean `-D` Dedicated launch isolation (`CoopTitleScreenOverlay`):**
+  launching via `-Dcoop.dedicatedHost=true -Dcoop.hostPort=...` no longer overwrites normal
+  singleplayer/client settings in `saves/common/coop_options.json.data`.
+
 ## 0.2.18 (Bannerlord-style Live World in Combat & Dedicated Host Mode)
 
 - **Bannerlord-style Live World in Combat (`coop.liveWorldInCombat`, default `true`):**
