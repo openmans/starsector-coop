@@ -8,6 +8,8 @@ import coop.testing.LogCapture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -713,6 +715,60 @@ class CoopClockReconcilerTest {
         clock.timestamp += FRAME_MILLIS;
         reconciler.tick(FRAME_SECONDS, false);
         assertEquals(writes, clock.writes.size());
+    }
+
+    @Test
+    void sessionStartAlignmentLeavesSmallDriftAloneAndAlignsLargeMismatch() {
+        // <= 48h ahead/behind stays untouched for gradual convergence
+        FakeClock smallAheadClock = new FakeClock(BASE);
+        CoopClockReconciler rSmall = reconciler(smallAheadClock, new Wall());
+        assertNull(rSmall.alignOnSessionStart(BASE - days(1.5)));
+        assertEquals(BASE, smallAheadClock.timestamp);
+        assertTrue(smallAheadClock.writes.isEmpty());
+
+        // 315h (~13.1 days) ahead: immediately aligns backward to host timestamp
+        long drift315h = 315L * 3_600_000L;
+        FakeClock bigAheadClock = new FakeClock(BASE + drift315h);
+        CoopClockReconciler rBigAhead = reconciler(bigAheadClock, new Wall());
+        CoopClockReconciler.ClockAlignmentResult resAhead = rBigAhead.alignOnSessionStart(BASE);
+        assertNotNull(resAhead);
+        assertTrue(resAhead.wasAhead());
+        assertEquals(315L, resAhead.absGameHours());
+        assertEquals(BASE, bigAheadClock.timestamp);
+
+        // > 48h behind: immediately aligns forward to host timestamp
+        long drift80h = 80L * 3_600_000L;
+        FakeClock bigBehindClock = new FakeClock(BASE);
+        CoopClockReconciler rBigBehind = reconciler(bigBehindClock, new Wall());
+        CoopClockReconciler.ClockAlignmentResult resBehind = rBigBehind.alignOnSessionStart(BASE + drift80h);
+        assertNotNull(resBehind);
+        assertFalse(resBehind.wasAhead());
+        assertEquals(80L, resBehind.absGameHours());
+        assertEquals(BASE + drift80h, bigBehindClock.timestamp);
+    }
+
+    @Test
+    void persistentExcessiveAheadDriftOver48hAlignsInSharedPauseAndUnpaused() {
+        // Shared pause: > 48h ahead snaps to host timestamp
+        FakeClock clock = new FakeClock(BASE + 4 * DAY);
+        Wall wall = new Wall();
+        CoopClockReconciler reconciler = reconciler(clock, wall);
+        for (int i = 0; i < CoopClockReconciler.RING_SIZE; i++) {
+            reconciler.onSnapshot(BASE, true, false, true);
+        }
+        reconciler.tick(FRAME_SECONDS, true);
+        assertEquals(BASE, clock.timestamp);
+
+        // Unpaused: > 48h ahead persists across gate -> aligns to host
+        FakeClock unpausedClock = new FakeClock(BASE + 5 * DAY);
+        Wall unpausedWall = new Wall();
+        CoopClockReconciler r2 = reconciler(unpausedClock, unpausedWall);
+        for (int i = 0; i < CoopClockReconciler.BIG_DRIFT_MIN_SAMPLES; i++) {
+            unpausedWall.millis = i * 1_100L;
+            r2.onSnapshot(BASE, false, false, false);
+        }
+        r2.tick(FRAME_SECONDS, false);
+        assertEquals(BASE, unpausedClock.timestamp);
     }
 
     // ---- helpers ------------------------------------------------------------------------------------

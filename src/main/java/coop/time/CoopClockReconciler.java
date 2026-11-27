@@ -86,6 +86,15 @@ public final class CoopClockReconciler {
     static final long TAPER_THRESHOLD_MILLIS = MILLIS_PER_GAME_DAY / 10;
     /** Unpaused snap threshold. */
     static final long BIG_DRIFT_MILLIS = 2 * MILLIS_PER_GAME_DAY;
+    /** Maximum acceptable drift (48 game-hours) before alignment snaps on load/session sync. */
+    public static final long MAX_ACCEPTABLE_DRIFT_MILLIS = BIG_DRIFT_MILLIS;
+
+    /** Result of a session-start / large-drift clock alignment check. */
+    public record ClockAlignmentResult(long driftMillis, long absGameHours, long targetTimestampMillis) {
+        public boolean wasAhead() {
+            return driftMillis < 0L;
+        }
+    }
 
     /** Steady slew: the most corroborated rate in the survey (Unity NfE ±10%, chrony 8.33%). */
     static final double SLEW_RATE = 0.10;
@@ -153,6 +162,8 @@ public final class CoopClockReconciler {
 
     private int bigDriftStreak;
     private long bigDriftFirstSeenMillis;
+    private int bigAheadStreak;
+    private long bigAheadFirstSeenMillis;
 
     private boolean guestAheadTracking;
     private long guestAheadSinceMillis;
@@ -184,6 +195,41 @@ public final class CoopClockReconciler {
      */
     public boolean isAvailable() {
         return ensureResolved();
+    }
+
+    /**
+     * Checks whether the guest's campaign clock differs from the host's by more than
+     * {@link #MAX_ACCEPTABLE_DRIFT_MILLIS} (48 game-hours) at session start / save load.
+     * Small drift (&le; 48h) stays untouched for gradual monotonic convergence; any excessive
+     * mismatch (behind OR ahead, e.g. 315h ahead) is immediately aligned to {@code hostTimestampMillis}.
+     *
+     * @return non-null summary if an alignment write was performed, else {@code null}
+     */
+    public ClockAlignmentResult alignOnSessionStart(long hostTimestampMillis) {
+        if (!ensureResolved()) {
+            return null;
+        }
+        long guestTimestampMillis;
+        try {
+            guestTimestampMillis = port.getTimestamp();
+        } catch (Throwable ex) {
+            fail("Failed to read the guest campaign clock", ex);
+            return null;
+        }
+        long drift = hostTimestampMillis - guestTimestampMillis;
+        if (Math.abs(drift) <= MAX_ACCEPTABLE_DRIFT_MILLIS) {
+            return null;
+        }
+        if (!write(hostTimestampMillis)) {
+            return null;
+        }
+        long absHours = Math.max(1L, Math.round(Math.abs(drift) / 3_600_000.0));
+        CoopLog.warn(CoopClockReconciler.class, "Coop session-start clock alignment: guest was "
+                + absHours + "h " + (drift < 0L ? "AHEAD of" : "BEHIND")
+                + " host (" + days(-drift) + " game-days); aligned to host timestamp "
+                + hostTimestampMillis);
+        clearSamples();
+        return new ClockAlignmentResult(drift, absHours, hostTimestampMillis);
     }
 
     /**
@@ -283,8 +329,8 @@ public final class CoopClockReconciler {
         }
 
         // (2) Shared pause: both clocks are frozen, so the measured offset is exact and the host
-        // timestamp is not stale. This is a genuine quiescent window — chrony/linuxptp only
-        // approximate one by stepping at boot. Absorb the whole positive drift silently.
+        // timestamp is not stale. Absorb positive drift silently, and also align excessive (> 48h)
+        // guest-ahead drift immediately so saves loaded from misaligned dates converge right away.
         if (lastHostPaused && guestPaused) {
             if (drift > 0 && writeForward(lastHostTimestampMillis)) {
                 sharedPauseSnaps++;
@@ -293,6 +339,12 @@ public final class CoopClockReconciler {
                             + days(drift) + " game-days to host timestamp " + lastHostTimestampMillis
                             + "; sample ring cleared");
                 }
+                clearSamples();
+            } else if (drift < -MAX_ACCEPTABLE_DRIFT_MILLIS && write(lastHostTimestampMillis)) {
+                sharedPauseSnaps++;
+                CoopLog.warn(CoopClockReconciler.class, "Coop clock shared-pause align: guest was "
+                        + days(-drift) + " game-days AHEAD (> 48h limit); aligned to host timestamp "
+                        + lastHostTimestampMillis);
                 clearSamples();
             }
             // Never slew while paused: the engine is not advancing the clock, so a negative
@@ -305,12 +357,7 @@ public final class CoopClockReconciler {
             return;
         }
 
-        // (3) Unpaused big-drift snap, behind the persistence gate: a single over-threshold median
-        // is far more likely to be one OS stall (GC, window drag, disk hitch) than a real multi-day
-        // offset, and NTP's state machine discards the first over-threshold sample for the same
-        // reason. Target is current + drift, not the recorded host timestamp: the host clock is
-        // RUNNING here, so that stamp is stale by the snapshot interval plus the >=2 s the
-        // persistence gate took (>= 0.2 game-days, more than the entry dead zone).
+        // (3) Unpaused big-drift snap (> 48h behind or ahead), behind the persistence gate.
         if (drift > BIG_DRIFT_MILLIS && bigDriftStreak >= BIG_DRIFT_MIN_SAMPLES
                 && now - bigDriftFirstSeenMillis >= BIG_DRIFT_MIN_SPAN_MILLIS) {
             if (writeForwardBy(drift)) {
@@ -319,6 +366,24 @@ public final class CoopClockReconciler {
                         + days(drift) + " game-days behind the host over " + bigDriftStreak
                         + " consecutive estimates spanning " + (now - bigDriftFirstSeenMillis)
                         + "ms; snapped forward, sample ring cleared");
+                clearSamples();
+            }
+            return;
+        }
+        if (drift < -MAX_ACCEPTABLE_DRIFT_MILLIS && bigAheadStreak >= BIG_DRIFT_MIN_SAMPLES
+                && now - bigAheadFirstSeenMillis >= BIG_DRIFT_MIN_SPAN_MILLIS) {
+            long currentNow;
+            try {
+                currentNow = port.getTimestamp();
+            } catch (Throwable ex) {
+                fail("Failed to read the guest campaign clock", ex);
+                return;
+            }
+            if (write(currentNow + drift)) {
+                unpausedSnaps++;
+                CoopLog.warn(CoopClockReconciler.class, "Coop clock unpaused align: guest was "
+                        + days(-drift) + " game-days AHEAD (> 48h limit) over " + bigAheadStreak
+                        + " consecutive estimates; aligned to host, sample ring cleared");
                 clearSamples();
             }
             return;
@@ -370,6 +435,8 @@ public final class CoopClockReconciler {
         correcting = false;
         bigDriftStreak = 0;
         bigDriftFirstSeenMillis = 0L;
+        bigAheadStreak = 0;
+        bigAheadFirstSeenMillis = 0L;
         guestAheadTracking = false;
         guestAheadSinceMillis = 0L;
         guestAheadWarned = false;
@@ -489,6 +556,15 @@ public final class CoopClockReconciler {
         } else {
             bigDriftStreak = 0;
             bigDriftFirstSeenMillis = 0L;
+        }
+        if (driftEstimateMillis < -MAX_ACCEPTABLE_DRIFT_MILLIS) {
+            if (bigAheadStreak == 0) {
+                bigAheadFirstSeenMillis = wallClockMillis.getAsLong();
+            }
+            bigAheadStreak++;
+        } else {
+            bigAheadStreak = 0;
+            bigAheadFirstSeenMillis = 0L;
         }
     }
 

@@ -139,19 +139,31 @@ public final class CoopDialogSpectatorBridge {
         }
     }
 
-    /** Captures a live snapshot of {@code dialog} including Trade / Comm Directory views and mouse state. */
+    /** Captures a live snapshot of {@code dialog} including Trade / Comm Directory / Fleet views and mouse state. */
     public static CapturedDialog capture(InteractionDialogAPI dialog) {
-        if (dialog == null) {
+        return capture(dialog, null);
+    }
+
+    /**
+     * Captures a live snapshot of {@code dialog} or a standalone campaign Core UI tab
+     * ({@link CoreUITabId#FLEET} / {@link CoreUITabId#REFIT}) when no interaction dialog is open.
+     */
+    public static CapturedDialog capture(InteractionDialogAPI dialog, CoreUITabId activeCoreTab) {
+        boolean standaloneFleetView = (activeCoreTab == CoreUITabId.FLEET || activeCoreTab == CoreUITabId.REFIT);
+        if (dialog == null && !standaloneFleetView) {
             return null;
         }
         ensureHandles();
         try {
             String targetName = "";
-            SectorEntityToken target = dialog.getInteractionTarget();
-            if (target != null && target.getName() != null) {
-                targetName = target.getName().trim();
+            MarketAPI market = null;
+            if (dialog != null) {
+                SectorEntityToken target = dialog.getInteractionTarget();
+                if (target != null && target.getName() != null) {
+                    targetName = target.getName().trim();
+                }
+                market = target == null ? null : target.getMarket();
             }
-            MarketAPI market = target == null ? null : target.getMarket();
 
             float mouseX = 0f;
             float mouseY = 0f;
@@ -166,16 +178,22 @@ public final class CoopDialogSpectatorBridge {
             } catch (Throwable ignored) {
             }
 
-            // 1. Check whether CoreUI (Trade / Fleet / Refit) is open inside the interaction dialog
-            Object coreUI = readCoreUI(dialog);
-            CoreUITabId coreTab = null;
-            try {
-                CampaignUIAPI ui = Global.getSector() == null ? null : Global.getSector().getCampaignUI();
-                coreTab = ui == null ? null : ui.getCurrentCoreTab();
-            } catch (Throwable ignored) {
+            // 1. Check whether CoreUI (Trade / Fleet / Refit) is open directly or inside the interaction dialog
+            Object coreUI = dialog == null ? null : readCoreUI(dialog);
+            CoreUITabId coreTab = activeCoreTab;
+            if (coreTab == null) {
+                try {
+                    CampaignUIAPI ui = Global.getSector() == null ? null : Global.getSector().getCampaignUI();
+                    coreTab = ui == null ? null : ui.getCurrentCoreTab();
+                } catch (Throwable ignored) {
+                }
             }
-            if (coreUI != null || coreTab == CoreUITabId.CARGO) {
+            if (coreUI != null || coreTab == CoreUITabId.CARGO
+                    || coreTab == CoreUITabId.FLEET || coreTab == CoreUITabId.REFIT) {
                 return captureCoreView(dialog, market, targetName, coreUI, coreTab, mouseX, mouseY, screenW, screenH);
+            }
+            if (dialog == null) {
+                return null;
             }
 
             // 2. Check whether the Comm Directory sub-dialog (com.fs.starfarer.ui.newui.V) is open
@@ -230,8 +248,12 @@ public final class CoopDialogSpectatorBridge {
         List<CapturedTradeItem> tradeItems = new ArrayList<>();
         List<CapturedOption> options = new ArrayList<>();
         StringBuilder sub = new StringBuilder();
+        CampaignFleetAPI fleet = null;
         try {
-            CampaignFleetAPI fleet = Global.getSector() == null ? null : Global.getSector().getPlayerFleet();
+            fleet = Global.getSector() == null ? null : Global.getSector().getPlayerFleet();
+            if (fleet != null && targetName.isEmpty() && fleet.getName() != null) {
+                targetName = fleet.getName().trim();
+            }
             if (fleet != null && fleet.getCargo() != null) {
                 long credits = Math.round(fleet.getCargo().getCredits().get());
                 int used = Math.round(fleet.getCargo().getSpaceUsed());
@@ -252,6 +274,61 @@ public final class CoopDialogSpectatorBridge {
                 idx++;
                 if (idx >= MAX_OPTIONS) break;
             }
+        } else if ("FLEET".equals(mode) || "REFIT".equals(mode)) {
+            List<String> shipLines = new ArrayList<>();
+            if (fleet != null && fleet.getFleetData() != null) {
+                List<com.fs.starfarer.api.fleet.FleetMemberAPI> members = fleet.getFleetData().getMembersListCopy();
+                if (fleet.getCargo() != null) {
+                    long credits = Math.round(fleet.getCargo().getCredits().get());
+                    int supplies = Math.round(fleet.getCargo().getSupplies());
+                    int fuel = Math.round(fleet.getCargo().getFuel());
+                    int count = members == null ? 0 : members.size();
+                    sub.setLength(0);
+                    sub.append(count).append(" кор.  ·  ")
+                            .append(formatNumber(credits)).append("¢  ·  ")
+                            .append(supplies).append(" прип.  ·  ")
+                            .append(fuel).append(" топл.");
+                }
+                if (members != null) {
+                    int maxShips = 24;
+                    for (com.fs.starfarer.api.fleet.FleetMemberAPI m : members) {
+                        if (m == null || shipLines.size() >= maxShips) {
+                            break;
+                        }
+                        String name = m.getShipName() == null ? "" : m.getShipName().trim();
+                        String hull = m.getHullSpec() != null && m.getHullSpec().getHullName() != null
+                                ? m.getHullSpec().getHullName().trim() : "";
+                        String displayName = name.isEmpty() ? hull : (hull.isEmpty() ? name : name + " (" + hull + ")");
+                        if (m.isFlagship()) {
+                            displayName = "* " + displayName;
+                        }
+                        int dp = Math.max(0, Math.round(m.getDeploymentPointsCost()));
+                        int hullPct = m.getStatus() != null
+                                ? Math.max(0, Math.min(100, Math.round(m.getStatus().getHullFraction() * 100f)))
+                                : 100;
+                        int crPct = m.getRepairTracker() != null
+                                ? Math.max(0, Math.min(100, Math.round(m.getRepairTracker().getCR() * 100f)))
+                                : 70;
+                        String officer = "";
+                        try {
+                            if (m.getCaptain() != null && !m.getCaptain().isDefault()
+                                    && m.getCaptain().getNameString() != null) {
+                                officer = m.getCaptain().getNameString().trim();
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                        String row = displayName + "\t" + dp + "\t" + hullPct + "%\t" + crPct + "%\t" + officer;
+                        shipLines.add(row);
+                        if (options.size() < MAX_OPTIONS) {
+                            options.add(new CapturedOption(displayName + " [" + hullPct + "% / CR " + crPct + "%]", true, false));
+                        }
+                    }
+                }
+            }
+            float normX = clamp01(mouseX / Math.max(1f, screenW));
+            float normY = clamp01(mouseY / Math.max(1f, screenH));
+            return new CapturedDialog(mode, targetName, sub.toString(), shipLines, options,
+                    tradeItems, List.of(), normX, normY, -1);
         } else if (coreUI != null) {
             // Collect visible labels / buttons for Fleet or Refit tabs so the spectator still sees context
             List<String> coreLabels = new ArrayList<>();

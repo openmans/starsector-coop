@@ -7,6 +7,7 @@ import com.fs.starfarer.api.combat.EngagementResultAPI;
 import com.fs.starfarer.api.ui.CustomPanelAPI;
 import coop.combat.CoopBattleOrder;
 import coop.combat.CoopBattleStatus;
+import org.lwjgl.input.Keyboard;
 
 import java.util.Map;
 import java.util.Objects;
@@ -45,9 +46,15 @@ public final class CoopTacticalMapDialogPlugin implements InteractionDialogPlugi
     public void init(InteractionDialogAPI dialog) {
         this.dialog = dialog;
         this.panel = new CoopTacticalMapPanel(statusSupplier, orderSender, this::dismiss);
-        dialog.setPromptText("Co-op Tactical Map");
+        dialog.setPromptText(CoopUiLang.tr("Co-op Tactical Map", "Тактическая карта коопа"));
         dialog.getOptionPanel().clearOptions();
-        dialog.getOptionPanel().addOption("Close tactical map", OPTION_CLOSE);
+        dialog.getOptionPanel().addOption(
+                CoopUiLang.tr("Close tactical map (ESC)", "Закрыть тактическую карту (ESC)"),
+                OPTION_CLOSE);
+        try {
+            dialog.getOptionPanel().setShortcut(OPTION_CLOSE, Keyboard.KEY_ESCAPE, false, false, false, true);
+        } catch (RuntimeException | LinkageError ignored) {
+        }
         CustomPanelAPI custom = dialog.getVisualPanel().showCustomPanel(900f, 620f, panel);
         if (custom != null) {
             custom.getPosition();

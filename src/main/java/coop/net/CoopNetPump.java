@@ -875,6 +875,8 @@ public class CoopNetPump implements EveryFrameScript {
     private final CoopClockReconciler clockReconciler = new CoopClockReconciler();
     /** Session edge for the reconciler's sample ring: pre-session samples are meaningless. */
     private boolean clockReconcilerArmed;
+    /** True once session-start clock alignment (>48h check) has run for the current session. */
+    private boolean clockSessionAligned;
     /** Guest dialog-open edge; the ring is cleared on open -> closed (pre-dialog samples are stale). */
     private boolean clockReconcilerDialogWasOpen;
     /** The snapshot object last fed to the reconciler; each TIME_SNAPSHOT message is one sample. */
@@ -7455,6 +7457,24 @@ public class CoopNetPump implements EveryFrameScript {
             // advancing guest clock and the estimate biases negative by up to a snapshot interval.
             if (latestTimeSnapshot != lastReconciledTimeSnapshot) {
                 lastReconciledTimeSnapshot = latestTimeSnapshot;
+                if (!clockSessionAligned) {
+                    clockSessionAligned = true;
+                    CoopClockReconciler.ClockAlignmentResult aligned =
+                            clockReconciler.alignOnSessionStart(latestTimeSnapshot.timestampMillis());
+                    if (aligned != null) {
+                        String hoursTxt = aligned.absGameHours() + " ч";
+                        coop.ui.CoopFeed.post(aligned.wasAhead()
+                                        ? coop.ui.CoopUiLang.tr(
+                                                "Co-op: clock was " + aligned.absGameHours() + "h ahead of host — synced to host time.",
+                                                "Кооп: при загрузке часы опережали хоста на " + hoursTxt + " — время выровнено по хосту.")
+                                        : coop.ui.CoopUiLang.tr(
+                                                "Co-op: clock was " + aligned.absGameHours() + "h behind host — synced to host time.",
+                                                "Кооп: при загрузке часы отставали от хоста на " + hoursTxt + " — время выровнено по хосту."),
+                                com.fs.starfarer.api.util.Misc.getHighlightColor(),
+                                coop.ui.CoopFeed.Severity.IMPORTANT);
+                        return;
+                    }
+                }
                 clockReconciler.onSnapshot(latestTimeSnapshot.timestampMillis(),
                         latestTimeSnapshot.paused(), latestTimeSnapshot.fastForward(),
                         guestPausedAtMeasurement);
@@ -7474,6 +7494,7 @@ public class CoopNetPump implements EveryFrameScript {
         boolean active = isGameplaySessionActive();
         if (active != clockReconcilerArmed) {
             clockReconcilerArmed = active;
+            clockSessionAligned = false;
             clockReconciler.clearSamples();
             clockReconcilerDialogWasOpen = false;
         }
@@ -11139,6 +11160,9 @@ public class CoopNetPump implements EveryFrameScript {
     private void onTacticalMapDialogClosed() {
         activeTacticalMapDialog = null;
         battleBridge.setOrderAckListener(null);
+        if (tacticalMapDialogs.isRequested()) {
+            tacticalMapDialogs.close();
+        }
     }
 
     private void closeTacticalMapDialog() {
@@ -11592,8 +11616,37 @@ public class CoopNetPump implements EveryFrameScript {
             if (tacticalMapDialogs.isRequested()) {
                 tacticalMapDialogs.close();
             }
+            if (allyJoinDialogs.isRequested()) {
+                allyJoinDialogs.close();
+            }
+            if (chatDialogs.isRequested()) {
+                chatDialogs.close();
+            }
+            if (tradeDialogs.isRequested()) {
+                tradeDialogs.close();
+            }
+            CampaignFleetAPI localPlayerFleet = sector.getPlayerFleet();
+            com.fs.starfarer.api.campaign.LocationAPI loc =
+                    localPlayerFleet == null ? null : localPlayerFleet.getContainingLocation();
+            if (loc == null) {
+                loc = sector.getHyperspace();
+            }
+            float px = (localPlayerFleet != null && localPlayerFleet.getLocation() != null)
+                    ? localPlayerFleet.getLocation().x : 0f;
+            float py = (localPlayerFleet != null && localPlayerFleet.getLocation() != null)
+                    ? localPlayerFleet.getLocation().y : 0f;
+
             CampaignFleetAPI dummyAllies = Global.getFactory().createEmptyFleet("player", "Co-op Live", true);
             CampaignFleetAPI dummyEnemies = Global.getFactory().createEmptyFleet("pirates", "Opposing", true);
+            // BattleCreationPluginImpl.createMap() reads playerFleet.getContainingLocation() to build
+            // the arena backdrop. Assign the location reference WITHOUT calling loc.addEntity(...) so
+            // these temporary fleets never appear on the campaign map or inside saves.
+            if (loc != null) {
+                dummyAllies.setContainingLocation(loc);
+                dummyEnemies.setContainingLocation(loc);
+            }
+            dummyAllies.setLocation(px, py);
+            dummyEnemies.setLocation(px, py);
             // Minimal starter marker ship on each side (immediately removed on frame 1 of initPuppetArena)
             String markerVariant = Global.getSettings().doesVariantExist("hound_Standard")
                     ? "hound_Standard" : "shuttle_Standard";
@@ -11727,13 +11780,19 @@ public class CoopNetPump implements EveryFrameScript {
                     && localLoc.getId() != null) ? localLoc.getId().trim() : "";
 
             com.fs.starfarer.api.campaign.InteractionDialogAPI current = ui.getCurrentInteractionDialog();
-            boolean spectatable = !localSystemId.isEmpty() && current != null
+            com.fs.starfarer.api.campaign.CoreUITabId coreTab = ui.getCurrentCoreTab();
+            boolean dialogOpen = !localSystemId.isEmpty() && current != null
                     && coop.ui.CoopDialogSpectatorState.isSpectatablePlugin(current.getPlugin());
+            boolean fleetOrRefitOpen = !localSystemId.isEmpty()
+                    && (coreTab == com.fs.starfarer.api.campaign.CoreUITabId.FLEET
+                    || coreTab == com.fs.starfarer.api.campaign.CoreUITabId.REFIT);
+            boolean spectatable = dialogOpen || fleetOrRefitOpen;
 
             // 1. Speaker broadcast (only inside a star system; never in hyperspace).
             if (spectatable) {
-                if (current != localSpectatedDialogRef) {
-                    localSpectatedDialogRef = current;
+                Object sourceKey = dialogOpen ? current : coreTab;
+                if (sourceKey != localSpectatedDialogRef) {
+                    localSpectatedDialogRef = sourceKey;
                     localSpectatedDialogId = sessionState.localPlayerId() + "-dlg-" + (++localSpectatedDialogSeq);
                     lastDialogSyncStructuralKey = "";
                     lastDialogSyncWireKey = "";
@@ -11742,7 +11801,7 @@ public class CoopNetPump implements EveryFrameScript {
                     dialogSpectatorState.clearIncomingVote();
                 }
                 coop.ambient.CoopDialogSpectatorBridge.CapturedDialog cap =
-                        coop.ambient.CoopDialogSpectatorBridge.capture(current);
+                        coop.ambient.CoopDialogSpectatorBridge.capture(dialogOpen ? current : null, coreTab);
                 if (cap != null) {
                     java.util.List<coop.ui.CoopDialogSpectatorState.OptionView> opts =
                             new java.util.ArrayList<>(cap.options().size());

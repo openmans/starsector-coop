@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.14 (Live battle join NPE fix, tactical map close, >48h clock sync, tabular trade, Fleet view)
+
+- **Fixed partner live co-op battle join silently failing (`CoopNetPump.launchLiveCombatClientArena`):**
+  temporary puppet arena fleets lacked a `LocationAPI` (`setContainingLocation`), causing
+  `BattleCreationPluginImpl.createMap()` to throw `NullPointerException` when launching combat
+  on the joining player's client. Now assigns the player's current location reference without
+  adding entities to the campaign map, and closes interfering coop dialogs before entering combat.
+- **Fixed Tactical Map getting stuck open (`CoopTacticalMapDialogPlugin`, `CoopTacticalMapPanel`, `CoopNetPump`):**
+  `onTacticalMapDialogClosed()` now clears `tacticalMapDialogs`, `OPTION_CLOSE` binds `ESC`, and
+  the tactical map panel adds a clickable top-right `[X] Закрыть` (`Close`) button and handles
+  `ESC` even before layout bounds arrive.
+- **Session-load & >48h clock alignment (`CoopClockReconciler`, `CoopNetPump`):**
+  keeps `<= 48h` monotonic convergence intact while immediately aligning any excessive clock
+  mismatch (`> 48h` ahead or behind, such as `315h ahead` from mismatched saves) on session
+  start/load and reporting a notice in the campaign feed.
+- **Compact tabular Trade & Cargo UI (`CoopDialogSpectatorPlugin`, `CoopTradeDialogPlugin`):**
+  both the market spectator Trade view and direct player-to-player trade cargo list now render in a
+  dense single-row table format with aligned columns (`Товар | Кол-во | Покупка | Продажа | Совет`
+  and `Товар | Трюм | Отдам | Кол-во`).
+- **Live Fleet / Refit spectator visibility (`CoopDialogSpectatorBridge`, `CoopNetPump`, `CoopDialogSpectatorPlugin`):**
+  opening the Fleet (`F`) or Refit (`R`) tab inside a shared star system now broadcasts the ship
+  roster table (ship name/hull, DP, hull %, CR %, officer) to the partner so they can follow
+  fleet management and recommend ships in real time.
+
 ## 0.2.13 (Fix Title Screen crash when starting/loading a game from the Lobby dock)
 
 - **Fixed fatal `NullPointerException` (`CombatEngine.advanceInner` / `this.ÔÕ0000 is null`) when launching or loading a save from the Title Screen `CO-OP ЛОББИ` dock (`CoopTitleScreenOverlay`):**

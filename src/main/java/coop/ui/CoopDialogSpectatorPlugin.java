@@ -179,6 +179,8 @@ public final class CoopDialogSpectatorPlugin implements InteractionDialogPlugin,
 
             if ("TRADE".equals(snap.viewMode())) {
                 buildTradeView(panel, snap, pad, innerW, bodyY, bodyH);
+            } else if ("FLEET".equals(snap.viewMode()) || "REFIT".equals(snap.viewMode())) {
+                buildFleetView(panel, snap, pad, innerW, bodyY, bodyH);
             } else if ("COMM".equals(snap.viewMode())) {
                 buildCommDirectoryView(panel, snap, pad, innerW, bodyY, bodyH);
             } else {
@@ -191,12 +193,24 @@ public final class CoopDialogSpectatorPlugin implements InteractionDialogPlugin,
 
     private void buildTradeView(CustomPanelAPI panel, CoopDialogSpectatorState.SyncPayload snap,
                                 float pad, float innerW, float bodyY, float bodyH) {
-        TooltipMakerAPI tradeUi = panel.createUIElement(innerW, bodyH, true);
-        tradeUi.addSectionHeading(
-                CoopUiLang.tr("Market Trade — click any commodity to recommend",
-                        "Окно торговли — нажмите на товар, чтобы посоветовать"),
+        TooltipMakerAPI hdr = panel.createUIElement(innerW, 44f, false);
+        hdr.addSectionHeading(
+                CoopUiLang.tr("Market Trade — click a row to recommend",
+                        "Торговля на рынке — выберите товар для совета"),
                 HEADER_GREEN, new Color(18, 46, 36), Alignment.MID, 0f);
 
+        CustomPanelAPI colHeader = panel.createCustomPanel(innerW, 20f, new TableRowPlugin());
+        TooltipMakerAPI colUi = colHeader.createUIElement(innerW, 20f, false);
+        addTableCell(colUi, CoopUiLang.tr("Commodity", "Товар"), MUTED, 6f, 2f, 270f);
+        addTableCell(colUi, CoopUiLang.tr("Qty", "Кол-во"), MUTED, 290f, 2f, 90f);
+        addTableCell(colUi, CoopUiLang.tr("Buy", "Покупка"), MUTED, 390f, 2f, 95f);
+        addTableCell(colUi, CoopUiLang.tr("Sell", "Продажа"), MUTED, 500f, 2f, 95f);
+        addTableCell(colUi, CoopUiLang.tr("Recommend", "Совет"), MUTED, 636f, 2f, 160f);
+        colHeader.addUIElement(colUi).inTL(0f, 0f);
+        hdr.addCustom(colHeader, 2f);
+        panel.addUIElement(hdr).inTL(pad, bodyY);
+
+        TooltipMakerAPI tradeUi = panel.createUIElement(innerW, Math.max(80f, bodyH - 46f), true);
         int localVote = state.localVotedIndexFor(snap.dialogId());
         int activeVote = localVote >= 0 ? localVote : snap.votedOptionIndex();
 
@@ -206,47 +220,136 @@ public final class CoopDialogSpectatorPlugin implements InteractionDialogPlugin,
                     "Напарник открыл окно торговли (товары на этом рынке не найдены)."),
                     MUTED, 10f);
         } else {
+            TableRowPlugin rowForward = new TableRowPlugin();
+            float rowW = innerW - 18f;
             String lastSub = "";
             for (int i = 0; i < snap.tradeItems().size(); i++) {
                 CoopDialogSpectatorState.TradeItemView item = snap.tradeItems().get(i);
                 if (!item.submarket().isEmpty() && !item.submarket().equals(lastSub)) {
                     lastSub = item.submarket();
-                    tradeUi.addPara(lastSub, TARGET_CYAN, i == 0 ? 6f : 10f);
+                    tradeUi.addPara("— " + lastSub, TARGET_CYAN, i == 0 ? 4f : 8f);
                 }
                 boolean voted = i == activeVote;
+                CustomPanelAPI rowPanel = panel.createCustomPanel(rowW, 24f, rowForward);
                 String sprite = commodityIcon(item.commodityId());
+                float nameX = 6f;
                 if (!sprite.isEmpty()) {
-                    TooltipMakerAPI row = tradeUi.beginImageWithText(sprite, 26f);
-                    String qtyText = item.qty() + CoopUiLang.tr(" units", " ед.");
-                    String buyText = item.buyPrice() + "¢";
-                    String sellText = item.sellPrice() + "¢";
-                    String line = (voted ? CoopUiLang.tr("[VOTE] ", "[ГОЛОС] ") : "")
-                            + item.name() + "  —  " + qtyText
-                            + "  |  " + CoopUiLang.tr("Buy: ", "Покупка: ") + buyText
-                            + "  ·  " + CoopUiLang.tr("Sell: ", "Продажа: ") + sellText;
-                    row.addPara(line, 2f, voted ? OPT_VOTE_TEXT : BODY_TEXT, HIGHLIGHT_GOLD,
-                            qtyText, buyText, sellText);
-                    tradeUi.addImageWithText(4f);
-                } else {
-                    String qtyText = item.qty() + CoopUiLang.tr(" units", " ед.");
-                    String buyText = item.buyPrice() + "¢";
-                    String sellText = item.sellPrice() + "¢";
-                    tradeUi.addPara(item.name() + " — " + qtyText + " | " + buyText + " / " + sellText,
-                            4f, BODY_TEXT, HIGHLIGHT_GOLD, qtyText, buyText, sellText);
+                    try {
+                        TooltipMakerAPI iconUi = rowPanel.createUIElement(22f, 22f, false);
+                        iconUi.addImage(sprite, 18f, 18f, 0f);
+                        rowPanel.addUIElement(iconUi).inTL(4f, 3f);
+                        nameX = 28f;
+                    } catch (Throwable ignored) {
+                    }
                 }
+                TooltipMakerAPI rowUi = rowPanel.createUIElement(rowW, 24f, false);
+                Color nameColor = voted ? OPT_VOTE_TEXT : BODY_TEXT;
+                addTableCell(rowUi, trimToFit(item.name(), 28), nameColor, nameX, 4f, 286f - nameX);
+                addTableCell(rowUi, String.valueOf(item.qty()), HIGHLIGHT_GOLD, 290f, 4f, 92f);
+                addTableCell(rowUi, item.buyPrice() + "¢", HIGHLIGHT_GOLD, 390f, 4f, 100f);
+                addTableCell(rowUi, item.sellPrice() + "¢", TARGET_CYAN, 500f, 4f, 100f);
+
                 if (i < snap.options().size()) {
-                    ButtonAPI voteBtn = tradeUi.addButton(
-                            (voted ? CoopUiLang.tr("[VOTED] ", "[ГОЛОС] ") : CoopUiLang.tr("Suggest: ", "Советовать: "))
-                                    + item.name() + " (" + item.buyPrice() + "¢)",
+                    ButtonAPI voteBtn = rowUi.addButton(
+                            voted ? CoopUiLang.tr("[VOTED]", "[ГОЛОС ✓]")
+                                    : CoopUiLang.tr("Suggest", "Советовать"),
                             ID_VOTE_PREFIX + i,
                             voted ? OPT_VOTE_TEXT : OPT_TEXT,
                             voted ? OPT_VOTE_BG : OPT_BG,
-                            Alignment.LMID, CutStyle.ALL, 260f, 20f, 2f);
+                            Alignment.MID, CutStyle.ALL, 150f, 20f, 0f);
                     voteBtn.setEnabled(true);
+                    voteBtn.getPosition().inTL(636f, 2f);
                 }
+                rowPanel.addUIElement(rowUi).inTL(0f, 0f);
+                tradeUi.addCustom(rowPanel, 2f);
             }
         }
-        panel.addUIElement(tradeUi).inTL(pad, bodyY);
+        panel.addUIElement(tradeUi).inTL(pad, bodyY + 46f);
+    }
+
+    private void buildFleetView(CustomPanelAPI panel, CoopDialogSpectatorState.SyncPayload snap,
+                                float pad, float innerW, float bodyY, float bodyH) {
+        TooltipMakerAPI hdr = panel.createUIElement(innerW, 44f, false);
+        boolean isRefit = "REFIT".equals(snap.viewMode());
+        hdr.addSectionHeading(
+                isRefit ? CoopUiLang.tr("Partner Refit / Fleet View", "Окно оснащения кораблей напарника")
+                        : CoopUiLang.tr("Partner Fleet View — click a ship to recommend",
+                        "Флот напарника — нажмите на корабль, чтобы посоветовать"),
+                HEADER_GREEN, new Color(18, 46, 36), Alignment.MID, 0f);
+
+        CustomPanelAPI colHeader = panel.createCustomPanel(innerW, 20f, new TableRowPlugin());
+        TooltipMakerAPI colUi = colHeader.createUIElement(innerW, 20f, false);
+        addTableCell(colUi, CoopUiLang.tr("Ship / Hull", "Корабль / Тип"), MUTED, 6f, 2f, 330f);
+        addTableCell(colUi, "DP", MUTED, 350f, 2f, 55f);
+        addTableCell(colUi, CoopUiLang.tr("Hull", "Корпус"), MUTED, 415f, 2f, 70f);
+        addTableCell(colUi, "CR", MUTED, 490f, 2f, 65f);
+        addTableCell(colUi, CoopUiLang.tr("Officer", "Офицер"), MUTED, 558f, 2f, 120f);
+        colHeader.addUIElement(colUi).inTL(0f, 0f);
+        hdr.addCustom(colHeader, 2f);
+        panel.addUIElement(hdr).inTL(pad, bodyY);
+
+        TooltipMakerAPI fleetUi = panel.createUIElement(innerW, Math.max(80f, bodyH - 46f), true);
+        int localVote = state.localVotedIndexFor(snap.dialogId());
+        int activeVote = localVote >= 0 ? localVote : snap.votedOptionIndex();
+
+        if (snap.paragraphs().isEmpty()) {
+            fleetUi.addPara(CoopUiLang.tr(
+                    "The partner has their Fleet screen open.",
+                    "Напарник открыл экран управления флотом."), MUTED, 10f);
+        } else {
+            TableRowPlugin rowForward = new TableRowPlugin();
+            float rowW = innerW - 18f;
+            for (int i = 0; i < snap.paragraphs().size(); i++) {
+                String line = snap.paragraphs().get(i);
+                String[] cols = line.split("\t", -1);
+                String shipName = cols.length > 0 ? cols[0] : line;
+                String dp = cols.length > 1 ? cols[1] : "";
+                String hull = cols.length > 2 ? cols[2] : "";
+                String cr = cols.length > 3 ? cols[3] : "";
+                String officer = cols.length > 4 ? cols[4] : "";
+
+                boolean voted = i == activeVote;
+                CustomPanelAPI rowPanel = panel.createCustomPanel(rowW, 24f, rowForward);
+                TooltipMakerAPI rowUi = rowPanel.createUIElement(rowW, 24f, false);
+                addTableCell(rowUi, trimToFit(shipName, 40), voted ? OPT_VOTE_TEXT : BODY_TEXT, 6f, 4f, 340f);
+                addTableCell(rowUi, dp, HIGHLIGHT_GOLD, 350f, 4f, 55f);
+                addTableCell(rowUi, hull, HIGHLIGHT_GOLD, 415f, 4f, 70f);
+                addTableCell(rowUi, cr, TARGET_CYAN, 490f, 4f, 65f);
+                addTableCell(rowUi, trimToFit(officer, 14), MUTED, 558f, 4f, 118f);
+
+                if (i < snap.options().size()) {
+                    ButtonAPI voteBtn = rowUi.addButton(
+                            voted ? CoopUiLang.tr("[✓]", "[ГОЛОС]") : CoopUiLang.tr("Pick", "Выбрать"),
+                            ID_VOTE_PREFIX + i,
+                            voted ? OPT_VOTE_TEXT : OPT_TEXT,
+                            voted ? OPT_VOTE_BG : OPT_BG,
+                            Alignment.MID, CutStyle.ALL, 114f, 20f, 0f);
+                    voteBtn.setEnabled(true);
+                    voteBtn.getPosition().inTL(686f, 2f);
+                }
+                rowPanel.addUIElement(rowUi).inTL(0f, 0f);
+                fleetUi.addCustom(rowPanel, 2f);
+            }
+        }
+        panel.addUIElement(fleetUi).inTL(pad, bodyY + 46f);
+    }
+
+    private static void addTableCell(TooltipMakerAPI ui, String text, Color color,
+                                     float x, float y, float w) {
+        LabelAPI lbl = ui.addPara(text == null ? "" : text, color, 0f);
+        lbl.getPosition().setSize(w, 18f);
+        lbl.getPosition().inTL(x, y);
+    }
+
+    private static String trimToFit(String text, int maxChars) {
+        if (text == null) {
+            return "";
+        }
+        String t = text.trim();
+        if (t.length() <= maxChars) {
+            return t;
+        }
+        return t.substring(0, Math.max(1, maxChars - 1)) + "…";
     }
 
     private void buildCommDirectoryView(CustomPanelAPI panel, CoopDialogSpectatorState.SyncPayload snap,
@@ -573,25 +676,42 @@ public final class CoopDialogSpectatorPlugin implements InteractionDialogPlugin,
 
         @Override
         public void buttonPressed(Object buttonId) {
-            if (!(buttonId instanceof String id)) {
-                return;
-            }
-            if (ID_CLOSE.equals(id)) {
-                dismissInternal(true);
-                return;
-            }
-            if (id.startsWith(ID_VOTE_PREFIX)) {
-                try {
-                    int idx = Integer.parseInt(id.substring(ID_VOTE_PREFIX.length()));
-                    CoopDialogSpectatorState.SyncPayload snap = state.activeRemoteDialog();
-                    if (snap != null && idx >= 0 && idx < snap.options().size()) {
-                        String optText = snap.options().get(idx).text();
-                        state.recordLocalVote(snap.dialogId(), idx);
-                        onVote.accept(idx, optText);
-                        rebuild(snap);
-                    }
-                } catch (NumberFormatException ignored) {
+            handleSpectatorButton(buttonId);
+        }
+    }
+
+    private final class TableRowPlugin implements CustomUIPanelPlugin {
+        @Override public void positionChanged(PositionAPI pos) {}
+        @Override public void renderBelow(float alphaMult) {}
+        @Override public void render(float alphaMult) {}
+        @Override public void advance(float amount) {}
+        @Override public void processInput(List<InputEventAPI> events) {}
+
+        @Override
+        public void buttonPressed(Object buttonId) {
+            handleSpectatorButton(buttonId);
+        }
+    }
+
+    private void handleSpectatorButton(Object buttonId) {
+        if (!(buttonId instanceof String id)) {
+            return;
+        }
+        if (ID_CLOSE.equals(id)) {
+            dismissInternal(true);
+            return;
+        }
+        if (id.startsWith(ID_VOTE_PREFIX)) {
+            try {
+                int idx = Integer.parseInt(id.substring(ID_VOTE_PREFIX.length()));
+                CoopDialogSpectatorState.SyncPayload snap = state.activeRemoteDialog();
+                if (snap != null && idx >= 0 && idx < snap.options().size()) {
+                    String optText = snap.options().get(idx).text();
+                    state.recordLocalVote(snap.dialogId(), idx);
+                    onVote.accept(idx, optText);
+                    rebuild(snap);
                 }
+            } catch (NumberFormatException ignored) {
             }
         }
     }

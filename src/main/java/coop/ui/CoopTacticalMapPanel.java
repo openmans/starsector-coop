@@ -263,6 +263,16 @@ public final class CoopTacticalMapPanel implements CustomUIPanelPlugin {
                             + (status.bounds().paused() ? " [PAUSED]" : "");
             labelFont.draw(header, x + 12f, y + h - 12f, Color.CYAN);
             labelFont.draw(lastNotice, x + 12f, y + 24f, Color.LIGHT_GRAY);
+
+            // Clickable top-right Close button inside the tactical map so the player can always exit
+            float closeW = 108f;
+            float closeH = 24f;
+            float closeX = x + w - closeW - 10f;
+            float closeY = y + h - closeH - 8f;
+            CoopTitleScreenOverlay.drawRect(closeX, closeY, closeW, closeH, 0.36f, 0.10f, 0.10f, 0.92f * alphaMult);
+            CoopTitleScreenOverlay.drawBorder(closeX, closeY, closeW, closeH, 0.95f, 0.45f, 0.45f, 0.95f * alphaMult);
+            labelFont.draw(CoopUiLang.tr("[X] Close", "[X] Закрыть"), closeX + 10f, closeY + closeH - 5f,
+                    new Color(255, 210, 210));
         }
     }
 
@@ -284,7 +294,7 @@ public final class CoopTacticalMapPanel implements CustomUIPanelPlugin {
 
     @Override
     public void processInput(List<InputEventAPI> events) {
-        if (events == null || position == null) {
+        if (events == null) {
             return;
         }
         CoopBattleStatus status = statusSupplier.get();
@@ -310,11 +320,27 @@ public final class CoopTacticalMapPanel implements CustomUIPanelPlugin {
                     continue;
                 }
             }
+            if (position == null) {
+                continue;
+            }
             if (!position.containsEvent(event)) {
                 if (event.isMouseUpEvent()) {
                     dragging = false;
                 }
                 continue;
+            }
+            if (event.isLMBDownEvent()) {
+                float mx = event.getX();
+                float my = event.getY();
+                float closeW = 108f;
+                float closeH = 24f;
+                float closeX = position.getX() + position.getWidth() - closeW - 10f;
+                float closeY = position.getY() + position.getHeight() - closeH - 8f;
+                if (mx >= closeX && mx <= closeX + closeW && my >= closeY && my <= closeY + closeH) {
+                    event.consume();
+                    onDismiss.run();
+                    return;
+                }
             }
             if (event.isMouseScrollEvent()) {
                 viewport.zoomByWheel(event.getEventValue());

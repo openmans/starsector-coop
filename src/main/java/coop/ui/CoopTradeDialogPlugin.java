@@ -264,9 +264,9 @@ public final class CoopTradeDialogPlugin implements InteractionDialogPlugin, Coo
             float rightX = pad + leftW + gap;
 
             // ---- 2. Left Column: Credits box + Cargo inventory ----
-            float creditsBoxH = 128f;
+            float creditsBoxH = 104f;
             buildCreditsBox(panel, pad, bodyY, leftW, creditsBoxH, ownedCredits);
-            buildCargoList(panel, pad, bodyY + creditsBoxH + 8f, leftW, bodyH - creditsBoxH - 8f, ownedCargo);
+            buildCargoList(panel, pad, bodyY + creditsBoxH + 6f, leftW, bodyH - creditsBoxH - 6f, ownedCargo);
 
             // ---- 3. Right Column: Live Two-Sided Trade Summary ----
             float halfH = (bodyH - 10f) * 0.5f;
@@ -295,43 +295,43 @@ public final class CoopTradeDialogPlugin implements InteractionDialogPlugin, Coo
         LabelAPI balanceLbl = ui.addPara(
                 CoopUiLang.tr("Available: " + availStr + "   |   Sending: " + offerStr,
                         "Доступно: " + availStr + "   |   Передаёте: " + offerStr),
-                4f, BODY_TEXT, GOLD, availStr, offerStr);
-        balanceLbl.getPosition().inTL(4f, 24f);
+                2f, BODY_TEXT, GOLD, availStr, offerStr);
+        balanceLbl.getPosition().inTL(4f, 20f);
 
-        creditsField = ui.addTextField(178f, 24f, Fonts.DEFAULT_SMALL, 0f);
+        creditsField = ui.addTextField(178f, 22f, Fonts.DEFAULT_SMALL, 0f);
         creditsField.setText(draftCredits > 0L ? String.valueOf(draftCredits) : "");
-        creditsField.getPosition().inTL(4f, 48f);
+        creditsField.getPosition().inTL(4f, 40f);
 
         ButtonAPI setBtn = ui.addButton(CoopUiLang.tr("Set amount", "Задать сумму"), BTN_CREDITS_SET,
-                BTN_TEXT, BTN_ACCENT_BG, Alignment.MID, CutStyle.ALL, 126f, 24f, 0f);
-        setBtn.getPosition().inTL(188f, 48f);
+                BTN_TEXT, BTN_ACCENT_BG, Alignment.MID, CutStyle.ALL, 126f, 22f, 0f);
+        setBtn.getPosition().inTL(188f, 40f);
 
         ButtonAPI zeroBtn = ui.addButton(CoopUiLang.tr("Reset 0¢", "Сброс 0¢"), BTN_CREDITS_ZERO,
-                BTN_TEXT, BTN_BG, Alignment.MID, CutStyle.ALL, 92f, 24f, 0f);
-        zeroBtn.getPosition().inTL(320f, 48f);
+                BTN_TEXT, BTN_BG, Alignment.MID, CutStyle.ALL, 92f, 22f, 0f);
+        zeroBtn.getPosition().inTL(320f, 40f);
 
-        float qY = 80f;
+        float qY = 66f;
         float qW = 86f;
         float qGap = 6f;
         ButtonAPI b1 = ui.addButton("+1 000¢", BTN_CREDITS_ADD_1K,
-                GOLD, BTN_BG, Alignment.MID, CutStyle.ALL, qW, 24f, 0f);
+                GOLD, BTN_BG, Alignment.MID, CutStyle.ALL, qW, 20f, 0f);
         b1.getPosition().inTL(4f, qY);
 
         ButtonAPI b2 = ui.addButton("+10 000¢", BTN_CREDITS_ADD_10K,
-                GOLD, BTN_BG, Alignment.MID, CutStyle.ALL, qW, 24f, 0f);
+                GOLD, BTN_BG, Alignment.MID, CutStyle.ALL, qW, 20f, 0f);
         b2.getPosition().inTL(4f + (qW + qGap), qY);
 
         ButtonAPI b3 = ui.addButton("+50 000¢", BTN_CREDITS_ADD_50K,
-                GOLD, BTN_BG, Alignment.MID, CutStyle.ALL, qW, 24f, 0f);
+                GOLD, BTN_BG, Alignment.MID, CutStyle.ALL, qW, 20f, 0f);
         b3.getPosition().inTL(4f + (qW + qGap) * 2f, qY);
 
         ButtonAPI b4 = ui.addButton("+100 000¢", BTN_CREDITS_ADD_100K,
-                GOLD, BTN_BG, Alignment.MID, CutStyle.ALL, qW + 10f, 24f, 0f);
+                GOLD, BTN_BG, Alignment.MID, CutStyle.ALL, qW + 10f, 20f, 0f);
         b4.getPosition().inTL(4f + (qW + qGap) * 3f, qY);
 
         if (!inlineStatusMessage.isEmpty()) {
             LabelAPI statusLbl = ui.addPara(inlineStatusMessage, WARN_AMBER, 0f);
-            statusLbl.getPosition().inTL(4f, 108f);
+            statusLbl.getPosition().inTL(4f, 88f);
         }
 
         panel.addUIElement(ui).inTL(x, y);
@@ -339,11 +339,23 @@ public final class CoopTradeDialogPlugin implements InteractionDialogPlugin, Coo
 
     private void buildCargoList(CustomPanelAPI panel, float x, float y, float w, float h,
                                 Map<String, Integer> ownedCargo) {
-        cargoListUi = panel.createUIElement(w, h, true);
-        cargoListUi.addSectionHeading(
-                CoopUiLang.tr("Your Cargo (click +/- to add goods)",
-                        "Ваш груз (нажимайте +/- для добавления товаров)"),
+        TooltipMakerAPI hdr = panel.createUIElement(w, 42f, false);
+        hdr.addSectionHeading(
+                CoopUiLang.tr("Your Cargo (tabular transfer)",
+                        "Ваш груз (таблица обмена)"),
                 TARGET_CYAN, new Color(16, 40, 56), Alignment.MID, 0f);
+        RowForwardPlugin rowPlugin = new RowForwardPlugin();
+        CustomPanelAPI colHdr = panel.createCustomPanel(w - 16f, 18f, rowPlugin);
+        TooltipMakerAPI colUi = colHdr.createUIElement(w - 16f, 18f, false);
+        addTableLabel(colUi, CoopUiLang.tr("Item", "Товар"), MUTED, 4f, 1f, 134f);
+        addTableLabel(colUi, CoopUiLang.tr("Stock", "Трюм"), MUTED, 142f, 1f, 44f);
+        addTableLabel(colUi, CoopUiLang.tr("Offer", "Отдам"), MUTED, 188f, 1f, 46f);
+        addTableLabel(colUi, CoopUiLang.tr("Amount", "Кол-во"), MUTED, 238f, 1f, 200f);
+        colHdr.addUIElement(colUi).inTL(0f, 0f);
+        hdr.addCustom(colHdr, 2f);
+        panel.addUIElement(hdr).inTL(x, y);
+
+        cargoListUi = panel.createUIElement(w, Math.max(80f, h - 44f), true);
 
         if (ownedCargo.isEmpty()) {
             cargoListUi.addPara(CoopUiLang.tr(
@@ -351,7 +363,6 @@ public final class CoopTradeDialogPlugin implements InteractionDialogPlugin, Coo
                     "В трюме вашего флота нет товаров. Вы всё равно можете передать кредиты выше."),
                     MUTED, 10f);
         } else {
-            RowForwardPlugin rowPlugin = new RowForwardPlugin();
             float rowW = w - 18f;
             for (Map.Entry<String, Integer> entry : ownedCargo.entrySet()) {
                 String commodityId = entry.getKey();
@@ -360,48 +371,39 @@ public final class CoopTradeDialogPlugin implements InteractionDialogPlugin, Coo
                 String name = commodityDisplayName(commodityId);
                 String icon = commodityIcon(commodityId);
 
-                String ownedTxt = String.valueOf(owned);
-                String offerTxt = String.valueOf(offered);
-                String infoLine = name + "   —   "
-                        + CoopUiLang.tr("Cargo: ", "Трюм: ") + ownedTxt
-                        + "   |   " + CoopUiLang.tr("In trade: ", "В обмене: ") + offerTxt;
-
+                CustomPanelAPI rowPanel = panel.createCustomPanel(rowW, 25f, rowPlugin);
+                float nameX = 4f;
                 if (!icon.isEmpty()) {
                     try {
-                        TooltipMakerAPI imgRow = cargoListUi.beginImageWithText(icon, 24f);
-                        imgRow.addPara(infoLine, 2f, offered > 0 ? HEADER_GREEN : BODY_TEXT,
-                                offered > 0 ? GOLD : TARGET_CYAN, ownedTxt, offerTxt);
-                        cargoListUi.addImageWithText(6f);
+                        TooltipMakerAPI iconUi = rowPanel.createUIElement(20f, 20f, false);
+                        iconUi.addImage(icon, 18f, 18f, 0f);
+                        rowPanel.addUIElement(iconUi).inTL(2f, 3f);
+                        nameX = 24f;
                     } catch (Throwable ignored) {
-                        cargoListUi.addPara(infoLine, 6f, offered > 0 ? HEADER_GREEN : BODY_TEXT,
-                                GOLD, ownedTxt, offerTxt);
                     }
-                } else {
-                    cargoListUi.addPara(infoLine, 6f, offered > 0 ? HEADER_GREEN : BODY_TEXT,
-                            GOLD, ownedTxt, offerTxt);
                 }
+                TooltipMakerAPI rowUi = rowPanel.createUIElement(rowW, 25f, false);
+                addTableLabel(rowUi, trimCell(name, 16), offered > 0 ? HEADER_GREEN : BODY_TEXT,
+                        nameX, 4f, 138f - nameX);
+                addTableLabel(rowUi, String.valueOf(owned), TARGET_CYAN, 142f, 4f, 44f);
+                addTableLabel(rowUi, String.valueOf(offered), offered > 0 ? GOLD : MUTED, 188f, 4f, 46f);
 
-                // Horizontal quantity controls inside a forwarding CustomPanel so clicks route cleanly
-                CustomPanelAPI btnRow = panel.createCustomPanel(rowW, 24f, rowPlugin);
-                TooltipMakerAPI btnUi = btnRow.createUIElement(rowW, 24f, false);
-                float bx = 0f;
+                float bx = 238f;
                 float bh = 20f;
-                bx = addQtyButton(btnUi, "-50", cargoBtnId(commodityId, -50), bx, 44f, bh, offered > 0);
-                bx = addQtyButton(btnUi, "-10", cargoBtnId(commodityId, -10), bx, 44f, bh, offered > 0);
-                bx = addQtyButton(btnUi, "-1", cargoBtnId(commodityId, -1), bx, 38f, bh, offered > 0);
-                bx = addQtyButton(btnUi, "+1", cargoBtnId(commodityId, 1), bx + 6f, 38f, bh, offered < owned);
-                bx = addQtyButton(btnUi, "+10", cargoBtnId(commodityId, 10), bx, 44f, bh, offered < owned);
-                bx = addQtyButton(btnUi, "+50", cargoBtnId(commodityId, 50), bx, 44f, bh, offered < owned);
-                bx = addQtyButton(btnUi, CoopUiLang.tr("All", "Всё"), cargoBtnId(commodityId, Integer.MAX_VALUE),
-                        bx + 4f, 48f, bh, offered < owned);
-                addQtyButton(btnUi, "0", cargoBtnId(commodityId, Integer.MIN_VALUE),
-                        bx, 34f, bh, offered > 0);
-                btnRow.addUIElement(btnUi).inTL(0f, 0f);
-                cargoListUi.addCustom(btnRow, 2f);
+                bx = addQtyButton(rowUi, "-10", cargoBtnId(commodityId, -10), bx, 34f, bh, offered > 0);
+                bx = addQtyButton(rowUi, "-1", cargoBtnId(commodityId, -1), bx, 28f, bh, offered > 0);
+                bx = addQtyButton(rowUi, "+1", cargoBtnId(commodityId, 1), bx + 2f, 28f, bh, offered < owned);
+                bx = addQtyButton(rowUi, "+10", cargoBtnId(commodityId, 10), bx, 34f, bh, offered < owned);
+                bx = addQtyButton(rowUi, CoopUiLang.tr("All", "Всё"), cargoBtnId(commodityId, Integer.MAX_VALUE),
+                        bx + 2f, 38f, bh, offered < owned);
+                addQtyButton(rowUi, "0", cargoBtnId(commodityId, Integer.MIN_VALUE),
+                        bx, 24f, bh, offered > 0);
+                rowPanel.addUIElement(rowUi).inTL(0f, 0f);
+                cargoListUi.addCustom(rowPanel, 2f);
             }
         }
 
-        panel.addUIElement(cargoListUi).inTL(x, y);
+        panel.addUIElement(cargoListUi).inTL(x, y + 44f);
         if (savedCargoScrollY > 0f) {
             try {
                 ScrollPanelAPI scroller = cargoListUi.getExternalScroller();
@@ -411,6 +413,19 @@ public final class CoopTradeDialogPlugin implements InteractionDialogPlugin, Coo
             } catch (Throwable ignored) {
             }
         }
+    }
+
+    private static void addTableLabel(TooltipMakerAPI ui, String text, Color color,
+                                      float x, float y, float w) {
+        LabelAPI lbl = ui.addPara(text == null ? "" : text, color, 0f);
+        lbl.getPosition().setSize(w, 18f);
+        lbl.getPosition().inTL(x, y);
+    }
+
+    private static String trimCell(String s, int maxLen) {
+        if (s == null) return "";
+        String t = s.trim();
+        return t.length() <= maxLen ? t : t.substring(0, Math.max(1, maxLen - 1)) + "…";
     }
 
     private float addQtyButton(TooltipMakerAPI ui, String label, String id,
