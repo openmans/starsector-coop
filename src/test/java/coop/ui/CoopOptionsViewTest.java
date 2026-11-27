@@ -79,8 +79,8 @@ class CoopOptionsViewTest {
 
         for (CoopOptionsRegistry.Option option : CoopOptionsRegistry.options()) {
             CoopOptionsView.Row row = row(view, option.key());
-            if (option.dOnly()) {
-                assertNull(row, option.key() + " is -D only and must not be offered as a setting");
+            if (option.dOnly() || CoopOptionsView.HIDDEN_KEYS.contains(option.key())) {
+                assertNull(row, option.key() + " is hidden/-D-only and must not be offered as a setting");
             } else {
                 assertNotNull(row, option.key() + " has no row");
             }

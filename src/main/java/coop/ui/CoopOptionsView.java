@@ -93,6 +93,10 @@ public record CoopOptionsView(List<Section> sections) {
     /** All shipped player-facing options are now wired; this set is empty. */
     public static final Set<String> INERT_KEYS = Set.of();
 
+    /** Retired options kept in registry for save/config compatibility but hidden from the UI. */
+    public static final Set<String> HIDDEN_KEYS = Set.of(
+            CoopOptionsRegistry.WINGMAN_BATTLES);
+
     /**
      * Policy keys that are still read at launch by {@code CoopNetStartupConfig} rather than from the
      * campaign policy. They sync and display so both players can see what the session was configured
@@ -220,8 +224,8 @@ public record CoopOptionsView(List<Section> sections) {
                                   boolean sessionActive, Reader reader) {
         List<Row> rows = new ArrayList<>();
         for (CoopOptionsRegistry.Option option : CoopOptionsRegistry.byTier(tier)) {
-            if (option.dOnly()) {
-                // -D-only keys are not settings and are deliberately not discoverable as such.
+            if (option.dOnly() || HIDDEN_KEYS.contains(option.key())) {
+                // -D-only keys and retired options are hidden from the player-facing options page.
                 continue;
             }
             rows.add(row(option, role, sessionActive, reader));

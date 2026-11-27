@@ -32,8 +32,8 @@
 - **Transparent ally battle reinforcement (up to 3,000 su):** added host-configurable
   `coop.allyJoinRange` (default `3000`, range `700..10000`) and interactive reinforcement dialog
   (`CoopAllyReinforceCoordinator`, `CoopAllyJoinDialogPlugin`) letting nearby partners join any
-  battle via **Tactical Map** (live ship orders without Wingman), **Wingman** (optional manual
-  piloting when installed), **AI ally**, or **Decline**.
+  battle via **Tactical Map** (live ship orders) or **AI ally**, or **Decline** (Wingman battle
+  integration removed).
 - **Partner Comm Link & live Trade:** clicking a partner's mirrored fleet on the campaign map now
   opens live Comm Link (`CoopPartnerCampaignPlugin`, `CoopPartnerCommPlugin`) with working
   `TRADE_SYNC` credit/cargo settlement in `CoopNetPump`.

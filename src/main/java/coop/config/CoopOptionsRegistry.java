@@ -362,17 +362,14 @@ public final class CoopOptionsRegistry {
                 "next connection attempt", ApplyBoundary.NEXT_CONNECTION,
                 "Whether additional guests may join a multi-guest campaign already in progress"
                         + " after the host releases the lobby."));
-        options.add(boolOption(WINGMAN_BATTLES, Tier.POLICY, "true", "Phase 34",
+        options.add(boolOption(WINGMAN_BATTLES, Tier.POLICY, "false", "Phase 34",
                 "next connection attempt", ApplyBoundary.NEXT_CONNECTION,
-                "Let The Wingman Project (when installed and enabled on both PCs) serve the battles"
-                        + " of a coop session: the host opens Wingman from the campaign map, the guest"
-                        + " connects Wingman to the host's PC and flies in the host's battles. off = the"
-                        + " classic solo own-fleet model (the partner watches from the paused campaign)."));
+                "Legacy option (disabled): joint battles use Tactical Map and AI ally reinforcement."));
         options.add(intOption(ALLY_JOIN_RANGE, Tier.POLICY, "3000", false, 700, 10000, "Phase 22 / 33",
                 "immediately", ApplyBoundary.IMMEDIATE,
                 "Maximum distance in space units (700..10000 su, default 3000) at which a partner"
                         + " in the same star system is offered to join a player's battle as an ally"
-                        + " (tactical map, Wingman, or AI) without enlarging NPC enemy join range."));
+                        + " (tactical map or AI) without enlarging NPC enemy join range."));
         options.add(enumOption(LOOT_SPLIT, Tier.POLICY, "equal", List.of("equal", "pilot-keeps"),
                 "Phase 22", "next battle result", ApplyBoundary.NEXT_BATTLE_RESULT,
                 "How salvage credit value from a battle joined by an ally is divided:"

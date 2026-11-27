@@ -86,9 +86,9 @@ public final class CoopPartnerCommPlugin implements InteractionDialogPlugin {
                         + "  |  Дальность подкрепления в бой: " + rangeSu + " su"));
         text.addPara(CoopUiLang.tr(
                 "When either player starts a battle within " + rangeSu
-                        + " su, the partner receives an interactive prompt to join (Tactical Map, Wingman, or AI).",
+                        + " su, the partner receives an interactive prompt to join (Tactical Map or AI).",
                 "Если один из игроков начнёт бой в пределах " + rangeSu
-                        + " su, напарник получит запрос на участие (Тактическая карта, Wingman или ИИ)."),
+                        + " su, напарник получит запрос на участие (Тактическая карта или ИИ)."),
                 Misc.getGrayColor());
 
         opts.addOption(CoopUiLang.tr(

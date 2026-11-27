@@ -56,10 +56,6 @@ public final class CoopAllyJoinDialogPlugin implements InteractionDialogPlugin {
 
         opts.addOption(CoopUiLang.tr("Join battle + Tactical Map (command your ships)",
                 "Войти в бой + Тактическая карта (отдавать приказы кораблям)"), JoinChoice.JOIN_TACTICAL);
-        if (offer.wingmanAvailable()) {
-            opts.addOption(CoopUiLang.tr("Join battle + Direct Piloting (Wingman)",
-                    "Войти в бой + Ручное пилотирование (Wingman)"), JoinChoice.JOIN_WINGMAN);
-        }
         opts.addOption(CoopUiLang.tr("Join battle (AI officers only)",
                 "Войти в бой (управляет ИИ)"), JoinChoice.JOIN_AI);
         opts.addOption(CoopUiLang.tr("Decline (stay out of this battle)",

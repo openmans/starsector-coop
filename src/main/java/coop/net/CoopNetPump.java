@@ -3585,11 +3585,8 @@ public class CoopNetPump implements EveryFrameScript {
         coop.debug.CoopOwnFleetProbe.INSTANCE.tickFromGlobal(clockMillis.getAsLong());
         // Same again for the datagram wiretap, which also emits its size summary from this poll.
         CoopWiretap.pollFrame();
-        // Phase 34: Wingman battles. Only tick once a gameplay session is live so solo / unconnected
-        // frames never touch Wingman or lazily construct the integration.
-        if (isGameplaySessionActive()) {
-            wingmanIntegration().tick();
-        } else if (wingmanIntegration != null) {
+        // Wingman battle integration disabled; joint battles use Tactical Map and AI ally reinforcement.
+        if (wingmanIntegration != null) {
             wingmanIntegration.reset();
         }
         // Phase 29 M1: stream time advances by campaign dt, frozen while paused, before anything
@@ -3853,6 +3850,11 @@ public class CoopNetPump implements EveryFrameScript {
      * session; failures log one clear line telling the host to forward 24816 manually if needed.
      */
     private void tickWingmanPortMapper() {
+        // Wingman battle integration removed; never forward Wingman's port.
+    }
+
+    @SuppressWarnings("unused")
+    private void unusedLegacyWingmanPortMapperDisabled() {
         if (service.role() != CoopConnectionRole.HOST || portMapper == null) {
             return;
         }
@@ -9915,7 +9917,13 @@ public class CoopNetPump implements EveryFrameScript {
     }
 
     /** Phase 34: guest &rarr; host, the guest's Wingman panel name for flagship reservation. */
+    /** Legacy WINGMAN_HELLO frame: ignored (Wingman battle integration removed). */
     private void handleWingmanHello(CoopMessages.Message message) {
+        // Intentionally ignored.
+    }
+
+    @SuppressWarnings("unused")
+    private void unusedHandleWingmanHelloLegacy(CoopMessages.Message message) {
         if (droppedBeforeTheSession(message.type())) {
             return;
         }
@@ -10901,8 +10909,7 @@ public class CoopNetPump implements EveryFrameScript {
             String enemySummary = battle.getNonPlayerSide() != null && !battle.getNonPlayerSide().isEmpty()
                     ? String.valueOf(battle.getNonPlayerSide().get(0).getNameWithFaction())
                     : "hostile fleet";
-            boolean wingmanOk = service.role() == CoopConnectionRole.HOST
-                    && wingmanIntegration().isEnabledAndAvailable();
+            boolean wingmanOk = false;
             String fighterId = sessionState.localPlayerId();
             String fighterName = sessionState.localName();
 

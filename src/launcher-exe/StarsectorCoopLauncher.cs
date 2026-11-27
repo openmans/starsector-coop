@@ -918,21 +918,15 @@ namespace StarsectorCoopBootstrap
 
             wingmanBox = new CheckBox
             {
-                ForeColor = TextColor,
-                BackColor = BgColor,
-                Location = new Point(24, 144),
-                Size = new Size(532, 24),
-                AutoCheck = true,
-                FlatStyle = FlatStyle.Standard,
-                Cursor = Cursors.Hand,
-                Checked = initialWingman
+                Visible = false,
+                Checked = false
             };
 
             russianBox = new CheckBox
             {
                 ForeColor = TextColor,
                 BackColor = BgColor,
-                Location = new Point(24, 170),
+                Location = new Point(24, 150),
                 Size = new Size(532, 24),
                 AutoCheck = true,
                 FlatStyle = FlatStyle.Standard,

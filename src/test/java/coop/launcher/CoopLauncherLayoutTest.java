@@ -73,7 +73,7 @@ class CoopLauncherLayoutTest {
                     "Restart button stays hidden until a pending launcher jar update is staged");
             assertNotNull(find(frame, "modVersion"), "Separate mod version label must be present");
             assertNotNull(find(frame, "launchButton"), "Launch button must be visible");
-            assertNotNull(find(frame, "installWingmanBox"), "Optional Wingman checkbox must be present");
+            assertNull(find(frame, "installWingmanBox"), "Wingman option must be removed from launcher UI");
             assertNotNull(find(frame, "installRussianBox"), "Optional Russian translation checkbox must be present");
             assertNull(find(frame, "hostSegment"), "Host tab must not clutter the minimal external launcher");
             assertNull(find(frame, "guestSegment"), "Join tab must not clutter the minimal external launcher");
@@ -182,29 +182,21 @@ class CoopLauncherLayoutTest {
                     "0.2.5", false);
             assertFalse(field("updateActionButton", JButton.class).isEnabled());
             JCheckBox ruBox = field("installRussianBox", JCheckBox.class);
-            JCheckBox wmBox = field("installWingmanBox", JCheckBox.class);
             assertFalse(ruBox.isSelected());
-            assertFalse(wmBox.isSelected());
 
             ruBox.doClick();
             assertTrue(ruBox.isSelected(), "Russian checkbox must toggle to selected on click");
             assertTrue(field("updateActionButton", JButton.class).isEnabled(),
                     "Ticking Russian translation must enable the Install button");
 
-            wmBox.doClick();
-            assertTrue(wmBox.isSelected(), "Wingman checkbox must toggle to selected on click");
-
-            // Language toggle must preserve ticked states
+            // Language toggle must preserve ticked state
             app.setLanguage(CoopLauncherI18n.Lang.RU, false);
             assertTrue(ruBox.isSelected(), "Russian checkbox must stay selected after switching to RU");
-            assertTrue(wmBox.isSelected(), "Wingman checkbox must stay selected after switching to RU");
 
             ruBox.doClick();
-            wmBox.doClick();
             assertFalse(ruBox.isSelected(), "Russian checkbox must untick on second click");
-            assertFalse(wmBox.isSelected(), "Wingman checkbox must untick on second click");
             assertFalse(field("updateActionButton", JButton.class).isEnabled(),
-                    "Unticking both optional checkboxes returns Update button to disabled when up to date");
+                    "Unticking optional checkbox returns Update button to disabled when up to date");
 
             // Russian translation asset always resolves automatically (never returns null)
             CoopUpdateCheck.ReleaseAsset ruAuto = CoopUpdateCheck.resolveLatestRussianAsset(
@@ -230,7 +222,7 @@ class CoopLauncherLayoutTest {
             assertEquals("EN", langBtn.getText());
             assertEquals("Запустить", field("launchButton", JButton.class).getText());
             assertEquals("Открыть папку", field("openFolderButton", JButton.class).getText());
-            assertTrue(field("installWingmanBox", JCheckBox.class).getText().contains("Wingman"));
+            assertTrue(field("installRussianBox", JCheckBox.class).getText().contains("русификатор"));
 
             app.setLanguage(CoopLauncherI18n.Lang.EN, false);
             assertEquals("RU", langBtn.getText());

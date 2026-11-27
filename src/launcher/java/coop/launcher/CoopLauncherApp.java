@@ -656,14 +656,6 @@ public final class CoopLauncherApp {
         installModeSummary.setText("Select starsector.exe to install or update Starsector Coop from GitHub.");
         form.raw(installModeSummary);
 
-        installWingmanBox = CoopTheme.checkBox("Also install The Wingman Project (optional: manual co-op piloting)");
-        installWingmanBox.setName("installWingmanBox");
-        installWingmanBox.setToolTipText("Downloads the latest Wingman release from"
-                + " NEOysod/TheWingmanProject into mods\\Wingman and enables wingman_project in"
-                + " enabled_mods.json. Optional — tactical map co-op battles work without it.");
-        installWingmanBox.addItemListener(event -> updateLaunchGate());
-        form.raw(installWingmanBox);
-
         installRussianBox = CoopTheme.checkBox("Also install Starsector 0.98.5a-RC9 Russian translation (auto-download)");
         installRussianBox.setName("installRussianBox");
         installRussianBox.setToolTipText("Automatically downloads and installs the Starsector 0.98.5a-RC9"
@@ -3361,7 +3353,7 @@ public final class CoopLauncherApp {
         }
         CoopInstallLayout targetLayout = layout;
         String current = effectiveVersion();
-        boolean includeWingman = installWingmanBox != null && installWingmanBox.isSelected();
+        boolean includeWingman = false;
         boolean includeRussian = installRussianBox != null && installRussianBox.isSelected();
         final boolean installRussianFinal = includeRussian;
         final java.nio.file.Path localRuPathFinal = null;
