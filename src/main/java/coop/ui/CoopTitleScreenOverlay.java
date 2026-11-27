@@ -56,6 +56,7 @@ public final class CoopTitleScreenOverlay {
     // Button IDs
     private static final String ID_DOCK_CONNECT = "coop.dock.connect";
     private static final String ID_DOCK_OPEN = "coop.dock.open";
+    private static final String ID_DOCK_LOAD = "coop.dock.load";
     private static final String ID_CLOSE = "coop.close";
     private static final String ID_LANG = "coop.lang";
     private static final String ID_TAB_HOST = "coop.tab.host";
@@ -351,23 +352,35 @@ public final class CoopTitleScreenOverlay {
             nickLbl.getPosition().inTL(10f, y);
             y += 22f;
 
-            String target = session.hasSavedJoinSettings()
-                    ? session.savedJoinTargetLabel()
-                    : session.tr("not configured", "не задан");
-            LabelAPI hostLbl = ui.addPara(
-                    session.tr("Last server: ", "Сервер: ") + target,
-                    session.hasSavedJoinSettings() ? new Color(150, 230, 255) : LABEL_MUTED, 0f);
-            hostLbl.getPosition().setSize(innerW, 18f);
-            hostLbl.getPosition().inTL(10f, y);
+            boolean isHostArmed = session.armedRole() == coop.net.CoopConnectionRole.HOST;
+            if (isHostArmed) {
+                LabelAPI modeLbl = ui.addPara(
+                        session.tr("Mode: HOST (port " + session.hostPort() + ")",
+                                "Режим: ХОСТ (порт " + session.hostPort() + ")"),
+                        GREEN_BRIGHT, 0f);
+                modeLbl.getPosition().setSize(innerW, 18f);
+                modeLbl.getPosition().inTL(10f, y);
+            } else {
+                String target = session.hasSavedJoinSettings()
+                        ? session.savedJoinTargetLabel()
+                        : session.tr("not configured", "не задан");
+                LabelAPI hostLbl = ui.addPara(
+                        session.tr("Last server: ", "Сервер: ") + target,
+                        session.hasSavedJoinSettings() ? new Color(150, 230, 255) : LABEL_MUTED, 0f);
+                hostLbl.getPosition().setSize(innerW, 18f);
+                hostLbl.getPosition().inTL(10f, y);
+            }
             y += 24f;
 
-            String hint = !session.statusText().isEmpty()
-                    ? session.statusText()
+            String defaultHint = isHostArmed
+                    ? session.tr("Press CONNECT to open Host Lobby, or Load Game to pick a save.",
+                            "Нажмите CONNECT чтобы открыть лобби хоста, или «Загрузка» для выбора сейва.")
                     : session.tr("Press CONNECT to join using your last settings, or Settings to Host/edit.",
                             "Нажмите CONNECT для входа по прошлым настройкам, или «Настройки» для хоста.");
+            String hint = !session.statusText().isEmpty() ? session.statusText() : defaultHint;
             Color hintColor = !session.statusText().isEmpty() ? session.statusColor() : LABEL_MUTED;
             LabelAPI hintLbl = ui.addPara(hint, hintColor, 0f);
-            hintLbl.getPosition().setSize(innerW, 74f);
+            hintLbl.getPosition().setSize(innerW, 66f);
             hintLbl.getPosition().inTL(10f, y);
         }
 
@@ -423,14 +436,31 @@ public final class CoopTitleScreenOverlay {
                     ACTION_TEXT, ACTION_BG, Alignment.MID, CutStyle.ALL, 154f, 30f, 0f);
             cfgBtn.getPosition().inTL(164f, barY);
         } else {
-            float barY = DOCK_H - 40f;
-            ButtonAPI connectBtn = ui.addButton("CONNECT", ID_DOCK_CONNECT,
-                    GREEN_BRIGHT, GREEN_TAB_ACTIVE_BG, Alignment.MID, CutStyle.ALL, 156f, 30f, 0f);
-            connectBtn.getPosition().inTL(10f, barY);
+            boolean isHostArmed = session.armedRole() == coop.net.CoopConnectionRole.HOST;
+            if (isHostArmed) {
+                float row1Y = DOCK_H - 72f;
+                float row2Y = DOCK_H - 36f;
+                ButtonAPI connectBtn = ui.addButton("CONNECT", ID_DOCK_CONNECT,
+                        GREEN_BRIGHT, GREEN_TAB_ACTIVE_BG, Alignment.MID, CutStyle.ALL, 156f, 28f, 0f);
+                connectBtn.getPosition().inTL(10f, row1Y);
 
-            ButtonAPI cfgBtn = ui.addButton(session.tr("Settings", "Настройки"), ID_DOCK_OPEN,
-                    ACTION_TEXT, ACTION_BG, Alignment.MID, CutStyle.ALL, 146f, 30f, 0f);
-            cfgBtn.getPosition().inTL(172f, barY);
+                ButtonAPI loadBtn = ui.addButton(session.tr("Load Save", "Загрузка"), ID_DOCK_LOAD,
+                        GREEN_BRIGHT, GREEN_BG, Alignment.MID, CutStyle.ALL, 146f, 28f, 0f);
+                loadBtn.getPosition().inTL(172f, row1Y);
+
+                ButtonAPI cfgBtn = ui.addButton(session.tr("Settings", "Настройки"), ID_DOCK_OPEN,
+                        ACTION_TEXT, ACTION_BG, Alignment.MID, CutStyle.ALL, innerW, 26f, 0f);
+                cfgBtn.getPosition().inTL(10f, row2Y);
+            } else {
+                float barY = DOCK_H - 40f;
+                ButtonAPI connectBtn = ui.addButton("CONNECT", ID_DOCK_CONNECT,
+                        GREEN_BRIGHT, GREEN_TAB_ACTIVE_BG, Alignment.MID, CutStyle.ALL, 156f, 30f, 0f);
+                connectBtn.getPosition().inTL(10f, barY);
+
+                ButtonAPI cfgBtn = ui.addButton(session.tr("Settings", "Настройки"), ID_DOCK_OPEN,
+                        ACTION_TEXT, ACTION_BG, Alignment.MID, CutStyle.ALL, 146f, 30f, 0f);
+                cfgBtn.getPosition().inTL(172f, barY);
+            }
         }
 
         panel.addUIElement(ui).inTL(0f, 0f);
@@ -1052,16 +1082,27 @@ public final class CoopTitleScreenOverlay {
         public void buttonPressed(Object buttonId) {
             CoopInGameLauncherSession s = CoopInGameLauncherSession.shared();
             if (ID_DOCK_CONNECT.equals(buttonId)) {
+                boolean wasHost = s.armedRole() == coop.net.CoopConnectionRole.HOST;
                 boolean started = s.quickConnectLastSettings(CoopOptionsStore.system());
                 if (!started) {
                     openModalOnNextConnectError = false;
-                    s.setActiveTab(CoopInGameLauncherSession.Tab.JOIN);
+                    s.setActiveTab(wasHost
+                            ? CoopInGameLauncherSession.Tab.HOST
+                            : CoopInGameLauncherSession.Tab.JOIN);
                     modalOpen = true;
                     rebuildPending = true;
                 } else {
-                    openModalOnNextConnectError = true;
+                    openModalOnNextConnectError = !wasHost;
                     dockRebuildPending = true;
                 }
+                return;
+            }
+            if (ID_DOCK_LOAD.equals(buttonId)) {
+                openModalOnNextConnectError = false;
+                modalOpen = false;
+                removeModal();
+                removeDock();
+                CoopTitleScreenBridge.openLoadGameDialog();
                 return;
             }
             if (ID_DOCK_OPEN.equals(buttonId)) {

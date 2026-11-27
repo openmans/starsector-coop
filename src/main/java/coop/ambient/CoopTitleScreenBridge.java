@@ -53,6 +53,7 @@ public final class CoopTitleScreenBridge {
     private static volatile MethodHandle titleMenuItemSelected;
     private static volatile Object titleContinueAction;
     private static volatile MethodHandle titleShowNewGameDialog;
+    private static volatile MethodHandle titleShowLoadGameDialog;
 
     private CoopTitleScreenBridge() {
     }
@@ -94,6 +95,11 @@ public final class CoopTitleScreenBridge {
                 }
                 try {
                     titleShowNewGameDialog = priv.findSpecial(titleCls, "showNewGameDialog",
+                            MethodType.methodType(void.class), titleCls);
+                } catch (Throwable ignored) {
+                }
+                try {
+                    titleShowLoadGameDialog = priv.findSpecial(titleCls, "showLoadGameDialog",
                             MethodType.methodType(void.class), titleCls);
                 } catch (Throwable ignored) {
                 }
@@ -179,6 +185,22 @@ public final class CoopTitleScreenBridge {
             }
             if (titleShowNewGameDialog != null) {
                 titleShowNewGameDialog.invoke(state);
+                return true;
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    /** Opens Starsector's Load Game screen directly from the Title Screen. */
+    public static boolean openLoadGameDialog() {
+        Object state = currentTitleState();
+        if (state == null) {
+            return false;
+        }
+        try {
+            if (titleShowLoadGameDialog != null) {
+                titleShowLoadGameDialog.invoke(state);
                 return true;
             }
         } catch (Throwable ignored) {

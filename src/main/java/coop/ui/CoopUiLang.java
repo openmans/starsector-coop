@@ -45,7 +45,12 @@ public final class CoopUiLang {
     public static boolean toggle() {
         boolean next = !isRussian();
         russianOverride = next;
-        CoopTitleScreenBridge.savePreferRussian(next);
+        try {
+            if (com.fs.starfarer.api.Global.getSettings() != null) {
+                CoopTitleScreenBridge.savePreferRussian(next);
+            }
+        } catch (Throwable ignored) {
+        }
         return next;
     }
 

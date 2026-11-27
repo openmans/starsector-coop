@@ -19,8 +19,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Starsector Coop Launcher")]
 [assembly: AssemblyDescription("One-click installer, updater and launcher for Starsector Coop")]
 [assembly: AssemblyProduct("Starsector Coop")]
-[assembly: AssemblyVersion("0.2.10.0")]
-[assembly: AssemblyFileVersion("0.2.10.0")]
+[assembly: AssemblyVersion("0.2.11.0")]
+[assembly: AssemblyFileVersion("0.2.11.0")]
 
 namespace StarsectorCoopBootstrap
 {

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.11 (Host-aware CONNECT + Load button in Lobby dock + zero test registry pollution)
+
+- **Fixed bogus `192.168.1.50:7788` / `Тестер` registry pollution from headless unit tests:**
+  `CoopInGameLauncherSession` and `CoopUiLang` now persist `Preferences` (`lastJoinHost/Port/Password`,
+  `playerName`, `lang`) strictly inside a real live Starsector JVM (`Global.getSettings() != null`),
+  never during headless unit tests.
+- **Host-aware `CONNECT` + direct `Загрузка` (`Load Save`) button in the bottom-left Lobby dock:**
+  when armed as **HOST**, the dock displays `Режим: ХОСТ (порт ...)` instead of a guest IP;
+  clicking **`CONNECT`** immediately opens the Host Lobby right in the dock, and **`Загрузка`**
+  opens Starsector's Save/Load screen directly in one click.
+
 ## 0.2.10 (Unified bottom-left Lobby dock + instant game start + no duplicate in-save lobby)
 
 - **Removed redundant green `CO-OP` button below Exit on the Title Screen (`CoopTitleScreenOverlay`):**

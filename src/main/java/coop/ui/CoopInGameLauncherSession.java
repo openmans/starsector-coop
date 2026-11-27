@@ -176,9 +176,19 @@ public final class CoopInGameLauncherSession {
         String clean = trim(v);
         if (!clean.isEmpty() && !clean.equals(playerName)) {
             playerName = clean.length() > 28 ? clean.substring(0, 28) : clean;
-            CoopTitleScreenBridge.savePlayerName(playerName);
+            if (isLiveGameRuntime()) {
+                CoopTitleScreenBridge.savePlayerName(playerName);
+            }
         } else if (clean.isEmpty()) {
             playerName = "";
+        }
+    }
+
+    private static boolean isLiveGameRuntime() {
+        try {
+            return com.fs.starfarer.api.Global.getSettings() != null;
+        } catch (Throwable ignored) {
+            return false;
         }
     }
 
@@ -416,7 +426,9 @@ public final class CoopInGameLauncherSession {
         }
         CoopModPlugin.applyRuntimeSeed(seed);
         CoopStormBridge.configureGuest(true);
-        CoopTitleScreenBridge.saveLastJoinSettings(host, String.valueOf(port), guestPassword);
+        if (store == CoopOptionsStore.system() && isLiveGameRuntime()) {
+            CoopTitleScreenBridge.saveLastJoinSettings(host, String.valueOf(port), guestPassword);
+        }
         armedRole = CoopConnectionRole.GUEST;
 
         setStatus(tr("JOIN armed (" + host + ":" + port + ")! Press New Game or Load Game to connect.",
@@ -487,11 +499,19 @@ public final class CoopInGameLauncherSession {
     }
 
     /**
-     * One-click CONNECT from the compact bottom-left Lobby widget: attempts to join using the
-     * previously saved connection settings. Returns {@code false} if no settings exist or the
-     * immediate connect attempt failed (so the caller should open the Join config modal with error).
+     * One-click CONNECT from the compact bottom-left Lobby widget:
+     * <ul>
+     *   <li>When armed as HOST (launched in Host mode from launcher or configured as Host):
+     *       immediately opens the Host Lobby on the configured port.</li>
+     *   <li>Otherwise: attempts to join as Guest using previously saved settings; returns
+     *       {@code false} if no settings exist or connect fails so the Join modal opens with error.</li>
+     * </ul>
      */
     public boolean quickConnectLastSettings(CoopOptionsStore store) {
+        if (armedRole == CoopConnectionRole.HOST) {
+            activeTab = Tab.HOST;
+            return openHostLobby(store);
+        }
         activeTab = Tab.JOIN;
         if (!hasSavedJoinSettings()) {
             setStatus(tr(
