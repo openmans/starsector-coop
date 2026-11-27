@@ -118,10 +118,12 @@ public record CoopOptionsView(List<Section> sections) {
         LABELS.put(CoopOptionsRegistry.PORT_MAPPING, "Router port mapping");
         LABELS.put(CoopOptionsRegistry.PASSWORD, "Session password");
         LABELS.put(CoopOptionsRegistry.PLAYER_NAME, "Your display name");
+        LABELS.put(CoopOptionsRegistry.DEDICATED_HOST, "Dedicated host server mode");
         LABELS.put(CoopOptionsRegistry.MAX_GUESTS, "Maximum guests");
         LABELS.put(CoopOptionsRegistry.RECONNECT_GRACE_SECONDS, "Reconnect grace");
         LABELS.put(CoopOptionsRegistry.ALLOW_GUEST_PAUSE, "Guest may pause the world");
         LABELS.put(CoopOptionsRegistry.PAUSE_ON_GUEST_SCREENS, "Pause while a guest reads a screen");
+        LABELS.put(CoopOptionsRegistry.LIVE_WORLD_IN_COMBAT, "Keep world running in combat (1x)");
         LABELS.put(CoopOptionsRegistry.ALLOW_MID_SESSION_JOIN, "Allow joining a session in progress");
         LABELS.put(CoopOptionsRegistry.WINGMAN_BATTLES, "Wingman serves the battles");
         LABELS.put(CoopOptionsRegistry.ALLY_JOIN_RANGE, "Ally battle join range (su)");

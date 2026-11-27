@@ -29,7 +29,9 @@ public final class CoopSharedPauseCoordinator {
     private final Map<String, Boolean> guestScreenPauseIntents = new HashMap<>();
     private final Map<String, Long> appliedGuestSeqs = new HashMap<>();
     private boolean eitherInCombat;
+    private boolean liveWorldInCombat;
     private boolean reconnectHold;
+    private boolean dedicatedEmptyHold;
 
     // ---- Phase 25: global fast-forward state (any player toggles directly) ----
     private boolean effectiveFastForward;
@@ -176,10 +178,32 @@ public final class CoopSharedPauseCoordinator {
 
     public synchronized void setEitherInCombat(boolean inCombat) {
         eitherInCombat = inCombat;
+        if (inCombat) {
+            effectiveFastForward = false;
+        }
     }
 
     public synchronized boolean eitherInCombat() {
         return eitherInCombat;
+    }
+
+    public synchronized void setLiveWorldInCombat(boolean live) {
+        liveWorldInCombat = live;
+    }
+
+    public synchronized boolean liveWorldInCombat() {
+        return liveWorldInCombat;
+    }
+
+    public synchronized void setDedicatedEmptyHold(boolean held) {
+        dedicatedEmptyHold = held;
+        if (held) {
+            effectiveFastForward = false;
+        }
+    }
+
+    public synchronized boolean dedicatedEmptyHold() {
+        return dedicatedEmptyHold;
     }
 
     public synchronized void setReconnectHold(boolean held) {
@@ -198,8 +222,9 @@ public final class CoopSharedPauseCoordinator {
         return hostPauseIntent
                 || (allowGuestPause && !guestKeyPauseIntents.isEmpty())
                 || !guestScreenPauseIntents.isEmpty()
-                || eitherInCombat
-                || reconnectHold;
+                || (!liveWorldInCombat && eitherInCombat)
+                || reconnectHold
+                || dedicatedEmptyHold;
     }
 
     /* ===================== Phase 25: global fast-forward ===================== */
@@ -209,6 +234,10 @@ public final class CoopSharedPauseCoordinator {
      * host currently observes.
      */
     public synchronized void onHostFastForwardKey() {
+        if (eitherInCombat || reconnectHold || dedicatedEmptyHold) {
+            effectiveFastForward = false;
+            return;
+        }
         effectiveFastForward = !observedFastForward;
     }
 
@@ -227,15 +256,18 @@ public final class CoopSharedPauseCoordinator {
             return false;
         }
         appliedGuestSeqs.put(key, seq);
-        effectiveFastForward = fastForward;
+        effectiveFastForward = !(eitherInCombat || reconnectHold || dedicatedEmptyHold) && fastForward;
         return true;
     }
 
     public synchronized void setEffectiveFastForward(boolean fastForward) {
-        effectiveFastForward = fastForward;
+        effectiveFastForward = !(eitherInCombat || reconnectHold || dedicatedEmptyHold) && fastForward;
     }
 
     public synchronized boolean effectiveFastForward() {
+        if (eitherInCombat || reconnectHold || dedicatedEmptyHold) {
+            return false;
+        }
         return effectiveFastForward;
     }
 
@@ -312,7 +344,9 @@ public final class CoopSharedPauseCoordinator {
         guestScreenPauseIntents.clear();
         appliedGuestSeqs.clear();
         eitherInCombat = false;
+        liveWorldInCombat = false;
         reconnectHold = false;
+        dedicatedEmptyHold = false;
         effectiveFastForward = false;
         observedFastForward = false;
         pendingGuestFfKeyPress = false;

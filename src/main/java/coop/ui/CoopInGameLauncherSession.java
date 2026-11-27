@@ -52,6 +52,7 @@ public final class CoopInGameLauncherSession {
     private String hostPassword = "";
     private String hostSeed = "";
     private boolean portMappingAuto = true;
+    private boolean dedicatedHost;
     private String sectorSize = "normal";
     private String sectorAge = "mixed";
     private String hostCampaignId = "";
@@ -144,6 +145,7 @@ public final class CoopInGameLauncherSession {
             } else {
                 armedRole = CoopConnectionRole.NONE;
             }
+            dedicatedHost = store.bool(CoopOptionsRegistry.DEDICATED_HOST);
             String seed = store.rawOneShot(CoopOptionsRegistry.NEW_GAME_SEED);
             if (seed != null && !seed.trim().isEmpty()) {
                 if (armedRole == CoopConnectionRole.GUEST) {
@@ -230,6 +232,10 @@ public final class CoopInGameLauncherSession {
 
     public boolean portMappingAuto() { return portMappingAuto; }
     public void togglePortMapping() { portMappingAuto = !portMappingAuto; }
+
+    public boolean dedicatedHost() { return dedicatedHost; }
+    public void toggleDedicatedHost() { dedicatedHost = !dedicatedHost; }
+    public void setDedicatedHost(boolean dedicated) { dedicatedHost = dedicated; }
 
     public String sectorSize() { return sectorSize; }
     public void cycleSectorSize() {
@@ -381,6 +387,11 @@ public final class CoopInGameLauncherSession {
         values.put(CoopOptionsRegistry.CONNECT_PORT, null);
         values.put(CoopOptionsRegistry.PASSWORD, hostPassword.isEmpty() ? null : hostPassword);
         values.put(CoopOptionsRegistry.PORT_MAPPING, portMappingAuto ? "auto" : "off");
+        values.put(CoopOptionsRegistry.DEDICATED_HOST, dedicatedHost ? "true" : "false");
+        if (dedicatedHost) {
+            values.put(CoopOptionsRegistry.LIVE_WORLD_IN_COMBAT, "true");
+            values.put(CoopOptionsRegistry.ALLOW_MID_SESSION_JOIN, "true");
+        }
         values.put(CoopOptionsRegistry.NEW_GAME_SEED, seed.isEmpty() ? null : seed);
         values.put(CoopOptionsRegistry.SECTOR_SIZE, sectorSize);
         values.put(CoopOptionsRegistry.SECTOR_AGE, sectorAge);
@@ -699,6 +710,16 @@ public final class CoopInGameLauncherSession {
         }
         pendingRestoreGuestFromSharedSave = false;
         return true;
+    }
+
+    /** Queues automatic save load from the Title Screen when booting in Dedicated Host mode. */
+    public void scheduleDedicatedAutoLoad(String savePath) {
+        if (savePath != null && !savePath.trim().isEmpty()) {
+            this.pendingLoadSavePath = savePath.trim();
+            this.pendingRestoreGuestFromSharedSave = false;
+            this.launchedFromPreGameLobby = false;
+            this.pendingAutoEnterGame = true;
+        }
     }
 
     public boolean startGameFromLobby() {

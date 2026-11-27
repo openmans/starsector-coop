@@ -81,6 +81,11 @@
 	# text | applies: next connection attempt | Phase 20.4
 	"coop.playerName":"",
 
+	# Runs this Starsector instance as an unattended Dedicated Host (auto-loads latest save,
+	# hides/parks the server observer fleet, auto-pauses when 0 guests are connected, supports 4+ guests).
+	# true|false | applies: next launch | Dedicated Server
+	"coop.dedicatedHost":false,
+
 	# Optional AES-256-GCM transport encryption derived from coop.password. off keeps plaintext TCP;
 	# aes-gcm encrypts wire frames when a shared coop.password is configured.
 	# off|aes-gcm | applies: next connection attempt | Security
@@ -122,6 +127,11 @@
 	# interaction dialog (market trades are settled against the state at open time) and combat.
 	# true|false | applies: next screen open/close | Phase 28 | wired in milestone 2
 	"coop.pauseOnGuestScreens":true,
+
+	# Bannerlord-style combat world: true keeps the campaign world running at 1x (blocking Shift
+	# fast-forward) while a player is in combat, instead of freezing everyone on pause.
+	# true|false | applies: immediately | Bannerlord Combat Mode
+	"coop.liveWorldInCombat":true,
 
 	# Whether additional guests may join a multi-guest campaign already in progress after lobby release.
 	# true|false | applies: next connection attempt | Phase 27

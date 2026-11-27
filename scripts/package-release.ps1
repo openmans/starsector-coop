@@ -371,13 +371,13 @@ try {
 
     # Files at the mod root.
     $rootFiles = @('mod_info.json', 'coop.version', 'LICENSE', 'CHANGELOG.md', 'README.md',
-        'Coop Launcher.cmd', 'Starsector Coop Launcher.exe', 'Install Starsector Coop.cmd')
+        'Coop Launcher.cmd', 'Start Dedicated Server.cmd', 'Starsector Coop Launcher.exe', 'Install Starsector Coop.cmd')
     foreach ($name in $rootFiles) {
         $source = Join-Path $modRoot $name
         if (Test-Path -LiteralPath $source -PathType Leaf) {
             Copy-Item -LiteralPath $source -Destination (Join-Path $stagedMod $name) -Force
         }
-        elseif ($name -in @('Coop Launcher.cmd', 'Starsector Coop Launcher.exe', 'Install Starsector Coop.cmd')) {
+        elseif ($name -in @('Coop Launcher.cmd', 'Start Dedicated Server.cmd', 'Starsector Coop Launcher.exe', 'Install Starsector Coop.cmd')) {
             Write-Warning ("`"$name`" is missing from the mod root, so the archive" +
                 " ships without it.")
         }

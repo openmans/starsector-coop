@@ -159,8 +159,8 @@ class CoopOptionsRegistryTest {
                 "coop.hostPort", "coop.connectHost", "coop.connectPort", "coop.portMapping",
                 "coop.password", "coop.playerName",
                 "coop.maxGuests", "coop.reconnectGraceSeconds", "coop.allowGuestPause",
-                "coop.pauseOnGuestScreens", "coop.allowMidSessionJoin", "coop.lootSplit",
-                "coop.incomeSplit", "coop.guestColonizationConsent",
+                "coop.pauseOnGuestScreens", "coop.liveWorldInCombat", "coop.allowMidSessionJoin", "coop.lootSplit",
+                "coop.incomeSplit", "coop.guestColonizationConsent", "coop.dedicatedHost",
                 "coop.hud.disable", "coop.hudCorner", "coop.feedVerbosity", "coop.partnerColor")) {
             assertTrue(CoopOptionsRegistry.isRegistered(key), key + " is missing from the registry");
         }

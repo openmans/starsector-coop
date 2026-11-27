@@ -242,6 +242,7 @@ public final class CoopOptionsRegistry {
     public static final String PORT_MAPPING = "coop.portMapping";
     public static final String PASSWORD = "coop.password";
     public static final String PLAYER_NAME = "coop.playerName";
+    public static final String DEDICATED_HOST = "coop.dedicatedHost";
 
     // ---- host policy -------------------------------------------------------------------------
 
@@ -249,6 +250,7 @@ public final class CoopOptionsRegistry {
     public static final String RECONNECT_GRACE_SECONDS = "coop.reconnectGraceSeconds";
     public static final String ALLOW_GUEST_PAUSE = "coop.allowGuestPause";
     public static final String PAUSE_ON_GUEST_SCREENS = "coop.pauseOnGuestScreens";
+    public static final String LIVE_WORLD_IN_COMBAT = "coop.liveWorldInCombat";
     /** Phase 34: let The Wingman Project serve battles inside a coop campaign session. */
     public static final String WINGMAN_BATTLES = "coop.wingmanBattles";
     /** Interactive partner battle reinforcement radius in space units (700..10000 su, default 3000). */
@@ -334,6 +336,11 @@ public final class CoopOptionsRegistry {
         options.add(stringOption(PLAYER_NAME, Tier.LAUNCH, "", true, "Phase 20.4",
                 "next connection attempt", ApplyBoundary.NEXT_CONNECTION,
                 "Name shown to your partner. Empty falls back to the local character's own name."));
+        options.add(boolOption(DEDICATED_HOST, Tier.LAUNCH, "false", "Dedicated Server",
+                "next launch", ApplyBoundary.NEXT_CONNECTION,
+                "true runs this install as an unattended Dedicated Host: auto-loads the latest"
+                        + " save, hides/parks the host observer fleet, auto-pauses when 0 guests are"
+                        + " connected, supports 4+ guests, and autosaves periodically."));
 
         // -- Tier 2: host gameplay policy ------------------------------------------------------
         options.add(intOption(MAX_GUESTS, Tier.POLICY, "1", false, 1, 3, "Phase 20.5 / 27",
@@ -358,6 +365,10 @@ public final class CoopOptionsRegistry {
                         + " touch the two hardwired pause intents: interaction dialogs (the market"
                         + " open-snapshot model trades against open-time state, so that pause is"
                         + " correctness) and combat auto-pause. Wired in milestone 2."));
+        options.add(boolOption(LIVE_WORLD_IN_COMBAT, Tier.POLICY, "true",
+                "Bannerlord Combat Mode", "immediately", ApplyBoundary.IMMEDIATE,
+                "true keeps the shared campaign world running at 1x speed (disabling fast-forward)"
+                        + " while a player is in combat so partners can fly, trade, or join fights."));
         options.add(boolOption(ALLOW_MID_SESSION_JOIN, Tier.POLICY, "true", "Phase 27",
                 "next connection attempt", ApplyBoundary.NEXT_CONNECTION,
                 "Whether additional guests may join a multi-guest campaign already in progress"

@@ -372,6 +372,12 @@ public class CoopNetPump implements EveryFrameScript {
 
     private CoopTimeLock.TimeSnapshot latestTimeSnapshot;
     private final CoopSaveCheckpoint saveCheckpoint = new CoopSaveCheckpoint();
+    private final boolean dedicatedHostMode;
+    private static final long DEDICATED_PARK_INTERVAL_MILLIS = 500L;
+    private static final long DEDICATED_AUTOSAVE_INTERVAL_MILLIS = 600_000L;
+    private long nextDedicatedParkAtMillis;
+    private long nextDedicatedAutosaveAtMillis;
+    private boolean dedicatedHadGuests;
     /**
      * Phase 29 M1 wire prerequisite: outbound stream stamping, sender-side redundancy, and the
      * receive-side epoch watermark for the UDP state streams. The stream clock advances by campaign
@@ -1183,6 +1189,8 @@ public class CoopNetPump implements EveryFrameScript {
         this.linkQuality.reset(now);
         this.nextTimeSnapshotAtMillis = now + CoopTimeLock.SNAPSHOT_INTERVAL_MILLIS;
         this.nextGuestSnapshotAtMillis = now;
+        this.dedicatedHostMode = CoopNetStartupConfig.dedicatedHostFromSystemProperties();
+        this.nextDedicatedAutosaveAtMillis = now + DEDICATED_AUTOSAVE_INTERVAL_MILLIS;
         // A full interval out, not zero: the one send that belongs at the start of a session is the
         // forced one behind the lobby release (releaseLobbyNow), and letting the periodic timer also
         // fire on the first frame would put two identical payloads on the wire back to back.
@@ -3778,6 +3786,7 @@ public class CoopNetPump implements EveryFrameScript {
         // snapshot resumes applying this frame rather than the next one.
         tickAllyBattle();
         t = profiler.split(SECTION_BATTLE_BRIDGE, t);
+        tickDedicatedHost();
         syncSharedPause();
         // Phase 28 M2: immediately behind it, because syncGuestSharedPauseIntent is where the
         // guest's apply boundary is crossed and the host is waiting to be told that it was.
@@ -7258,6 +7267,9 @@ public class CoopNetPump implements EveryFrameScript {
             }
             pauseCoordinator.setAllowGuestPause(optionsPolicy.appliedBool(
                     coop.config.CoopOptionsRegistry.ALLOW_GUEST_PAUSE));
+            pauseCoordinator.setLiveWorldInCombat(
+                    optionsPolicy.appliedBool(coop.config.CoopOptionsRegistry.LIVE_WORLD_IN_COMBAT)
+                            || dedicatedHostMode);
             boolean effective = pauseCoordinator.effectivePaused();
             if (observed != effective) {
                 sector.setPaused(effective);
@@ -7455,6 +7467,63 @@ public class CoopNetPump implements EveryFrameScript {
         }
     }
 
+    private void tickDedicatedHost() {
+        if (!dedicatedHostMode || service.role() != CoopConnectionRole.HOST) {
+            return;
+        }
+        try {
+            if (!sessionState.lobbyReleased()) {
+                sessionState.releaseLobby();
+                CoopLog.info(CoopNetPump.class, "Coop Dedicated Host released lobby for drop-in players");
+            }
+            long now = clockMillis.getAsLong();
+            boolean hasGuests = sessionState.guestCount() > 0 && isGameplaySessionActive();
+            pauseCoordinator.setDedicatedEmptyHold(!hasGuests);
+            if (hasGuests && !dedicatedHadGuests) {
+                pauseCoordinator.setHostPauseIntent(false);
+                nextDedicatedAutosaveAtMillis = now + DEDICATED_AUTOSAVE_INTERVAL_MILLIS;
+                CoopLog.info(CoopNetPump.class, "Coop Dedicated Host: player connected, world unpaused");
+            } else if (!hasGuests && dedicatedHadGuests) {
+                CoopLog.info(CoopNetPump.class, "Coop Dedicated Host: 0 players connected, world paused");
+            }
+            dedicatedHadGuests = hasGuests;
+
+            SectorAPI sector = sectorOrNull();
+            if (sector == null) {
+                return;
+            }
+            if (!hasGuests && !sector.isPaused()) {
+                sector.setPaused(true);
+            }
+            if (now >= nextDedicatedParkAtMillis) {
+                nextDedicatedParkAtMillis = now + DEDICATED_PARK_INTERVAL_MILLIS;
+                CampaignFleetAPI fleet = sector.getPlayerFleet();
+                if (fleet != null) {
+                    fleet.setHidden(true);
+                    fleet.setTransponderOn(false);
+                    fleet.setDoNotAdvanceAI(true);
+                    fleet.setVelocity(0f, 0f);
+                    com.fs.starfarer.api.campaign.rules.MemoryAPI mem = fleet.getMemoryWithoutUpdate();
+                    if (mem != null) {
+                        mem.set(com.fs.starfarer.api.impl.campaign.ids.MemFlags.FLEET_IGNORED_BY_OTHER_FLEETS, true);
+                        mem.set(com.fs.starfarer.api.impl.campaign.ids.MemFlags.FLEET_IGNORES_OTHER_FLEETS, true);
+                        mem.set("$makeHostile", false);
+                    }
+                }
+            }
+            if (hasGuests && now >= nextDedicatedAutosaveAtMillis) {
+                nextDedicatedAutosaveAtMillis = now + DEDICATED_AUTOSAVE_INTERVAL_MILLIS;
+                CampaignUIAPI ui = sector.getCampaignUI();
+                if (ui != null && !ui.isShowingDialog() && !ui.isShowingMenu()) {
+                    ui.autosave();
+                    CoopLog.info(CoopNetPump.class, "Coop Dedicated Host triggered periodic autosave");
+                }
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Coop Dedicated Host tick failed", ex);
+        }
+    }
+
     private void resetSharedPauseState() {
         if (pauseCoordinator.reconnectHold()) {
             // Phase 21 made this reachable with a hold standing: a peer that drops while the lobby is
@@ -7493,6 +7562,19 @@ public class CoopNetPump implements EveryFrameScript {
         // The host still freezes meanwhile because the guest's screen-pause INTENT keeps the host
         // paused, so the two worlds don't drift; the guest re-syncs the moment the dialog closes.
         if (isGuestInteractionDialogOpen()) {
+            return;
+        }
+        // Bannerlord-style live combat world: when the host enters tactical combat, let the guest
+        // keep flying / docking / trading / fighting at 1x without forcing the host's paused snapshot.
+        if (battleBridge.isRemoteBattleActive()
+                && optionsPolicy.appliedBool(coop.config.CoopOptionsRegistry.LIVE_WORLD_IN_COMBAT)) {
+            try {
+                if (fastForwardLock.isAvailable()) {
+                    fastForwardLock.writeFastForward(false);
+                }
+                pauseCoordinator.setObservedFastForward(false);
+            } catch (RuntimeException | LinkageError ignored) {
+            }
             return;
         }
 
@@ -7744,6 +7826,9 @@ public class CoopNetPump implements EveryFrameScript {
     }
 
     private void maybeSendFleetSnapshot() {
+        if (dedicatedHostMode && service.role() == CoopConnectionRole.HOST) {
+            return;
+        }
         if (!shouldStreamFleet()) {
             return;
         }
@@ -7786,6 +7871,9 @@ public class CoopNetPump implements EveryFrameScript {
      * @return true when a roster went out (test seam)
      */
     boolean maybeSendFleetRoster(CoopFleetSnapshot snapshot) {
+        if (dedicatedHostMode && service.role() == CoopConnectionRole.HOST) {
+            return false;
+        }
         if (snapshot == null || snapshot.fleetHash16().equals(lastSentRosterHash)) {
             return false;
         }

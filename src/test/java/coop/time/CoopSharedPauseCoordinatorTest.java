@@ -307,4 +307,44 @@ class CoopSharedPauseCoordinatorTest {
         assertEquals("true", CoopMessages.requiredPayloadString(decoded, "fastForward"));
         assertEquals(12L, CoopMessages.requiredPayloadLong(decoded, "intentSeq"));
     }
+
+    @Test
+    void liveWorldInCombatKeepsWorldUnpausedAndDisablesFastForward() {
+        CoopSharedPauseCoordinator coordinator = new CoopSharedPauseCoordinator();
+        coordinator.setLiveWorldInCombat(true);
+        assertTrue(coordinator.applyGuestFastForwardIntent("guest-1", true, 1L));
+        assertTrue(coordinator.effectiveFastForward());
+
+        coordinator.setEitherInCombat(true);
+        assertFalse(coordinator.effectivePaused(),
+                "Bannerlord-style live combat mode must not pause the campaign world");
+        assertFalse(coordinator.effectiveFastForward(),
+                "fast-forward must be blocked while any player is in combat");
+
+        // Trying to enable FF during combat is refused cleanly
+        coordinator.setObservedFastForward(false);
+        coordinator.onHostFastForwardKey();
+        assertFalse(coordinator.effectiveFastForward());
+        assertTrue(coordinator.applyGuestFastForwardIntent("guest-1", true, 2L));
+        assertFalse(coordinator.effectiveFastForward());
+
+        // Leaving combat restores ability to fast-forward
+        coordinator.setEitherInCombat(false);
+        assertTrue(coordinator.applyGuestFastForwardIntent("guest-1", true, 3L));
+        assertTrue(coordinator.effectiveFastForward());
+    }
+
+    @Test
+    void dedicatedEmptyHoldPausesWorldAndClearsFastForward() {
+        CoopSharedPauseCoordinator coordinator = new CoopSharedPauseCoordinator();
+        assertTrue(coordinator.applyGuestFastForwardIntent("guest-1", true, 1L));
+        assertTrue(coordinator.effectiveFastForward());
+
+        coordinator.setDedicatedEmptyHold(true);
+        assertTrue(coordinator.effectivePaused());
+        assertFalse(coordinator.effectiveFastForward());
+
+        coordinator.setDedicatedEmptyHold(false);
+        assertFalse(coordinator.effectivePaused());
+    }
 }

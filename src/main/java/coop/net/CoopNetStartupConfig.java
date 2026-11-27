@@ -76,6 +76,8 @@ public final class CoopNetStartupConfig {
     public static final int MAX_GUESTS_V1 = 1;
     /** Phase 27 upper bound: host + up to 3 guests (4 players total). */
     public static final int MAX_GUESTS_CAP = 3;
+    /** Minimum peer slots when running in Dedicated Host mode. */
+    public static final int DEDICATED_HOST_MIN_PEERS = 4;
 
     /** Long enough for a NAT rebind or a Wi-Fi roam, short enough not to strand a player. */
     public static final int DEFAULT_RECONNECT_GRACE_SECONDS = 60;
@@ -156,9 +158,22 @@ public final class CoopNetStartupConfig {
         return trimToEmpty(CoopOptionsStore.system().raw(PASSWORD_PROPERTY));
     }
 
+    /** True when configured to run as an unattended Dedicated Host server. */
+    public static boolean dedicatedHostFromSystemProperties() {
+        String raw = CoopOptionsStore.system().raw(CoopOptionsRegistry.DEDICATED_HOST);
+        if (raw != null && !raw.trim().isEmpty()) {
+            return Boolean.parseBoolean(raw.trim());
+        }
+        return CoopOptionsStore.system().bool(CoopOptionsRegistry.DEDICATED_HOST);
+    }
+
     /** The clamped peer capacity on its own; see {@link #MAX_GUESTS_PROPERTY}. */
     public static int maxGuestsFromSystemProperties() {
-        return parseMaxGuests(CoopOptionsStore.system().raw(MAX_GUESTS_PROPERTY));
+        int configured = parseMaxGuests(CoopOptionsStore.system().raw(MAX_GUESTS_PROPERTY));
+        if (dedicatedHostFromSystemProperties()) {
+            return Math.max(configured, DEDICATED_HOST_MIN_PEERS);
+        }
+        return configured;
     }
 
     /**

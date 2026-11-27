@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.18 (Bannerlord-style Live World in Combat & Dedicated Host Mode)
+
+- **Bannerlord-style Live World in Combat (`coop.liveWorldInCombat`, default `true`):**
+  fighting a battle no longer freezes everyone else on a forced pause. Instead, fast-forward (`Shift`)
+  is locked to `1x` speed while any player is in combat, allowing partners to travel, enter stations,
+  trade, or join/start fights in real time. Toggable live in Intel → `Coop Options`.
+- **Dedicated Host Server Mode (`coop.dedicatedHost` & `Start Dedicated Server.cmd`):**
+  run a dedicated Starsector instance (`Выделенный сервер: ВКЛ` in the Host menu or via
+  `Start Dedicated Server.cmd`) that automatically loads the latest save on launch, hides and parks
+  its observer fleet (`FLEET_IGNORED_BY_OTHER_FLEETS`), unlocks mid-session drop-in/out for `4+`
+  players, auto-pauses when `0` guests are connected, unpauses immediately when a player joins,
+  never slows down for server-side battles, and runs periodic synced autosaves every 10 minutes
+  preserving per-player saves in `coop_vault/<name>.zip`.
+
 ## 0.2.17 (Per-player Save Vault by lobby name, live save sync, Title Screen load session fix)
 
 - **Fixed session disappearing right after loading from Title Screen Pre-Game Lobby (`CoopModPlugin`, `CoopTitleScreenOverlay`, `CoopNetPump`):**
