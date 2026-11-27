@@ -57,6 +57,7 @@ public final class CoopPreGameLobby {
         boolean authed;
         boolean ready;
         long lastHeardAt;
+        long closingAt;
 
         PeerLink(String id, SocketChannel channel, long now) {
             this.id = id;
@@ -323,7 +324,19 @@ public final class CoopPreGameLobby {
         Iterator<PeerLink> it = clients.iterator();
         while (it.hasNext()) {
             PeerLink link = it.next();
+            if (link.closingAt > 0L) {
+                flush(link);
+                if (now >= link.closingAt) {
+                    closeQuietly(link.channel);
+                    it.remove();
+                }
+                continue;
+            }
             boolean alive = readAndProcessHost(link, now);
+            if (link.closingAt > 0L) {
+                flush(link);
+                continue;
+            }
             if (alive && now - link.lastHeardAt > PEER_TIMEOUT_MS) {
                 alive = false;
             }
@@ -370,7 +383,9 @@ public final class CoopPreGameLobby {
                             putQuiet(rej, "reason", "wrong_password");
                             enqueue(link, rej);
                             flush(link);
-                            return false;
+                            // Keep socket open briefly so Windows TCP delivers REJECT before FIN
+                            link.closingAt = now + 300L;
+                            return true;
                         }
                         link.name = sanitizeName(msg.optString("name", ""), "Guest " + link.id);
                         link.authed = true;
@@ -454,12 +469,17 @@ public final class CoopPreGameLobby {
         }
         if (state == State.CONNECTING) {
             try {
-                if (serverLink.channel.finishConnect()) {
+                if (!serverLink.channel.isConnected()) {
+                    if (!serverLink.channel.finishConnect()) {
+                        if (now - connectStartedAt > CONNECT_TIMEOUT_MS) {
+                            failGuest("Connection timed out");
+                        }
+                        // CRITICAL: never call write/read on a SocketChannel before finishConnect() returns true!
+                        return;
+                    }
                     sendGuestHello();
                     serverLink.lastHeardAt = now;
-                } else if (now - connectStartedAt > CONNECT_TIMEOUT_MS) {
-                    failGuest("Connection timed out");
-                    return;
+                    connectStartedAt = now;
                 }
             } catch (Exception ex) {
                 failGuest(ex.getMessage() == null ? "Could not reach host" : ex.getMessage());

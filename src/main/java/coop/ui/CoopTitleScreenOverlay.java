@@ -51,9 +51,14 @@ public final class CoopTitleScreenOverlay {
     private static final float BUTTON_H = 36f;
     private static final float MODAL_W = 600f;
     private static final float MODAL_H = 524f;
+    private static final float DOCK_W = 312f;
+    private static final float DOCK_H = 228f;
+    private static final float DOCK_MARGIN = 18f;
 
     // Button IDs
     private static final String ID_OPEN = "coop.open";
+    private static final String ID_DOCK_CONNECT = "coop.dock.connect";
+    private static final String ID_DOCK_OPEN = "coop.dock.open";
     private static final String ID_CLOSE = "coop.close";
     private static final String ID_LANG = "coop.lang";
     private static final String ID_TAB_HOST = "coop.tab.host";
@@ -76,6 +81,11 @@ public final class CoopTitleScreenOverlay {
     private static UIPanelAPI attachedScreen;
     private static CustomPanelAPI buttonPanel;
     private static ButtonAPI openButton;
+    private static CustomPanelAPI dockPanel;
+    private static boolean dockRebuildPending;
+    private static long dockLastRevision = -1L;
+    private static boolean dockLastRussian;
+    private static boolean openModalOnNextConnectError;
     private static CustomPanelAPI modalPanel;
     private static boolean modalOpen;
     private static boolean rebuildPending;
@@ -113,8 +123,23 @@ public final class CoopTitleScreenOverlay {
             session.ensureInitialized();
 
             // Advance live pre-game lobby networking on the main frame thread
-            if (session.tickPreGameLobby(CoopOptionsStore.system()) && modalOpen) {
-                rebuildPending = true;
+            if (session.tickPreGameLobby(CoopOptionsStore.system())) {
+                dockRebuildPending = true;
+                if (modalOpen) {
+                    rebuildPending = true;
+                }
+                if (openModalOnNextConnectError) {
+                    coop.net.CoopPreGameLobby.State lst = session.preGameLobby().state();
+                    if (lst == coop.net.CoopPreGameLobby.State.ERROR) {
+                        openModalOnNextConnectError = false;
+                        session.setActiveTab(CoopInGameLauncherSession.Tab.JOIN);
+                        modalOpen = true;
+                        rebuildPending = true;
+                    } else if (lst == coop.net.CoopPreGameLobby.State.IN_LOBBY
+                            || lst == coop.net.CoopPreGameLobby.State.LAUNCHING) {
+                        openModalOnNextConnectError = false;
+                    }
+                }
             }
 
             // Apply async IP lookup result safely on the LWJGL main thread
@@ -146,6 +171,7 @@ public final class CoopTitleScreenOverlay {
             boolean vanillaDialogOpen = CoopTitleScreenBridge.isTitleScreenShowingDialog();
             if (vanillaDialogOpen) {
                 removeModal();
+                removeDock();
                 removeButton();
                 return;
             }
@@ -159,11 +185,24 @@ public final class CoopTitleScreenOverlay {
                 }
             }
 
-            if (modalOpen && (modalPanel == null || rebuildPending)) {
-                rebuildPending = false;
-                attachModal(screen, session);
-            } else if (!modalOpen && modalPanel != null) {
-                removeModal();
+            if (modalOpen) {
+                removeDock();
+                if (modalPanel == null || rebuildPending) {
+                    rebuildPending = false;
+                    attachModal(screen, session);
+                }
+            } else {
+                if (modalPanel != null) {
+                    removeModal();
+                }
+                long rev = session.preGameLobby().revision();
+                boolean ru = CoopUiLang.isRussian();
+                if (dockPanel == null || dockRebuildPending || rev != dockLastRevision || ru != dockLastRussian) {
+                    dockRebuildPending = false;
+                    dockLastRevision = rev;
+                    dockLastRussian = ru;
+                    attachDock(screen, session);
+                }
             }
         } catch (Throwable ex) {
             if (!loggedError) {
@@ -175,10 +214,24 @@ public final class CoopTitleScreenOverlay {
 
     private static void detachAll() {
         removeModal();
+        removeDock();
         removeButton();
         attachedScreen = null;
         modalOpen = false;
         rebuildPending = false;
+        dockRebuildPending = false;
+        dockLastRevision = -1L;
+        openModalOnNextConnectError = false;
+    }
+
+    private static void removeDock() {
+        if (attachedScreen != null && dockPanel != null) {
+            try {
+                attachedScreen.removeComponent(dockPanel);
+            } catch (Throwable ignored) {
+            }
+        }
+        dockPanel = null;
     }
 
     private static void removeButton() {
@@ -238,6 +291,173 @@ public final class CoopTitleScreenOverlay {
         screen.bringComponentToTop(panel);
         buttonPanel = panel;
         openButton = btn;
+    }
+
+    /**
+     * Always-open compact bottom-left Lobby & Participants dock on the Title Screen with a
+     * one-click {@code CONNECT} button using previously saved settings (and auto-opening the full
+     * Join settings modal with the exact error banner if connecting fails).
+     */
+    private static void attachDock(UIPanelAPI screen, CoopInGameLauncherSession session) {
+        removeDock();
+        coop.net.CoopPreGameLobby lobby = session.preGameLobby();
+        coop.net.CoopPreGameLobby.State lst = lobby.state();
+
+        CustomPanelAPI panel = Global.getSettings().createCustom(DOCK_W, DOCK_H, new DockPlugin());
+        TooltipMakerAPI ui = panel.createUIElement(DOCK_W, DOCK_H, false);
+
+        // Header line inside 30px emerald bar
+        LabelAPI hdr = ui.addPara(session.tr("CO-OP LOBBY", "CO-OP ЛОББИ"), GREEN_BRIGHT, 0f);
+        hdr.getPosition().inTL(10f, 7f);
+
+        String badgeText;
+        Color badgeColor;
+        if (lobby.isConnected()) {
+            badgeText = session.tr("READY ", "ГОТОВЫ ") + lobby.readyCount() + "/" + lobby.totalCount();
+            badgeColor = lobby.allReady() ? GREEN_BRIGHT : new Color(255, 214, 102);
+        } else if (lst == coop.net.CoopPreGameLobby.State.CONNECTING) {
+            badgeText = session.tr("CONNECTING...", "ПОДКЛЮЧЕНИЕ...");
+            badgeColor = new Color(130, 225, 255);
+        } else if (lobby.isLaunchTriggered()) {
+            badgeText = session.tr("LAUNCHING!", "ЗАПУСК!");
+            badgeColor = GREEN_BRIGHT;
+        } else if (lst == coop.net.CoopPreGameLobby.State.ERROR) {
+            badgeText = session.tr("ERROR", "ОШИБКА");
+            badgeColor = new Color(255, 130, 115);
+        } else {
+            badgeText = session.tr("OFFLINE", "ОФФЛАЙН");
+            badgeColor = LABEL_MUTED;
+        }
+        LabelAPI badge = ui.addPara(badgeText, badgeColor, 0f);
+        badge.setAlignment(Alignment.RMID);
+        badge.getPosition().setSize(150f, 18f);
+        badge.getPosition().inTR(10f, 7f);
+
+        float y = 38f;
+        float innerW = DOCK_W - 20f;
+
+        if (lobby.isConnected()) {
+            LabelAPI pHdr = ui.addPara(
+                    session.tr("Participants:", "Участники лобби:"), LABEL_MUTED, 0f);
+            pHdr.getPosition().inTL(10f, y);
+            y += 20f;
+
+            List<coop.net.CoopPreGameLobby.Member> members = lobby.members();
+            int shown = Math.min(4, members.size());
+            for (int i = 0; i < shown; i++) {
+                coop.net.CoopPreGameLobby.Member m = members.get(i);
+                String prefix = m.host() ? "[H] " : " -  ";
+                LabelAPI nameLbl = ui.addPara(prefix + m.name(),
+                        m.host() ? GREEN_BRIGHT : Color.WHITE, 0f);
+                nameLbl.getPosition().setSize(176f, 20f);
+                nameLbl.getPosition().inTL(10f, y);
+
+                LabelAPI stateLbl = ui.addPara(
+                        m.ready() ? session.tr("READY", "ГОТОВ") : session.tr("WAIT", "ЖДЁТ"),
+                        m.ready() ? GREEN_BRIGHT : new Color(255, 205, 100), 0f);
+                stateLbl.setAlignment(Alignment.RMID);
+                stateLbl.getPosition().setSize(102f, 20f);
+                stateLbl.getPosition().inTR(10f, y);
+                y += 22f;
+            }
+            if (members.size() > shown) {
+                LabelAPI more = ui.addPara("+" + (members.size() - shown)
+                        + session.tr(" more...", " ещё..."), LABEL_MUTED, 0f);
+                more.getPosition().inTL(10f, y);
+            }
+            if (!lobby.worldSeed().isEmpty()) {
+                LabelAPI seedLbl = ui.addPara(session.tr("Seed: ", "Сид: ") + lobby.worldSeed(),
+                        LABEL_MUTED, 0f);
+                seedLbl.getPosition().setSize(innerW, 18f);
+                seedLbl.getPosition().inTL(10f, DOCK_H - 60f);
+            }
+        } else if (lst == coop.net.CoopPreGameLobby.State.CONNECTING) {
+            LabelAPI connLbl = ui.addPara(
+                    session.tr("Connecting to " + session.savedJoinTargetLabel() + "...",
+                            "Подключение к " + session.savedJoinTargetLabel() + "..."),
+                    new Color(130, 225, 255), 0f);
+            connLbl.getPosition().setSize(innerW, 40f);
+            connLbl.getPosition().inTL(10f, y + 10f);
+        } else if (lobby.isLaunchTriggered()) {
+            LabelAPI launchLbl = ui.addPara(
+                    session.tr("World is starting!\nClick New Game or Load Game.",
+                            "Мир запускается!\nНажмите «Новая игра» или «Загрузить»."),
+                    GREEN_BRIGHT, 0f);
+            launchLbl.getPosition().setSize(innerW, 56f);
+            launchLbl.getPosition().inTL(10f, y + 10f);
+        } else {
+            String nick = session.playerName().isEmpty() ? "Player" : session.playerName();
+            LabelAPI nickLbl = ui.addPara(session.tr("Player: ", "Ник: ") + nick, Color.WHITE, 0f);
+            nickLbl.getPosition().setSize(innerW, 18f);
+            nickLbl.getPosition().inTL(10f, y);
+            y += 22f;
+
+            String target = session.hasSavedJoinSettings()
+                    ? session.savedJoinTargetLabel()
+                    : session.tr("not configured", "не задан");
+            LabelAPI hostLbl = ui.addPara(
+                    session.tr("Last server: ", "Сервер: ") + target,
+                    session.hasSavedJoinSettings() ? new Color(150, 230, 255) : LABEL_MUTED, 0f);
+            hostLbl.getPosition().setSize(innerW, 18f);
+            hostLbl.getPosition().inTL(10f, y);
+            y += 24f;
+
+            String hint = !session.statusText().isEmpty()
+                    ? session.statusText()
+                    : session.tr("Press CONNECT to join using your last settings, or Settings to Host/edit.",
+                            "Нажмите CONNECT для входа по прошлым настройкам, или «Настройки» для хоста.");
+            Color hintColor = !session.statusText().isEmpty() ? session.statusColor() : LABEL_MUTED;
+            LabelAPI hintLbl = ui.addPara(hint, hintColor, 0f);
+            hintLbl.getPosition().setSize(innerW, 74f);
+            hintLbl.getPosition().inTL(10f, y);
+        }
+
+        // Bottom action bar inside dock
+        float barY = DOCK_H - 38f;
+        if (lobby.isConnected()) {
+            ButtonAPI readyBtn = ui.addButton(
+                    lobby.isLocalReady() ? session.tr("Unready", "Не готов") : session.tr("READY", "ГОТОВ"),
+                    ID_LOBBY_READY,
+                    lobby.isLocalReady() ? new Color(255, 215, 110) : GREEN_BRIGHT,
+                    lobby.isLocalReady() ? new Color(82, 58, 20) : GREEN_BG,
+                    Alignment.MID, CutStyle.ALL, 102f, 28f, 0f);
+            readyBtn.getPosition().inTL(10f, barY);
+
+            if (lobby.isHost()) {
+                ButtonAPI startBtn = ui.addButton(session.tr("START", "СТАРТ"), ID_LOBBY_START,
+                        GREEN_BRIGHT, GREEN_TAB_ACTIVE_BG, Alignment.MID, CutStyle.ALL, 96f, 28f, 0f);
+                startBtn.getPosition().inTL(118f, barY);
+            } else {
+                ButtonAPI leaveBtn = ui.addButton(session.tr("Leave", "Выйти"), ID_LOBBY_LEAVE,
+                        DANGER_TEXT, DANGER_BG, Alignment.MID, CutStyle.ALL, 96f, 28f, 0f);
+                leaveBtn.getPosition().inTL(118f, barY);
+            }
+
+            ButtonAPI openBtn = ui.addButton(session.tr("Full", "Окно"), ID_DOCK_OPEN,
+                    ACTION_TEXT, ACTION_BG, Alignment.MID, CutStyle.ALL, 82f, 28f, 0f);
+            openBtn.getPosition().inTL(220f, barY);
+        } else if (lst == coop.net.CoopPreGameLobby.State.CONNECTING) {
+            ButtonAPI cancelBtn = ui.addButton(session.tr("Cancel", "Отмена"), ID_LOBBY_LEAVE,
+                    DANGER_TEXT, DANGER_BG, Alignment.MID, CutStyle.ALL, 140f, 28f, 0f);
+            cancelBtn.getPosition().inTL(10f, barY);
+
+            ButtonAPI cfgBtn = ui.addButton(session.tr("Settings", "Настройки"), ID_DOCK_OPEN,
+                    ACTION_TEXT, ACTION_BG, Alignment.MID, CutStyle.ALL, 146f, 28f, 0f);
+            cfgBtn.getPosition().inTL(156f, barY);
+        } else {
+            ButtonAPI connectBtn = ui.addButton("CONNECT", ID_DOCK_CONNECT,
+                    GREEN_BRIGHT, GREEN_TAB_ACTIVE_BG, Alignment.MID, CutStyle.ALL, 152f, 28f, 0f);
+            connectBtn.getPosition().inTL(10f, barY);
+
+            ButtonAPI cfgBtn = ui.addButton(session.tr("Settings", "Настройки"), ID_DOCK_OPEN,
+                    ACTION_TEXT, ACTION_BG, Alignment.MID, CutStyle.ALL, 134f, 28f, 0f);
+            cfgBtn.getPosition().inTL(168f, barY);
+        }
+
+        panel.addUIElement(ui).inTL(0f, 0f);
+        screen.addComponent(panel).inBL(DOCK_MARGIN, DOCK_MARGIN);
+        screen.bringComponentToTop(panel);
+        dockPanel = panel;
     }
 
     private static void attachModal(UIPanelAPI screen, CoopInGameLauncherSession session) {
@@ -832,6 +1052,71 @@ public final class CoopTitleScreenOverlay {
             if (ID_OPEN.equals(buttonId)) {
                 modalOpen = !modalOpen;
                 rebuildPending = modalOpen;
+            }
+        }
+    }
+
+    // ---- Title Screen bottom-left compact Lobby & Roster dock plugin ----
+
+    private static final class DockPlugin implements CustomUIPanelPlugin {
+        private float px = DOCK_MARGIN;
+        private float py = DOCK_MARGIN;
+        private float pw = DOCK_W;
+        private float ph = DOCK_H;
+
+        @Override
+        public void positionChanged(PositionAPI position) {
+            if (position != null) {
+                px = position.getX();
+                py = position.getY();
+                pw = position.getWidth();
+                ph = position.getHeight();
+            }
+        }
+
+        @Override
+        public void renderBelow(float alphaMult) {
+            drawRect(px, py, pw, ph, 0.043f, 0.086f, 0.133f, 0.94f * alphaMult);
+            drawRect(px, py + ph - 30f, pw, 30f, 0.06f, 0.18f, 0.14f, 0.96f * alphaMult);
+            drawBorder(px, py, pw, ph, 0.28f, 0.88f, 0.51f, 0.92f * alphaMult);
+        }
+
+        @Override public void render(float alphaMult) {}
+        @Override public void advance(float amount) {}
+        @Override public void processInput(List<InputEventAPI> events) {}
+
+        @Override
+        public void buttonPressed(Object buttonId) {
+            CoopInGameLauncherSession s = CoopInGameLauncherSession.shared();
+            if (ID_DOCK_CONNECT.equals(buttonId)) {
+                boolean started = s.quickConnectLastSettings(CoopOptionsStore.system());
+                if (!started) {
+                    openModalOnNextConnectError = false;
+                    s.setActiveTab(CoopInGameLauncherSession.Tab.JOIN);
+                    modalOpen = true;
+                    rebuildPending = true;
+                } else {
+                    openModalOnNextConnectError = true;
+                    dockRebuildPending = true;
+                }
+                return;
+            }
+            if (ID_DOCK_OPEN.equals(buttonId)) {
+                openModalOnNextConnectError = false;
+                modalOpen = true;
+                rebuildPending = true;
+                return;
+            }
+            if (ID_LOBBY_READY.equals(buttonId)) {
+                s.toggleLobbyReady();
+                dockRebuildPending = true;
+            } else if (ID_LOBBY_START.equals(buttonId)) {
+                s.startGameFromLobby();
+                dockRebuildPending = true;
+            } else if (ID_LOBBY_LEAVE.equals(buttonId)) {
+                openModalOnNextConnectError = false;
+                s.leavePreGameLobby();
+                dockRebuildPending = true;
             }
         }
     }

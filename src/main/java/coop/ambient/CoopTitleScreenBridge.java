@@ -330,6 +330,10 @@ public final class CoopTitleScreenBridge {
         return "Player";
     }
 
+    private static final String PREF_LAST_JOIN_HOST = "lastJoinHost";
+    private static final String PREF_LAST_JOIN_PORT = "lastJoinPort";
+    private static final String PREF_LAST_JOIN_PW = "lastJoinPassword";
+
     /** Saves the player's lobby nickname across sessions. */
     public static void savePlayerName(String name) {
         if (name == null || name.trim().isEmpty()) {
@@ -337,6 +341,49 @@ public final class CoopTitleScreenBridge {
         }
         try {
             Preferences.userRoot().node(PREF_NODE).put(PREF_NAME_KEY, name.trim());
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Loads the last used Guest host address, or {@code ""} if never saved. */
+    public static String loadLastJoinHost() {
+        try {
+            return Preferences.userRoot().node(PREF_NODE).get(PREF_LAST_JOIN_HOST, "").trim();
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    /** Loads the last used Guest port, or {@code ""} if never saved. */
+    public static String loadLastJoinPort() {
+        try {
+            return Preferences.userRoot().node(PREF_NODE).get(PREF_LAST_JOIN_PORT, "").trim();
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    /** Loads the last used Guest password, or {@code ""} if never saved. */
+    public static String loadLastJoinPassword() {
+        try {
+            return Preferences.userRoot().node(PREF_NODE).get(PREF_LAST_JOIN_PW, "").trim();
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    /** Persists the last Guest connection parameters so one-click CONNECT works across restarts. */
+    public static void saveLastJoinSettings(String host, String port, String password) {
+        if (host == null || host.trim().isEmpty()) {
+            return;
+        }
+        try {
+            Preferences prefs = Preferences.userRoot().node(PREF_NODE);
+            prefs.put(PREF_LAST_JOIN_HOST, host.trim());
+            if (port != null && !port.trim().isEmpty()) {
+                prefs.put(PREF_LAST_JOIN_PORT, port.trim());
+            }
+            prefs.put(PREF_LAST_JOIN_PW, password == null ? "" : password.trim());
         } catch (Throwable ignored) {
         }
     }

@@ -126,4 +126,35 @@ class CoopPreGameLobbyTest {
             session.leavePreGameLobby();
         }
     }
+
+    @Test
+    void quickConnectLastSettingsFailsCleanlyWithoutHostAndJoinsWithSavedHost() throws Exception {
+        CoopInGameLauncherSession emptySession = new CoopInGameLauncherSession();
+        emptySession.setRussian(true);
+        assertFalse(emptySession.hasSavedJoinSettings());
+        assertFalse(emptySession.quickConnectLastSettings(null));
+        assertEquals(CoopInGameLauncherSession.Tab.JOIN, emptySession.activeTab());
+        assertFalse(emptySession.statusText().isEmpty());
+
+        CoopPreGameLobby host = new CoopPreGameLobby();
+        CoopInGameLauncherSession guestSession = new CoopInGameLauncherSession();
+        guestSession.setRussian(true);
+        guestSession.setPlayerName("Тестер");
+        try {
+            assertTrue(host.startHost(0, "pw123", "Хост", "MN-5555555555", "normal", "mixed", 1_000L));
+            guestSession.setGuestHost("127.0.0.1");
+            guestSession.setGuestPort(String.valueOf(host.boundPort()));
+            guestSession.setGuestPassword("pw123");
+            assertTrue(guestSession.hasSavedJoinSettings());
+            assertTrue(guestSession.quickConnectLastSettings(null));
+
+            pumpBoth(host, guestSession.preGameLobby());
+            assertEquals(CoopPreGameLobby.State.IN_LOBBY, guestSession.preGameLobby().state());
+            assertEquals(2, host.totalCount());
+            assertEquals(2, guestSession.preGameLobby().totalCount());
+        } finally {
+            host.stop();
+            guestSession.leavePreGameLobby();
+        }
+    }
 }

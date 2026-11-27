@@ -91,6 +91,19 @@ public final class CoopInGameLauncherSession {
         if (playerName.isEmpty()) {
             playerName = CoopTitleScreenBridge.loadPlayerName();
         }
+        if (guestHost.isEmpty()) {
+            String savedHost = CoopTitleScreenBridge.loadLastJoinHost();
+            if (!savedHost.isEmpty()) {
+                guestHost = savedHost;
+                String savedPort = CoopTitleScreenBridge.loadLastJoinPort();
+                if (!savedPort.isEmpty()) {
+                    guestPort = savedPort;
+                }
+                if (guestPassword.isEmpty()) {
+                    guestPassword = CoopTitleScreenBridge.loadLastJoinPassword();
+                }
+            }
+        }
     }
 
     /** Reloads current config values from the given store (also used directly by unit tests). */
@@ -401,6 +414,7 @@ public final class CoopInGameLauncherSession {
         }
         CoopModPlugin.applyRuntimeSeed(seed);
         CoopStormBridge.configureGuest(true);
+        CoopTitleScreenBridge.saveLastJoinSettings(host, String.valueOf(port), guestPassword);
         armedRole = CoopConnectionRole.GUEST;
 
         setStatus(tr("JOIN armed (" + host + ":" + port + ")! Press New Game or Load Game to connect.",
@@ -457,6 +471,36 @@ public final class CoopInGameLauncherSession {
         return true;
     }
 
+    /** True when previous Guest connection parameters (host + valid port) are available. */
+    public boolean hasSavedJoinSettings() {
+        return !trim(guestHost).isEmpty() && parsePort(guestPort) > 0;
+    }
+
+    /** Short display target for the compact bottom-left Lobby dock widget. */
+    public String savedJoinTargetLabel() {
+        if (!hasSavedJoinSettings()) {
+            return "";
+        }
+        return trim(guestHost) + ":" + parsePort(guestPort);
+    }
+
+    /**
+     * One-click CONNECT from the compact bottom-left Lobby widget: attempts to join using the
+     * previously saved connection settings. Returns {@code false} if no settings exist or the
+     * immediate connect attempt failed (so the caller should open the Join config modal with error).
+     */
+    public boolean quickConnectLastSettings(CoopOptionsStore store) {
+        activeTab = Tab.JOIN;
+        if (!hasSavedJoinSettings()) {
+            setStatus(tr(
+                    "No saved connection settings yet. Enter host IP or paste coop:// invite below.",
+                    "Нет сохранённых настроек подключения. Укажите IP хоста или вставьте инвайт ниже."),
+                    new Color(255, 165, 90));
+            return false;
+        }
+        return joinHostLobby(store);
+    }
+
     /** Ticks the live Title Screen pre-game lobby. Returns {@code true} when UI should rebuild. */
     public boolean tickPreGameLobby(CoopOptionsStore store) {
         if (!preGameLobby.isActive()) {
@@ -469,8 +513,19 @@ public final class CoopInGameLauncherSession {
         CoopPreGameLobby.State st = preGameLobby.state();
         if (st == CoopPreGameLobby.State.ERROR) {
             String err = preGameLobby.lastError();
+            String lower = err == null ? "" : err.toLowerCase(Locale.ROOT);
             if ("WRONG_PASSWORD".equals(err)) {
-                setStatus(tr("Wrong lobby password!", "Неверный пароль лобби!"), new Color(255, 120, 110));
+                setStatus(tr("Wrong lobby password! Check password and try again.",
+                        "Неверный пароль лобби! Проверьте пароль и попробуйте снова."),
+                        new Color(255, 120, 110));
+            } else if (lower.contains("refused")) {
+                setStatus(tr("Could not connect: host lobby is not open (" + savedJoinTargetLabel() + ").",
+                        "Не удалось подключиться: лобби хоста не открыто (" + savedJoinTargetLabel() + ")."),
+                        new Color(255, 120, 110));
+            } else if (lower.contains("timed out")) {
+                setStatus(tr("Connection timed out (" + savedJoinTargetLabel() + "). Check IP/port.",
+                        "Тайм-аут подключения (" + savedJoinTargetLabel() + "). Проверьте IP и порт."),
+                        new Color(255, 120, 110));
             } else {
                 setStatus(tr("Lobby disconnected: " + err, "Отключено от лобби: " + err),
                         new Color(255, 165, 90));

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.8 (Pre-game lobby connect fix + always-open bottom-left Lobby dock with one-click CONNECT)
+
+- **Fixed `"Host closed the lobby"` on real network connections (`CoopPreGameLobby.tickGuest`):**
+  fixed a non-blocking NIO race where `tickGuest` fell through to `readLines()` on frame 1 while
+  `SocketChannel.finishConnect()` was still returning `false`, throwing `NotYetConnectedException`
+  and misreporting `"Host closed the lobby"` on any connection with >1 ms TCP handshake latency;
+  also added a graceful 300 ms flush window on wrong-password `REJECT` so clients always receive
+  the exact password error instead of a reset socket.
+- **Always-open bottom-left Title Screen Lobby & Participants dock (`CoopTitleScreenOverlay`):**
+  added a compact emerald-bordered `CO-OP ЛОББИ` dock pinned to the bottom-left of the Title
+  Screen showing live lobby participants and Ready status, persisted last connection settings
+  (`CoopTitleScreenBridge` Preferences), and a one-click **`CONNECT`** button that connects using
+  previous settings and automatically opens the full Join settings modal with the exact error
+  banner if connecting fails.
+
 ## 0.2.7 (Mid-battle live co-op hot-join + <700 su Fight Alongside live piloting fix)
 
 - **Seamless mid-battle hot-join into live co-op combat (`ALLY_JOIN_REPLY` during active combat):**
