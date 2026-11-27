@@ -43,10 +43,11 @@
   opens the main launcher.
 - **Minimal single-screen updater & launch utility (`coop-launcher.jar`):** simplified the external
   launcher to one clean screen (Starsector path + **Open folder**, optional **The Wingman Project**
-  and **Starsector Russian translation** checkboxes, embedded live **Log** panel with
-  bug-report/log-folder/clear buttons, compact **Reinstall**, **Update** [disabled when up to date],
-  and **Launch** actions, automatic startup GitHub update check with amber notification banner, and
-  live **RU / EN** toggle defaulting to Russian).
+  and **Starsector 0.98.5a-RC9 Russian translation** high-contrast checkboxes with fully automatic
+  GitHub download & silent vanilla-only installation — no manual `.zip` picker required, embedded
+  live **Log** panel with bug-report/log-folder/clear buttons, compact **Reinstall**, **Update**
+  [disabled when up to date], and **Launch** actions, automatic startup GitHub update check with
+  amber notification banner, and live **RU / EN** toggle defaulting to Russian).
 
 ## 0.2.4 (Wingman battles + phases 22/25/26/27/34 + hardening)
 

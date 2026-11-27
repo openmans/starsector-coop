@@ -646,24 +646,19 @@ public final class CoopLauncherApp {
         installModeSummary.setText("Select starsector.exe to install or update Starsector Coop from GitHub.");
         form.raw(installModeSummary);
 
-        installWingmanBox = new JCheckBox("Also install The Wingman Project (optional: manual co-op piloting)");
+        installWingmanBox = CoopTheme.checkBox("Also install The Wingman Project (optional: manual co-op piloting)");
         installWingmanBox.setName("installWingmanBox");
-        installWingmanBox.setOpaque(false);
-        installWingmanBox.setForeground(CoopTheme.TEXT);
         installWingmanBox.setToolTipText("Downloads the latest Wingman release from"
                 + " NEOysod/TheWingmanProject into mods\\Wingman and enables wingman_project in"
                 + " enabled_mods.json. Optional — tactical map co-op battles work without it.");
-        installWingmanBox.addActionListener(event -> updateLaunchGate());
+        installWingmanBox.addItemListener(event -> updateLaunchGate());
         form.raw(installWingmanBox);
 
-        installRussianBox = new JCheckBox("Also install Starsector Russian translation (GitHub release or local .zip)");
+        installRussianBox = CoopTheme.checkBox("Also install Starsector 0.98.5a-RC9 Russian translation (auto-download)");
         installRussianBox.setName("installRussianBox");
-        installRussianBox.setOpaque(false);
-        installRussianBox.setForeground(CoopTheme.TEXT);
-        installRussianBox.setToolTipText("Installs a Russian translation archive from the GitHub release"
-                + " (*ru*.zip) or lets you select a local .zip archive (supports both mod format and"
-                + " starsector-core overlay with backup).");
-        installRussianBox.addActionListener(event -> updateLaunchGate());
+        installRussianBox.setToolTipText("Automatically downloads and installs the Starsector 0.98.5a-RC9"
+                + " Russian translation (vanilla-only, with automatic backup) from GitHub.");
+        installRussianBox.addItemListener(event -> updateLaunchGate());
         form.raw(installRussianBox);
 
         installModeFixButton = CoopTheme.secondary("Fix vmparams & mods");
@@ -1390,10 +1385,23 @@ public final class CoopLauncherApp {
         }
         if (installWingmanBox != null) {
             boolean wingmanPresent = layout != null && layout.isWingmanInstalled();
-            installWingmanBox.setText(t(wingmanPresent
+            String wingmanText = t(wingmanPresent
                     ? "Also update The Wingman Project (installed — optional manual co-op piloting)"
-                    : "Also install The Wingman Project (optional: manual co-op piloting)"));
+                    : "Also install The Wingman Project (optional: manual co-op piloting)");
+            if (!wingmanText.equals(installWingmanBox.getText())) {
+                installWingmanBox.setText(wingmanText);
+            }
             installWingmanBox.setEnabled(!modInstallRunning.get() && !gameRunning);
+        }
+        if (installRussianBox != null) {
+            boolean ruPresent = layout != null && layout.isRussianInstalled();
+            String ruText = t(ruPresent
+                    ? "Also update Starsector Russian translation (installed — auto-download)"
+                    : "Also install Starsector 0.98.5a-RC9 Russian translation (auto-download)");
+            if (!ruText.equals(installRussianBox.getText())) {
+                installRussianBox.setText(ruText);
+            }
+            installRussianBox.setEnabled(!modInstallRunning.get() && !gameRunning);
         }
     }
 
@@ -3279,25 +3287,8 @@ public final class CoopLauncherApp {
         String current = effectiveVersion();
         boolean includeWingman = installWingmanBox != null && installWingmanBox.isSelected();
         boolean includeRussian = installRussianBox != null && installRussianBox.isSelected();
-        java.nio.file.Path localRussianZip = null;
-        if (includeRussian && CoopUpdateCheck.resolveLatestRussianAsset(current) == null) {
-            javax.swing.JFileChooser chooser = new javax.swing.JFileChooser(
-                    targetLayout.installRoot());
-            chooser.setDialogTitle(tr("Select Russian translation .zip archive",
-                    "Выберите .zip архив русификатора Starsector"));
-            chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
-                    tr("ZIP archives (*.zip)", "ZIP-архивы (*.zip)"), "zip"));
-            int chosen = chooser.showOpenDialog(frame);
-            if (chosen == javax.swing.JFileChooser.APPROVE_OPTION && chooser.getSelectedFile() != null) {
-                localRussianZip = chooser.getSelectedFile().toPath();
-            } else {
-                includeRussian = false;
-                append(tr("Russian translation skipped (no .zip selected).",
-                        "Установка русификатора пропущена (архив .zip не выбран)."));
-            }
-        }
         final boolean installRussianFinal = includeRussian;
-        final java.nio.file.Path localRuPathFinal = localRussianZip;
+        final java.nio.file.Path localRuPathFinal = null;
         LOG.info("One-click GitHub install requested for " + targetLayout
                 + (includeWingman ? " (+ Wingman)" : "")
                 + (installRussianFinal ? " (+ RU)" : ""));
@@ -3383,6 +3374,13 @@ public final class CoopLauncherApp {
         if (result.ok()) {
             if (!result.version().isEmpty()) {
                 this.launcherVersion = result.version();
+            }
+            if (CoopModInstaller.launchPendingRussianHelperIfAny()) {
+                append(tr(
+                        "Applying Starsector 0.98.5a-RC9 Russian translation — launcher will reopen automatically in a few seconds...",
+                        "Применяю русификатор Starsector 0.98.5a-RC9 — лаунчер перезапустится автоматически через несколько секунд..."));
+                shutdown();
+                return;
             }
             startUpdateCheck(false);
             File launcherExe = layout == null ? null

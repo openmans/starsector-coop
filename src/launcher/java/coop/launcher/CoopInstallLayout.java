@@ -208,6 +208,12 @@ public final class CoopInstallLayout {
                 && new File(new File(root, "jars"), "Wingman.jar").isFile();
     }
 
+    /** True when Starsector Russian translation has been applied (strategic RC9 installer or overlay). */
+    public boolean isRussianInstalled() {
+        return new File(new File(installRoot, ".starsector-ru-strategic"), "active.json").isFile()
+                || new File(new File(starsectorCore(), "data"), "strings.en-backup").isDirectory();
+    }
+
     /** The folder holding {@code common} and every {@code save_*}. */
     public File saves() {
         return new File(installRoot, "saves");

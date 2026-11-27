@@ -107,6 +107,23 @@ final class CoopTheme {
         UIManager.put("ToolTip.border", BorderFactory.createLineBorder(CARD_BORDER));
         UIManager.put("OptionPane.background", CARD);
         UIManager.put("Panel.background", BG);
+        UIManager.put("CheckBox.icon.style", "filled");
+        UIManager.put("CheckBox.icon.background", FIELD);
+        UIManager.put("CheckBox.icon.borderColor", hex("#3597b8"));
+        UIManager.put("CheckBox.icon.hoverBorderColor", ACCENT);
+        UIManager.put("CheckBox.icon.hoverBackground", hex("#132e40"));
+        UIManager.put("CheckBox.icon.focusedBorderColor", ACCENT);
+        UIManager.put("CheckBox.icon.focusedBackground", hex("#132e40"));
+        UIManager.put("CheckBox.icon.selectedBackground", ACCENT);
+        UIManager.put("CheckBox.icon.selectedBorderColor", ACCENT);
+        UIManager.put("CheckBox.icon.checkmarkColor", ON_ACCENT);
+        UIManager.put("CheckBox.icon[filled].selectedBackground", ACCENT);
+        UIManager.put("CheckBox.icon[filled].selectedBorderColor", ACCENT);
+        UIManager.put("CheckBox.icon[filled].hoverSelectedBackground", ACCENT_HOVER);
+        UIManager.put("CheckBox.icon[filled].pressedSelectedBackground", ACCENT_PRESSED);
+        UIManager.put("CheckBox.icon[filled].focusedSelectedBackground", ACCENT);
+        UIManager.put("CheckBox.icon[filled].checkmarkColor", ON_ACCENT);
+        UIManager.put("CheckBox.iconTextGap", 8);
         if (baseDefaultFont == null) {
             baseDefaultFont = UIManager.getFont("defaultFont");
         }
@@ -402,6 +419,77 @@ final class CoopTheme {
         button.setForeground(MUTED);
         button.addItemListener(event -> button.setForeground(button.isSelected() ? TEXT : MUTED));
         return button;
+    }
+
+    /** High-contrast custom-drawn checkbox whose ticked state is unmistakable on dark backgrounds. */
+    static javax.swing.JCheckBox checkBox(String text) {
+        javax.swing.JCheckBox box = new javax.swing.JCheckBox(text);
+        box.setOpaque(false);
+        box.setForeground(TEXT);
+        box.setFocusPainted(false);
+        box.setRolloverEnabled(true);
+        box.setIconTextGap(8);
+        box.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        box.setBorder(BorderFactory.createEmptyBorder(4, 2, 4, 2));
+        box.setIcon(new CheckBoxIcon());
+        return box;
+    }
+
+    private static final class CheckBoxIcon implements javax.swing.Icon {
+        private static final int SIZE = 18;
+
+        @Override
+        public int getIconWidth() {
+            return com.formdev.flatlaf.util.UIScale.scale(SIZE);
+        }
+
+        @Override
+        public int getIconHeight() {
+            return com.formdev.flatlaf.util.UIScale.scale(SIZE);
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            javax.swing.AbstractButton b = c instanceof javax.swing.AbstractButton ab ? ab : null;
+            boolean selected = b != null && b.isSelected();
+            boolean enabled = b == null || b.isEnabled();
+            boolean hover = b != null && b.getModel().isRollover();
+            int s = getIconWidth();
+            int arc = com.formdev.flatlaf.util.UIScale.scale(5);
+
+            Graphics2D g2 = (Graphics2D) g.create();
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                if (selected) {
+                    Color fill = !enabled ? hex("#2b687a") : (hover ? ACCENT_HOVER : ACCENT);
+                    g2.setColor(fill);
+                    g2.fillRoundRect(x, y, s - 1, s - 1, arc, arc);
+                    g2.setColor(enabled ? ACCENT_HOVER : CARD_BORDER);
+                    g2.setStroke(new BasicStroke(1.2f));
+                    g2.drawRoundRect(x, y, s - 1, s - 1, arc, arc);
+                    // Bold crisp checkmark
+                    g2.setColor(ON_ACCENT);
+                    g2.setStroke(new BasicStroke(Math.max(2f, s * 0.14f),
+                            BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    int x1 = x + Math.round(s * 0.24f);
+                    int y1 = y + Math.round(s * 0.52f);
+                    int x2 = x + Math.round(s * 0.43f);
+                    int y2 = y + Math.round(s * 0.72f);
+                    int x3 = x + Math.round(s * 0.77f);
+                    int y3 = y + Math.round(s * 0.28f);
+                    g2.drawLine(x1, y1, x2, y2);
+                    g2.drawLine(x2, y2, x3, y3);
+                } else {
+                    g2.setColor(enabled ? FIELD : hex("#0d1a26"));
+                    g2.fillRoundRect(x, y, s - 1, s - 1, arc, arc);
+                    g2.setColor(!enabled ? hex("#1f3a4d") : (hover ? ACCENT : hex("#3597b8")));
+                    g2.setStroke(new BasicStroke(1.5f));
+                    g2.drawRoundRect(x, y, s - 1, s - 1, arc, arc);
+                }
+            } finally {
+                g2.dispose();
+            }
+        }
     }
 
     /** A wrapping, read-only, muted paragraph that never clips a long sentence. */

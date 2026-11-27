@@ -162,9 +162,37 @@ class CoopLauncherLayoutTest {
                             "https://github.com/openmans/starsector-coop/releases/tag/v0.2.5", ""),
                     "0.2.5", false);
             assertFalse(field("updateActionButton", JButton.class).isEnabled());
-            field("installRussianBox", JCheckBox.class).doClick();
+            JCheckBox ruBox = field("installRussianBox", JCheckBox.class);
+            JCheckBox wmBox = field("installWingmanBox", JCheckBox.class);
+            assertFalse(ruBox.isSelected());
+            assertFalse(wmBox.isSelected());
+
+            ruBox.doClick();
+            assertTrue(ruBox.isSelected(), "Russian checkbox must toggle to selected on click");
             assertTrue(field("updateActionButton", JButton.class).isEnabled(),
                     "Ticking Russian translation must enable the Install button");
+
+            wmBox.doClick();
+            assertTrue(wmBox.isSelected(), "Wingman checkbox must toggle to selected on click");
+
+            // Language toggle must preserve ticked states
+            app.setLanguage(CoopLauncherI18n.Lang.RU, false);
+            assertTrue(ruBox.isSelected(), "Russian checkbox must stay selected after switching to RU");
+            assertTrue(wmBox.isSelected(), "Wingman checkbox must stay selected after switching to RU");
+
+            ruBox.doClick();
+            wmBox.doClick();
+            assertFalse(ruBox.isSelected(), "Russian checkbox must untick on second click");
+            assertFalse(wmBox.isSelected(), "Wingman checkbox must untick on second click");
+            assertFalse(field("updateActionButton", JButton.class).isEnabled(),
+                    "Unticking both optional checkboxes returns Update button to disabled when up to date");
+
+            // Russian translation asset always resolves automatically (never returns null)
+            CoopUpdateCheck.ReleaseAsset ruAuto = CoopUpdateCheck.resolveLatestRussianAsset(
+                    "0.2.5", (url, agent) -> new CoopUpdateCheck.Response(403, ""));
+            assertNotNull(ruAuto);
+            assertTrue(ruAuto.zipUrl().startsWith("https://"));
+            assertTrue(ruAuto.assetName().endsWith(".zip"));
         });
     }
 

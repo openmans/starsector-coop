@@ -88,8 +88,12 @@ final class CoopLauncherI18n {
                 "Также установить The Wingman Project (опционально: ручное пилотирование)");
         put("Also update The Wingman Project (installed — optional manual co-op piloting)",
                 "Также обновить The Wingman Project (установлен — ручное пилотирование)");
+        put("Also install Starsector 0.98.5a-RC9 Russian translation (auto-download)",
+                "Также установить русификатор Starsector 0.98.5a-RC9 (автоскачивание)");
+        put("Also update Starsector Russian translation (installed — auto-download)",
+                "Русификатор Starsector установлен (переустановить / проверить)");
         put("Also install Starsector Russian translation (GitHub release or local .zip)",
-                "Также установить русификатор Starsector (с GitHub-релиза или локальный .zip)");
+                "Также установить русификатор Starsector 0.98.5a-RC9 (автоскачивание)");
         put("Fix vmparams & mods", "Починить vmparams и моды");
         put("Check GitHub", "Проверить GitHub");
         put("All checks", "Все проверки");

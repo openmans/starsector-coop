@@ -32,6 +32,8 @@ namespace StarsectorCoopBootstrap
         internal const string WingmanRepo = "NEOysod/TheWingmanProject";
         internal const string WingmanLatestApi = "https://api.github.com/repos/" + WingmanRepo + "/releases/latest";
         internal const string WingmanListApi = "https://api.github.com/repos/" + WingmanRepo + "/releases?per_page=5";
+        internal const string RussianLatestApi = "https://api.github.com/repos/mrsokol2552-source/starsector-ru-strategic/releases/latest";
+        internal const string RussianDirectUrl = "https://github.com/mrsokol2552-source/starsector-ru-strategic/releases/latest/download/Starsector-RU-RC9-Windows-x64.zip";
         internal const string ForksEntry = "..\\mods\\coop\\jars\\coop-forks.jar;";
 
         internal static readonly string[] CanonicalStockJars = new[]
@@ -623,6 +625,75 @@ namespace StarsectorCoopBootstrap
             return count;
         }
 
+        internal static void InstallRussianTranslation(string installRoot, Action<string, int> onProgress)
+        {
+            string url = RussianDirectUrl;
+            try
+            {
+                var serializer = new JavaScriptSerializer();
+                Dictionary<string, object> rel = TryFetchReleaseObject(RussianLatestApi, serializer);
+                if (rel != null)
+                {
+                    ReleaseAsset found = FindZipAsset(rel);
+                    if (found != null && !string.IsNullOrEmpty(found.DownloadUrl))
+                    {
+                        url = found.DownloadUrl;
+                    }
+                }
+            }
+            catch { }
+
+            string tempZip = Path.Combine(Path.GetTempPath(), "starsector-ru-" + Guid.NewGuid().ToString("N") + ".zip");
+            string tempDir = Path.Combine(Path.GetTempPath(), "starsector-ru-ext-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                if (onProgress != null) onProgress("Downloading Starsector 0.98.5a-RC9 Russian translation...", 0);
+                DownloadFile(url, tempZip, pct =>
+                {
+                    if (onProgress != null) onProgress("Downloading Russian translation... " + pct + "%", pct);
+                });
+                if (onProgress != null) onProgress("Extracting Russian translation installer...", 85);
+                Directory.CreateDirectory(tempDir);
+                ZipFile.ExtractToDirectory(tempZip, tempDir);
+                string[] exes = Directory.GetFiles(tempDir, "Starsector-RU.exe", SearchOption.AllDirectories);
+                if (exes.Length > 0)
+                {
+                    if (onProgress != null) onProgress("Applying Starsector 0.98.5a-RC9 Russian translation...", 90);
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = exes[0],
+                        Arguments = "install --game \"" + installRoot + "\" --vanilla-only",
+                        WorkingDirectory = Path.GetDirectoryName(exes[0]),
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    };
+                    using (var proc = Process.Start(psi))
+                    {
+                        string stdout = proc.StandardOutput.ReadToEnd();
+                        string stderr = proc.StandardError.ReadToEnd();
+                        proc.WaitForExit();
+                        if (proc.ExitCode != 0)
+                        {
+                            throw new InvalidOperationException("Russian installer failed (exit " + proc.ExitCode + "): "
+                                + (string.IsNullOrWhiteSpace(stderr) ? stdout : stderr).Trim());
+                        }
+                    }
+                }
+                else
+                {
+                    ExtractModZip(tempZip, Path.Combine(installRoot, "starsector-core"), "starsector-core");
+                }
+                if (onProgress != null) onProgress("Russian translation installed.", 100);
+            }
+            finally
+            {
+                try { if (File.Exists(tempZip)) File.Delete(tempZip); } catch { }
+                try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); } catch { }
+            }
+        }
+
         private static void DownloadFile(string url, string destination, Action<int> onPercent)
         {
             var req = (HttpWebRequest)WebRequest.Create(url);
@@ -851,6 +922,9 @@ namespace StarsectorCoopBootstrap
                 BackColor = BgColor,
                 Location = new Point(24, 144),
                 Size = new Size(532, 24),
+                AutoCheck = true,
+                FlatStyle = FlatStyle.Standard,
+                Cursor = Cursors.Hand,
                 Checked = initialWingman
             };
 
@@ -860,6 +934,9 @@ namespace StarsectorCoopBootstrap
                 BackColor = BgColor,
                 Location = new Point(24, 170),
                 Size = new Size(532, 24),
+                AutoCheck = true,
+                FlatStyle = FlatStyle.Standard,
+                Cursor = Cursors.Hand,
                 Checked = false
             };
 
@@ -937,8 +1014,8 @@ namespace StarsectorCoopBootstrap
                 "Also install The Wingman Project (optional: manual co-op piloting)",
                 "Также установить The Wingman Project (опционально: ручное пилотирование)");
             russianBox.Text = Tr(
-                "Also install Starsector Russian translation (local .zip)",
-                "Также установить русификатор Starsector (локальный .zip)");
+                "Also install Starsector 0.98.5a-RC9 Russian translation (auto-download)",
+                "Также установить русификатор Starsector 0.98.5a-RC9 (автоскачивание)");
             launchOnlyButton.Text = Tr("Launch installed", "Запустить лаунчер");
             if (!busy)
             {
@@ -1071,21 +1148,6 @@ namespace StarsectorCoopBootstrap
                 }
             }
 
-            string localRuZip = null;
-            if (russianBox.Checked)
-            {
-                using (var dlg = new OpenFileDialog())
-                {
-                    dlg.Title = Tr("Select Russian translation .zip archive", "Выберите .zip архив русификатора Starsector");
-                    dlg.Filter = "ZIP (*.zip)|*.zip";
-                    dlg.CheckFileExists = true;
-                    if (dlg.ShowDialog(this) == DialogResult.OK)
-                    {
-                        localRuZip = dlg.FileName;
-                    }
-                }
-            }
-
             busy = true;
             UpdateButtons();
             progressBar.Value = 0;
@@ -1093,11 +1155,12 @@ namespace StarsectorCoopBootstrap
             statusLabel.Text = Tr("Starting installation...", "Начинаем установку...");
 
             bool includeWingman = wingmanBox.Checked;
+            bool includeRussian = russianBox.Checked;
             try
             {
                 string version = await Task.Run(() =>
                 {
-                    string v = Program.InstallAndConfigure(root, includeWingman, (msg, pct) =>
+                    Action<string, int> report = (msg, pct) =>
                     {
                         if (IsDisposed) return;
                         BeginInvoke((Action)(() =>
@@ -1105,10 +1168,11 @@ namespace StarsectorCoopBootstrap
                             statusLabel.Text = msg;
                             if (pct >= 0 && pct <= 100) progressBar.Value = pct;
                         }));
-                    });
-                    if (!string.IsNullOrEmpty(localRuZip) && File.Exists(localRuZip))
+                    };
+                    string v = Program.InstallAndConfigure(root, includeWingman, report);
+                    if (includeRussian)
                     {
-                        Program.ExtractModZip(localRuZip, Path.Combine(root, "starsector-core"), "starsector-core");
+                        Program.InstallRussianTranslation(root, report);
                     }
                     return v;
                 });

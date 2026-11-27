@@ -193,10 +193,22 @@ public final class CoopUpdateCheck {
     /** Optional HTTPS override for a Russian translation zip asset. */
     public static final String RUSSIAN_URL_PROPERTY = "coop.ruUrl";
 
+    /** Official Starsector 0.98.5a-RC9 Windows x64 Russian translation GitHub releases. */
+    public static final String RUSSIAN_RELEASES_URL =
+            "https://api.github.com/repos/mrsokol2552-source/starsector-ru-strategic/releases/latest";
+    public static final String RUSSIAN_RELEASES_PAGE_URL =
+            "https://github.com/mrsokol2552-source/starsector-ru-strategic/releases";
+    public static final String RUSSIAN_DIRECT_URL =
+            "https://github.com/mrsokol2552-source/starsector-ru-strategic/releases/latest/download/Starsector-RU-RC9-Windows-x64.zip";
+
     /**
-     * Resolves an optional Russian translation archive ({@code *ru*.zip} / {@code *rus*.zip}) from
-     * {@code -Dcoop.ruUrl} or attached to the {@code openmans/starsector-coop} GitHub release.
-     * Returns {@code null} when no remote russifier asset is published.
+     * Automatically resolves a Starsector 0.98.5a-RC9 Russian translation archive:
+     * <ol>
+     *   <li>{@code -Dcoop.ruUrl} explicit override when set.</li>
+     *   <li>Any {@code *ru*.zip} asset attached directly to {@code openmans/starsector-coop}.</li>
+     *   <li>Latest release of {@code mrsokol2552-source/starsector-ru-strategic} ({@code Starsector-RU-RC9-Windows-x64.zip}).</li>
+     *   <li>Direct GitHub latest-download URL fallback (immune to GitHub REST API rate limits).</li>
+     * </ol>
      */
     public static ReleaseAsset resolveLatestRussianAsset(String currentVersion) {
         return resolveLatestRussianAsset(currentVersion, CoopUpdateCheck::fetch);
@@ -220,23 +232,17 @@ public final class CoopUpdateCheck {
                     return asset;
                 }
             }
-            Response list = fetcher.get(RELEASES_LIST_URL, agent);
-            if (list != null && list.status() == 200) {
-                JSONArray array = new JSONArray(list.body());
-                for (int i = 0; i < array.length(); i++) {
-                    JSONObject rel = array.optJSONObject(i);
-                    if (rel == null || rel.optBoolean("draft", false)) {
-                        continue;
-                    }
-                    ReleaseAsset asset = extractRussianAsset(rel);
-                    if (asset != null) {
-                        return asset;
-                    }
+            Response ruLatest = fetcher.get(RUSSIAN_RELEASES_URL, agent);
+            if (ruLatest != null && ruLatest.status() == 200) {
+                ReleaseAsset asset = extractRussianAsset(new JSONObject(ruLatest.body()));
+                if (asset != null) {
+                    return asset;
                 }
             }
         } catch (Exception ignored) {
         }
-        return null;
+        return new ReleaseAsset("rc9", RUSSIAN_RELEASES_PAGE_URL, RUSSIAN_DIRECT_URL,
+                "Starsector-RU-RC9-Windows-x64.zip");
     }
 
     static ReleaseAsset extractRussianAsset(JSONObject release) {
