@@ -43,6 +43,7 @@ public final class CoopTitleScreenBridge {
     private static final String PREF_LANG_KEY = "launcher.lang";
     private static final String PREF_NAME_KEY = "launcher.playerName";
     public static final String SHARED_SAVE_DIR_NAME = "save_coop_shared";
+    public static final String PLAYER_VAULT_DIR_NAME = "coop_vault";
     private static final int MAX_SHARED_SAVE_ZIP_BYTES = 32 * 1024 * 1024;
 
     private static volatile boolean handlesResolved;
@@ -277,8 +278,24 @@ public final class CoopTitleScreenBridge {
         return false;
     }
 
-    /** Finds the newest non-shared {@code save_*} directory containing a valid {@code campaign.xml}. */
+    /**
+     * Finds the newest non-shared {@code save_*} directory containing a valid {@code campaign.xml}
+     * for the host to broadcast, falling back to any {@code save_*} only if nothing else exists.
+     */
     public static String findLatestHostSaveDirPath() {
+        String primary = findLatestSaveDirInternal(false);
+        if (!primary.isEmpty()) {
+            return primary;
+        }
+        return findLatestSaveDirInternal(true);
+    }
+
+    /** Finds the newest {@code save_*} directory including {@code save_coop_*} guest save folders. */
+    public static String findLatestLocalSaveDirPath() {
+        return findLatestSaveDirInternal(true);
+    }
+
+    private static String findLatestSaveDirInternal(boolean includeCoopFolders) {
         try {
             java.io.File[] dirs = {
                     new java.io.File("../saves"),
@@ -298,7 +315,7 @@ public final class CoopTitleScreenBridge {
                     if (f == null || !f.isDirectory() || !f.getName().startsWith("save_")) {
                         continue;
                     }
-                    if (SHARED_SAVE_DIR_NAME.equals(f.getName())) {
+                    if (!includeCoopFolders && f.getName().startsWith("save_coop_")) {
                         continue;
                     }
                     java.io.File campaignXml = new java.io.File(f, "campaign.xml");
@@ -316,6 +333,129 @@ public final class CoopTitleScreenBridge {
             return bestDir == null ? "" : bestDir.getCanonicalPath();
         } catch (Throwable ignored) {
             return "";
+        }
+    }
+
+    /** Sanitizes a lobby player name into a safe filesystem key (supports Latin & Cyrillic). */
+    public static String sanitizePlayerVaultKey(String playerName) {
+        String raw = playerName == null ? "" : playerName.trim().toLowerCase(Locale.ROOT);
+        StringBuilder sb = new StringBuilder();
+        boolean prevUnderscore = false;
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (Character.isLetterOrDigit(c) || c == '-') {
+                sb.append(c);
+                prevUnderscore = false;
+            } else if (!prevUnderscore && sb.length() > 0) {
+                sb.append('_');
+                prevUnderscore = true;
+            }
+        }
+        String key = sb.toString();
+        while (key.startsWith("_")) {
+            key = key.substring(1);
+        }
+        while (key.endsWith("_")) {
+            key = key.substring(0, key.length() - 1);
+        }
+        if (key.length() > 48) {
+            key = key.substring(0, 48);
+            while (key.endsWith("_")) {
+                key = key.substring(0, key.length() - 1);
+            }
+        }
+        return key.isEmpty() ? "guest" : key;
+    }
+
+    private static java.io.File resolveSavesRootDir() {
+        java.io.File parentSaves = new java.io.File("../saves");
+        if (parentSaves.isDirectory()) {
+            return parentSaves;
+        }
+        java.io.File localSaves = new java.io.File("saves");
+        if (localSaves.isDirectory()) {
+            return localSaves;
+        }
+        if (parentSaves.mkdirs()) {
+            return parentSaves;
+        }
+        localSaves.mkdirs();
+        return localSaves;
+    }
+
+    /** Stores a guest's personal save ZIP inside the host's {@code coop_vault} by lobby player name. */
+    public static boolean storePlayerSaveZip(String playerName, byte[] zipBytes) {
+        if (zipBytes == null || zipBytes.length == 0 || zipBytes.length > MAX_SHARED_SAVE_ZIP_BYTES) {
+            return false;
+        }
+        try {
+            java.io.File savesDir = resolveSavesRootDir();
+            if (!savesDir.isDirectory()) {
+                return false;
+            }
+            java.io.File vaultDir = new java.io.File(savesDir, PLAYER_VAULT_DIR_NAME);
+            if (!vaultDir.isDirectory() && !vaultDir.mkdirs()) {
+                return false;
+            }
+            String key = sanitizePlayerVaultKey(playerName);
+            java.io.File tmp = new java.io.File(vaultDir, key + ".zip.tmp");
+            java.io.File dest = new java.io.File(vaultDir, key + ".zip");
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tmp)) {
+                fos.write(zipBytes);
+            }
+            if (dest.exists()) {
+                dest.delete();
+            }
+            if (!tmp.renameTo(dest)) {
+                byte[] buf = new byte[16 * 1024];
+                try (java.io.FileInputStream in = new java.io.FileInputStream(tmp);
+                     java.io.FileOutputStream out = new java.io.FileOutputStream(dest)) {
+                    int n;
+                    while ((n = in.read(buf)) > 0) {
+                        out.write(buf, 0, n);
+                    }
+                }
+                tmp.delete();
+            }
+            return dest.isFile() && dest.length() > 0;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /** Loads a stored personal save ZIP for {@code playerName} from {@code coop_vault}, or {@code null}. */
+    public static byte[] loadPlayerSaveZip(String playerName) {
+        try {
+            java.io.File savesDir = resolveSavesRootDir();
+            java.io.File vaultFile = new java.io.File(new java.io.File(savesDir, PLAYER_VAULT_DIR_NAME),
+                    sanitizePlayerVaultKey(playerName) + ".zip");
+            if (!vaultFile.isFile() || vaultFile.length() <= 0 || vaultFile.length() > MAX_SHARED_SAVE_ZIP_BYTES) {
+                return null;
+            }
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream((int) vaultFile.length());
+            byte[] buf = new byte[16 * 1024];
+            try (java.io.FileInputStream fis = new java.io.FileInputStream(vaultFile)) {
+                int n;
+                while ((n = fis.read(buf)) > 0) {
+                    baos.write(buf, 0, n);
+                }
+            }
+            byte[] out = baos.toByteArray();
+            return out.length == 0 ? null : out;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /** True when the host's {@code coop_vault} currently holds a personal save for {@code playerName}. */
+    public static boolean hasPlayerSaveZip(String playerName) {
+        try {
+            java.io.File savesDir = resolveSavesRootDir();
+            java.io.File vaultFile = new java.io.File(new java.io.File(savesDir, PLAYER_VAULT_DIR_NAME),
+                    sanitizePlayerVaultKey(playerName) + ".zip");
+            return vaultFile.isFile() && vaultFile.length() > 0;
+        } catch (Throwable ignored) {
+            return false;
         }
     }
 
@@ -369,18 +509,26 @@ public final class CoopTitleScreenBridge {
      * {@code campaign.xml} and {@code descriptor.xml}). Returns the extracted directory path or {@code ""}.
      */
     public static String extractSharedSaveZip(byte[] zipBytes) {
+        return extractPlayerSaveZip("", zipBytes);
+    }
+
+    /**
+     * Extracts a downloaded co-op save ZIP into {@code <saves>/save_coop_<key>/} (or
+     * {@code save_coop_shared} when {@code playerName} is blank).
+     */
+    public static String extractPlayerSaveZip(String playerName, byte[] zipBytes) {
         if (zipBytes == null || zipBytes.length == 0 || zipBytes.length > MAX_SHARED_SAVE_ZIP_BYTES) {
             return "";
         }
         try {
-            java.io.File savesDir = new java.io.File("../saves");
+            java.io.File savesDir = resolveSavesRootDir();
             if (!savesDir.isDirectory()) {
-                savesDir = new java.io.File("saves");
-            }
-            if (!savesDir.isDirectory() && !savesDir.mkdirs()) {
                 return "";
             }
-            java.io.File targetDir = new java.io.File(savesDir, SHARED_SAVE_DIR_NAME);
+            String folderName = (playerName == null || playerName.trim().isEmpty())
+                    ? SHARED_SAVE_DIR_NAME
+                    : "save_coop_" + sanitizePlayerVaultKey(playerName);
+            java.io.File targetDir = new java.io.File(savesDir, folderName);
             if (!targetDir.isDirectory() && !targetDir.mkdirs()) {
                 return "";
             }

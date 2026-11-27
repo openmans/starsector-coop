@@ -467,7 +467,7 @@ public final class CoopInGameLauncherSession {
     /** Arms HOST mode and opens the live Title Screen pre-game lobby on the configured port. */
     public boolean openHostLobby(CoopOptionsStore store) {
         if (isLiveGameRuntime()) {
-            CoopModPlugin.shutdownActiveSessionOnTitleScreen();
+            CoopModPlugin.forceShutdownActiveSession();
         }
         if (!applyHostConfig(store)) {
             return false;
@@ -594,11 +594,14 @@ public final class CoopInGameLauncherSession {
         if (!preGameLobby.isHost()) {
             byte[] completedZip = preGameLobby.consumeCompletedSaveZip();
             if (completedZip != null && completedZip.length > 0) {
+                boolean isOwn = preGameLobby.consumeCompletedSaveIsOwn();
                 String extractedDir = isLiveGameRuntime()
-                        ? CoopTitleScreenBridge.extractSharedSaveZip(completedZip) : "";
+                        ? CoopTitleScreenBridge.extractPlayerSaveZip(playerName, completedZip) : "";
                 if (!extractedDir.isEmpty()) {
                     pendingLoadSavePath = extractedDir;
-                    pendingRestoreGuestFromSharedSave = true;
+                    // Only restore from host's embedded snapshot when loading host's fallback save,
+                    // never when loading the guest's own personal save from host vault!
+                    pendingRestoreGuestFromSharedSave = !isOwn;
                 }
             }
         }
@@ -714,17 +717,34 @@ public final class CoopInGameLauncherSession {
         pendingRestoreGuestFromSharedSave = false;
         if (isLiveGameRuntime() && preGameLobby.totalCount() > 1) {
             String hostSavePath = CoopTitleScreenBridge.findLatestHostSaveDirPath();
-            if (!hostSavePath.isEmpty()) {
-                byte[] zip = CoopTitleScreenBridge.packageSaveDirectoryAsZip(hostSavePath);
-                if (zip != null && zip.length > 0
-                        && preGameLobby.triggerHostStartWithSave(CoopTitleScreenBridge.SHARED_SAVE_DIR_NAME,
-                                zip, System.currentTimeMillis())) {
-                    pendingLoadSavePath = hostSavePath;
-                    setStatus(tr("Sending shared save to partner: 0%",
-                            "Отправка общего сейва напарнику: 0%"),
-                            new Color(130, 225, 255));
-                    return true;
+            byte[][] hostFallbackZip = new byte[1][];
+            boolean transferring = preGameLobby.triggerHostStartWithPlayerSaves(guestName -> {
+                byte[] personalZip = CoopTitleScreenBridge.loadPlayerSaveZip(guestName);
+                if (personalZip != null && personalZip.length > 0) {
+                    return new CoopPreGameLobby.SavePayload(
+                            "save_coop_" + CoopTitleScreenBridge.sanitizePlayerVaultKey(guestName),
+                            personalZip, true);
                 }
+                if (!hostSavePath.isEmpty()) {
+                    if (hostFallbackZip[0] == null) {
+                        hostFallbackZip[0] = CoopTitleScreenBridge.packageSaveDirectoryAsZip(hostSavePath);
+                    }
+                    if (hostFallbackZip[0] != null && hostFallbackZip[0].length > 0) {
+                        return new CoopPreGameLobby.SavePayload(
+                                CoopTitleScreenBridge.SHARED_SAVE_DIR_NAME, hostFallbackZip[0], false);
+                    }
+                }
+                return null;
+            }, System.currentTimeMillis());
+            if (transferring) {
+                pendingLoadSavePath = hostSavePath;
+                setStatus(tr("Sending saves to partner: 0%",
+                        "Отправка сейвов игрокам: 0%"),
+                        new Color(130, 225, 255));
+                return true;
+            }
+            if (!hostSavePath.isEmpty()) {
+                pendingLoadSavePath = hostSavePath;
             }
         }
         preGameLobby.triggerHostStart();

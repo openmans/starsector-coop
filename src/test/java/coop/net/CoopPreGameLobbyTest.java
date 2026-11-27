@@ -205,6 +205,7 @@ class CoopPreGameLobbyTest {
 
             assertNotNull(received, "Guest should have assembled the full shared save zip");
             assertArrayEquals(payload, received);
+            assertFalse(guest.consumeCompletedSaveIsOwn());
             assertTrue(host.isLaunchTriggered());
             assertTrue(guest.isLaunchTriggered());
             assertTrue(host.useSharedSaveOnStart());
@@ -212,6 +213,73 @@ class CoopPreGameLobbyTest {
         } finally {
             host.stop();
             guest.stop();
+        }
+    }
+
+    @Test
+    void perPlayerSaveStreamingDeliversPersonalSaveByLobbyNameAndFallbackOtherwise() throws Exception {
+        CoopPreGameLobby host = new CoopPreGameLobby();
+        CoopPreGameLobby guestA = new CoopPreGameLobby();
+        CoopPreGameLobby guestB = new CoopPreGameLobby();
+        try {
+            assertTrue(host.startHost(0, "pw", "Артур", "MN-998877", "normal", "mixed", 1_000L));
+            assertTrue(guestA.startGuest("127.0.0.1", host.boundPort(), "pw", "Вася", 1_000L));
+            assertTrue(guestB.startGuest("127.0.0.1", host.boundPort(), "pw", "Петя", 1_000L));
+            pumpBoth(host, guestA, guestB);
+            guestA.toggleLocalReady();
+            guestB.toggleLocalReady();
+            pumpBoth(host, guestA, guestB);
+            assertTrue(host.allReady());
+
+            byte[] vasyaZip = new byte[70_000];
+            byte[] fallbackZip = new byte[65_000];
+            for (int i = 0; i < vasyaZip.length; i++) vasyaZip[i] = (byte) (i + 3);
+            for (int i = 0; i < fallbackZip.length; i++) fallbackZip[i] = (byte) (i * 7);
+
+            assertTrue(host.triggerHostStartWithPlayerSaves(name -> {
+                if ("Вася".equals(name)) {
+                    return new CoopPreGameLobby.SavePayload("save_coop_vasya", vasyaZip, true);
+                }
+                return new CoopPreGameLobby.SavePayload("save_coop_shared", fallbackZip, false);
+            }, 10_000L));
+
+            long now = 10_000L;
+            byte[] recA = null;
+            boolean ownA = false;
+            byte[] recB = null;
+            boolean ownB = true;
+            for (int i = 0; i < 80; i++) {
+                now += 25L;
+                host.tick(now);
+                guestA.tick(now);
+                guestB.tick(now);
+                byte[] zA = guestA.consumeCompletedSaveZip();
+                if (zA != null) {
+                    recA = zA;
+                    ownA = guestA.consumeCompletedSaveIsOwn();
+                }
+                byte[] zB = guestB.consumeCompletedSaveZip();
+                if (zB != null) {
+                    recB = zB;
+                    ownB = guestB.consumeCompletedSaveIsOwn();
+                }
+                if (host.isLaunchTriggered() && guestA.isLaunchTriggered() && guestB.isLaunchTriggered()) {
+                    break;
+                }
+                Thread.sleep(10);
+            }
+
+            assertArrayEquals(vasyaZip, recA);
+            assertTrue(ownA);
+            assertArrayEquals(fallbackZip, recB);
+            assertFalse(ownB);
+            assertEquals("артур", coop.ambient.CoopTitleScreenBridge.sanitizePlayerVaultKey("Артур"));
+            assertEquals("yasper_moglot",
+                    coop.ambient.CoopTitleScreenBridge.sanitizePlayerVaultKey(" Yasper / Moglot! "));
+        } finally {
+            host.stop();
+            guestA.stop();
+            guestB.stop();
         }
     }
 }

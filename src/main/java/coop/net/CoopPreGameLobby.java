@@ -53,6 +53,10 @@ public final class CoopPreGameLobby {
         }
     }
 
+    /** Per-player save package resolved by the host before starting a session. */
+    public record SavePayload(String saveName, byte[] zipBytes, boolean ownSave) {
+    }
+
     private static final class PeerLink {
         final String id;
         final SocketChannel channel;
@@ -64,6 +68,15 @@ public final class CoopPreGameLobby {
         boolean ready;
         long lastHeardAt;
         long closingAt;
+
+        // Per-peer outbound save streaming
+        byte[] outboundSaveZip;
+        boolean outboundIsOwnSave;
+        String outboundSaveName = "";
+        int outboundTotalChunks;
+        int outboundNextChunk;
+        boolean outboundEndSent;
+        boolean outboundSaveAcked;
 
         PeerLink(String id, SocketChannel channel, long now) {
             this.id = id;
@@ -100,20 +113,17 @@ public final class CoopPreGameLobby {
     private String lastError = "";
     private long revision;
 
-    // Host save transfer state
-    private byte[] pendingSaveZip;
-    private int totalSaveChunks;
-    private int nextSaveChunkToSend;
-    private boolean saveEndSent;
-    private final Set<String> saveAckedClientIds = new HashSet<>();
+    // Host save transfer timing
     private long saveTransferStartedAt;
 
     // Guest save transfer state
     private boolean receivingSave;
+    private boolean incomingSaveIsOwn;
     private int expectedSaveChunks;
     private int receivedSaveChunks;
     private byte[][] incomingSaveChunks;
     private byte[] completedSaveZip;
+    private boolean completedSaveIsOwn;
 
     public State state() { return state; }
     public boolean isActive() {
@@ -140,8 +150,16 @@ public final class CoopPreGameLobby {
 
     public int saveTransferPercent() {
         if (hostMode) {
-            if (totalSaveChunks <= 0) return 0;
-            return Math.min(100, Math.round((nextSaveChunkToSend * 100f) / totalSaveChunks));
+            int total = 0;
+            int sent = 0;
+            for (PeerLink link : clients) {
+                if (link.authed && link.outboundSaveZip != null) {
+                    total += link.outboundTotalChunks;
+                    sent += link.outboundNextChunk;
+                }
+            }
+            if (total <= 0) return 0;
+            return Math.min(100, Math.round((sent * 100f) / total));
         }
         if (expectedSaveChunks <= 0) return 0;
         return Math.min(100, Math.round((receivedSaveChunks * 100f) / expectedSaveChunks));
@@ -151,6 +169,12 @@ public final class CoopPreGameLobby {
         byte[] out = completedSaveZip;
         completedSaveZip = null;
         return out;
+    }
+
+    public boolean consumeCompletedSaveIsOwn() {
+        boolean own = completedSaveIsOwn;
+        completedSaveIsOwn = false;
+        return own;
     }
 
     public int totalCount() {
@@ -288,37 +312,62 @@ public final class CoopPreGameLobby {
      * to all connected guests first so every player loads the exact same shared save together.
      */
     public boolean triggerHostStartWithSave(String saveName, byte[] saveZipBytes, long nowMillis) {
+        if (saveZipBytes == null || saveZipBytes.length == 0) {
+            return triggerHostStartWithPlayerSaves(name -> null, nowMillis);
+        }
+        return triggerHostStartWithPlayerSaves(
+                name -> new SavePayload(saveName, saveZipBytes, false), nowMillis);
+    }
+
+    /**
+     * Host triggers campaign launch while streaming per-player save ZIPs resolved by lobby player name.
+     * Guests with a stored personal save receive their own save ({@code ownSave=true}); guests without
+     * one fall back to the host's save ({@code ownSave=false}).
+     */
+    public boolean triggerHostStartWithPlayerSaves(
+            java.util.function.Function<String, SavePayload> saveResolver, long nowMillis) {
         if (!hostMode || state != State.HOSTING) {
             return false;
         }
-        int authedCount = 0;
+        resetTransferState();
+        int transferringCount = 0;
         for (PeerLink link : clients) {
-            if (link.authed) authedCount++;
+            if (!link.authed) {
+                continue;
+            }
+            SavePayload payload = saveResolver == null ? null : saveResolver.apply(link.name);
+            if (payload != null && payload.zipBytes() != null && payload.zipBytes().length > 0) {
+                byte[] zip = payload.zipBytes();
+                String sName = (payload.saveName() == null || payload.saveName().isBlank())
+                        ? "save_coop_shared" : payload.saveName();
+                link.outboundSaveZip = zip;
+                link.outboundIsOwnSave = payload.ownSave();
+                link.outboundSaveName = sName;
+                link.outboundTotalChunks = (zip.length + SAVE_CHUNK_BYTES - 1) / SAVE_CHUNK_BYTES;
+                link.outboundNextChunk = 0;
+                link.outboundEndSent = false;
+                link.outboundSaveAcked = false;
+
+                JSONObject begin = new JSONObject();
+                putQuiet(begin, "t", "SAVE_BEGIN");
+                putQuiet(begin, "name", sName);
+                putQuiet(begin, "size", zip.length);
+                putQuiet(begin, "chunks", link.outboundTotalChunks);
+                putQuiet(begin, "ownSave", payload.ownSave());
+                enqueue(link, begin);
+                flush(link);
+                transferringCount++;
+            } else {
+                link.outboundSaveAcked = true;
+            }
         }
-        if (saveZipBytes == null || saveZipBytes.length == 0 || authedCount == 0) {
-            triggerHostStartInternal(saveZipBytes != null && saveZipBytes.length > 0);
+        if (transferringCount == 0) {
+            triggerHostStartInternal(false);
             return false;
         }
-        resetTransferState();
-        this.pendingSaveZip = saveZipBytes;
-        this.totalSaveChunks = (saveZipBytes.length + SAVE_CHUNK_BYTES - 1) / SAVE_CHUNK_BYTES;
-        this.nextSaveChunkToSend = 0;
-        this.saveEndSent = false;
         this.saveTransferStartedAt = nowMillis;
         this.useSharedSaveOnStart = true;
         this.state = State.TRANSFERRING_SAVE;
-
-        JSONObject begin = new JSONObject();
-        putQuiet(begin, "t", "SAVE_BEGIN");
-        putQuiet(begin, "name", saveName == null ? "save_coop_shared" : saveName);
-        putQuiet(begin, "size", saveZipBytes.length);
-        putQuiet(begin, "chunks", totalSaveChunks);
-        for (PeerLink link : clients) {
-            if (link.authed) {
-                enqueue(link, begin);
-                flush(link);
-            }
-        }
         bumpRevision();
         return true;
     }
@@ -386,17 +435,23 @@ public final class CoopPreGameLobby {
     }
 
     private void resetTransferState() {
-        pendingSaveZip = null;
-        totalSaveChunks = 0;
-        nextSaveChunkToSend = 0;
-        saveEndSent = false;
-        saveAckedClientIds.clear();
+        for (PeerLink link : clients) {
+            link.outboundSaveZip = null;
+            link.outboundIsOwnSave = false;
+            link.outboundSaveName = "";
+            link.outboundTotalChunks = 0;
+            link.outboundNextChunk = 0;
+            link.outboundEndSent = false;
+            link.outboundSaveAcked = false;
+        }
         saveTransferStartedAt = 0L;
         receivingSave = false;
+        incomingSaveIsOwn = false;
         expectedSaveChunks = 0;
         receivedSaveChunks = 0;
         incomingSaveChunks = null;
         completedSaveZip = null;
+        completedSaveIsOwn = false;
     }
 
     // ---- Host NIO loop ----
@@ -473,46 +528,41 @@ public final class CoopPreGameLobby {
             bumpRevision();
         }
 
-        if (state == State.TRANSFERRING_SAVE && pendingSaveZip != null) {
-            int sentThisTick = 0;
-            while (nextSaveChunkToSend < totalSaveChunks && sentThisTick < SAVE_CHUNKS_PER_TICK) {
-                int idx = nextSaveChunkToSend++;
-                int startOff = idx * SAVE_CHUNK_BYTES;
-                int len = Math.min(SAVE_CHUNK_BYTES, pendingSaveZip.length - startOff);
-                byte[] slice = new byte[len];
-                System.arraycopy(pendingSaveZip, startOff, slice, 0, len);
-                JSONObject chunkMsg = new JSONObject();
-                putQuiet(chunkMsg, "t", "SAVE_CHUNK");
-                putQuiet(chunkMsg, "i", idx);
-                putQuiet(chunkMsg, "d", Base64.getEncoder().encodeToString(slice));
-                for (PeerLink link : clients) {
-                    if (link.authed) {
-                        enqueue(link, chunkMsg);
-                    }
-                }
-                sentThisTick++;
-                bumpRevision();
-            }
-            if (nextSaveChunkToSend >= totalSaveChunks && !saveEndSent) {
-                saveEndSent = true;
-                JSONObject endMsg = new JSONObject();
-                putQuiet(endMsg, "t", "SAVE_END");
-                for (PeerLink link : clients) {
-                    if (link.authed) {
-                        enqueue(link, endMsg);
-                    }
-                }
-                bumpRevision();
-            }
+        if (state == State.TRANSFERRING_SAVE) {
             int authedCount = 0;
             int ackedCount = 0;
             for (PeerLink link : clients) {
-                flush(link);
-                if (link.authed) {
-                    authedCount++;
-                    if (saveAckedClientIds.contains(link.id)) {
-                        ackedCount++;
+                if (!link.authed) {
+                    continue;
+                }
+                authedCount++;
+                if (link.outboundSaveZip != null) {
+                    int sentThisTick = 0;
+                    while (link.outboundNextChunk < link.outboundTotalChunks && sentThisTick < SAVE_CHUNKS_PER_TICK) {
+                        int idx = link.outboundNextChunk++;
+                        int startOff = idx * SAVE_CHUNK_BYTES;
+                        int len = Math.min(SAVE_CHUNK_BYTES, link.outboundSaveZip.length - startOff);
+                        byte[] slice = new byte[len];
+                        System.arraycopy(link.outboundSaveZip, startOff, slice, 0, len);
+                        JSONObject chunkMsg = new JSONObject();
+                        putQuiet(chunkMsg, "t", "SAVE_CHUNK");
+                        putQuiet(chunkMsg, "i", idx);
+                        putQuiet(chunkMsg, "d", Base64.getEncoder().encodeToString(slice));
+                        enqueue(link, chunkMsg);
+                        sentThisTick++;
+                        bumpRevision();
                     }
+                    if (link.outboundNextChunk >= link.outboundTotalChunks && !link.outboundEndSent) {
+                        link.outboundEndSent = true;
+                        JSONObject endMsg = new JSONObject();
+                        putQuiet(endMsg, "t", "SAVE_END");
+                        enqueue(link, endMsg);
+                        bumpRevision();
+                    }
+                }
+                flush(link);
+                if (link.outboundSaveAcked) {
+                    ackedCount++;
                 }
             }
             if ((authedCount == 0 || ackedCount >= authedCount)
@@ -567,7 +617,7 @@ public final class CoopPreGameLobby {
                     }
                     case "SAVE_ACK" -> {
                         if (link.authed && state == State.TRANSFERRING_SAVE) {
-                            saveAckedClientIds.add(link.id);
+                            link.outboundSaveAcked = true;
                             bumpRevision();
                         }
                     }
@@ -732,11 +782,13 @@ public final class CoopPreGameLobby {
                     int total = Math.max(0, msg.optInt("chunks", 0));
                     if (total > 0) {
                         receivingSave = true;
+                        incomingSaveIsOwn = msg.optBoolean("ownSave", false);
                         state = State.TRANSFERRING_SAVE;
                         expectedSaveChunks = total;
                         receivedSaveChunks = 0;
                         incomingSaveChunks = new byte[total][];
                         completedSaveZip = null;
+                        completedSaveIsOwn = false;
                         bumpRevision();
                     }
                 }
@@ -771,6 +823,7 @@ public final class CoopPreGameLobby {
                                 pos += ch.length;
                             }
                             completedSaveZip = assembled;
+                            completedSaveIsOwn = incomingSaveIsOwn;
                         }
                         receivingSave = false;
                         incomingSaveChunks = null;

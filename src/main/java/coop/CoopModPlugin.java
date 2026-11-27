@@ -48,6 +48,12 @@ import coop.util.CoopLog;
 public class CoopModPlugin extends BaseModPlugin {
     private static volatile CoopNetPump activePump;
     private static volatile CoopNetService activeNetService;
+    /**
+     * Guards against the same-frame {@code TitleScreenState} tick tearing down a session that
+     * {@link #onGameLoad} just built via {@code CoopTitleScreenBridge.loadSaveFromTitleScreen},
+     * right before the engine enters {@code CampaignState}.
+     */
+    private static volatile boolean awaitingCampaignEntryAfterLoad;
     private CoopNetService netService;
     /**
      * The previous game's pump, kept only so its router mapping can be released on the next load.
@@ -62,12 +68,26 @@ public class CoopModPlugin extends BaseModPlugin {
         return activePump;
     }
 
+    /** Clears the post-load Title Screen guard once a campaign frame has actually started running. */
+    public static void markCampaignFrameEntered() {
+        awaitingCampaignEntryAfterLoad = false;
+    }
+
+    /** Explicitly shuts down any active campaign session regardless of post-load guard state. */
+    public static void forceShutdownActiveSession() {
+        awaitingCampaignEntryAfterLoad = false;
+        shutdownActiveSessionOnTitleScreen();
+    }
+
     /**
      * Tears down any live campaign network session when returning to the Title Screen
      * ({@code GameState.TITLE}). Starsector has no exit-to-menu ModPlugin callback, so without
      * this the previous host/guest TCP+UDP port stays bound ("Address already in use") until exit.
      */
     public static void shutdownActiveSessionOnTitleScreen() {
+        if (awaitingCampaignEntryAfterLoad) {
+            return;
+        }
         CoopNetPump pump = activePump;
         CoopNetService svc = activeNetService;
         if (pump == null && svc == null) {
@@ -440,6 +460,7 @@ public class CoopModPlugin extends BaseModPlugin {
         CoopNetPump pump = CoopNetPumpInstaller.install(Global.getSector(), netService);
         netPump = pump;
         activePump = pump;
+        awaitingCampaignEntryAfterLoad = true;
         // Phase 20.6 milestone 0: the always-on link status line. Cosmetic and self-disabling, so it
         // goes in right after the pump it reads from and before anything that could fail on its own.
         CoopLinkHud.install(Global.getSector(), pump);
@@ -856,5 +877,8 @@ public class CoopModPlugin extends BaseModPlugin {
         // to the folder being written and restores it as soon as the save routine returns.
         CoopSaveIndex.recordCurrentSave();
         CoopSaveCheckpoint.notifyLocalGameSaved(CoopSaveCheckpoint.REASON_HOST_SAVE);
+        if (activePump != null) {
+            activePump.onLocalSaveCompleted();
+        }
     }
 }

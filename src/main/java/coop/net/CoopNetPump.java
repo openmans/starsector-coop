@@ -346,6 +346,30 @@ public class CoopNetPump implements EveryFrameScript {
     private final CoopStreamCadence fleetSnapshotCadence =
             new CoopStreamCadence(FLEET_SNAPSHOT_INTERVAL_MILLIS);
     private long nextGuestSnapshotAtMillis;
+    private static final int LIVE_SAVE_SYNC_CHUNK_BYTES = 32 * 1024;
+    private static final int LIVE_SAVE_SYNC_CHUNKS_PER_FRAME = 2;
+    private static final int LIVE_SAVE_SYNC_MAX_CHUNKS = 1024;
+    private byte[] outboundSaveSyncZip;
+    private String outboundSaveSyncName = "";
+    private long outboundSaveSyncTransferId;
+    private int outboundSaveSyncNextChunk;
+    private int outboundSaveSyncTotalChunks;
+    private long nextSaveSyncTransferId = 1L;
+    private final java.util.Map<String, IncomingSaveSync> inboundSaveSyncs = new java.util.HashMap<>();
+
+    private static final class IncomingSaveSync {
+        final String playerName;
+        final long transferId;
+        final byte[][] chunks;
+        int received;
+
+        IncomingSaveSync(String playerName, long transferId, int totalChunks) {
+            this.playerName = playerName;
+            this.transferId = transferId;
+            this.chunks = new byte[totalChunks][];
+        }
+    }
+
     private CoopTimeLock.TimeSnapshot latestTimeSnapshot;
     private final CoopSaveCheckpoint saveCheckpoint = new CoopSaveCheckpoint();
     /**
@@ -3611,6 +3635,7 @@ public class CoopNetPump implements EveryFrameScript {
 
     @Override
     public void advance(float amount) {
+        coop.CoopModPlugin.markCampaignFrameEntered();
         // Red-team A14: nothing below may take the pump down. An EveryFrameScript that throws is
         // removed by the engine, so one unhandled RuntimeException anywhere in the frame body -- or
         // one LinkageError from a mod-load skew that only shows up on a rarely-taken branch -- ends
@@ -3784,6 +3809,7 @@ public class CoopNetPump implements EveryFrameScript {
         t = profiler.split(SECTION_GUEST_SNAPSHOT_SEND, t);
         tickSaveCheckpoint();
         t = profiler.split(SECTION_SAVE_CHECKPOINT, t);
+        tickOutboundPlayerSaveSync();
         // 0.1.1: right behind the save checkpoint, because both are "what happens when this process
         // stops being the one driving the campaign". Two field reads on the frames that are not an
         // edge, so it is deliberately not given its own profiler section.
@@ -4786,6 +4812,11 @@ public class CoopNetPump implements EveryFrameScript {
     private void endSessionAfterDrop() {
         boolean changed = sessionState.onChannelDisconnected();
         latestTimeSnapshot = null;
+        outboundSaveSyncZip = null;
+        outboundSaveSyncName = "";
+        outboundSaveSyncNextChunk = 0;
+        outboundSaveSyncTotalChunks = 0;
+        inboundSaveSyncs.clear();
         // Credit red-team P1-1: past this edge peerProvenForOutbound() goes true again and
         // expectedSessionToken is already null, so both gates that were holding a queued CREDITS_GRANT
         // for the reconnect are down. The next socket to attach would be written a grant belonging to
@@ -5152,6 +5183,7 @@ public class CoopNetPump implements EveryFrameScript {
                  COMBAT_PROJ_SPAWN, COMBAT_PROJ_HIT, COMBAT_MISSILE_STATE, COMBAT_BEAMS, COMBAT_EVENT,
                  INTERACTION_CLAIM, INTERACTION_ACCEPT, INTERACTION_REJECT, INTERACTION_RELEASE,
                  DIALOG_BEGIN, BATTLE_ORDER, BATTLE_ORDER_ACK,
+                 PLAYER_SAVE_SYNC,
                  LOBBY_HELLO, LOBBY_CHALLENGE, LOBBY_ACCEPT, LOBBY_REJECT, LOBBY_STATUS,
                  HANDSHAKE_MANIFEST, HANDSHAKE_RESULT,
                  SEED_LOCK_REQUEST, SEED_LOCK_ACK, SEED_LOCK_REJECT,
@@ -5357,6 +5389,11 @@ public class CoopNetPump implements EveryFrameScript {
             storyAuthority.rearmBroadcast();
         }
                 latestTimeSnapshot = null;
+        outboundSaveSyncZip = null;
+        outboundSaveSyncName = "";
+        outboundSaveSyncNextChunk = 0;
+        outboundSaveSyncTotalChunks = 0;
+        inboundSaveSyncs.clear();
                 lastReconciledTimeSnapshot = null;
             }
             CoopLog.info(CoopNetPump.class, "Coop session " + sessionId + " resumed after a link drop as "
@@ -5960,6 +5997,7 @@ public class CoopNetPump implements EveryFrameScript {
             case GUEST_SNAPSHOT -> handleGuestSnapshot(message);
             case SAVE_CHECKPOINT -> handleSaveCheckpoint(message);
             case SAVE_CHECKPOINT_RESULT -> handleSaveCheckpointResult(message);
+            case PLAYER_SAVE_SYNC -> handlePlayerSaveSync(message);
             case SESSION_LEAVE -> handleSessionLeave(message);
             case MARK -> {
                 // Session-only, both directions. The gate is stated here rather than inherited
@@ -8137,6 +8175,155 @@ public class CoopNetPump implements EveryFrameScript {
             }
             default -> CoopLog.warn(CoopNetPump.class, "Coop ignoring SAVE_CHECKPOINT_RESULT with an"
                     + " unknown outcome '" + outcome + "' for checkpoint " + checkpointId);
+        }
+    }
+
+    /**
+     * Called from {@code CoopModPlugin.afterGameSave()}: on a guest in an active session,
+     * packages the just-written save directory and streams it to the host's per-name vault.
+     */
+    public void onLocalSaveCompleted() {
+        if (service.role() != CoopConnectionRole.GUEST || !isGameplaySessionActive()
+                || !service.isConnected() || !peerProvenForOutbound()) {
+            return;
+        }
+        try {
+            String dirPath = coop.ambient.CoopTitleScreenBridge.findLatestLocalSaveDirPath();
+            if (dirPath == null || dirPath.isEmpty()) {
+                return;
+            }
+            byte[] zip = coop.ambient.CoopTitleScreenBridge.packageSaveDirectoryAsZip(dirPath);
+            if (zip == null || zip.length == 0) {
+                return;
+            }
+            String lobbyName = "";
+            try {
+                lobbyName = coop.ui.CoopInGameLauncherSession.shared().playerName();
+            } catch (RuntimeException | LinkageError ignored) {
+            }
+            if (lobbyName == null || lobbyName.trim().isEmpty()) {
+                lobbyName = sessionState.localName();
+            }
+            if (lobbyName == null || lobbyName.trim().isEmpty()) {
+                lobbyName = "Guest";
+            }
+            int totalChunks = (zip.length + LIVE_SAVE_SYNC_CHUNK_BYTES - 1) / LIVE_SAVE_SYNC_CHUNK_BYTES;
+            if (totalChunks <= 0 || totalChunks > LIVE_SAVE_SYNC_MAX_CHUNKS) {
+                CoopLog.warn(CoopNetPump.class, "Skipping live guest save sync: save zip too large ("
+                        + zip.length + " bytes, chunks=" + totalChunks + ")");
+                return;
+            }
+            this.outboundSaveSyncZip = zip;
+            this.outboundSaveSyncName = lobbyName.trim();
+            this.outboundSaveSyncTransferId = nextSaveSyncTransferId++;
+            this.outboundSaveSyncNextChunk = 0;
+            this.outboundSaveSyncTotalChunks = totalChunks;
+            CoopLog.info(CoopNetPump.class, "Coop queueing live personal save sync player="
+                    + outboundSaveSyncName + " bytes=" + zip.length + " chunks=" + totalChunks);
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to queue live guest save sync", ex);
+        }
+    }
+
+    private void tickOutboundPlayerSaveSync() {
+        byte[] zip = outboundSaveSyncZip;
+        if (zip == null || service.role() != CoopConnectionRole.GUEST
+                || !isGameplaySessionActive() || !service.isConnected() || !peerProvenForOutbound()) {
+            return;
+        }
+        int sentThisFrame = 0;
+        while (outboundSaveSyncNextChunk < outboundSaveSyncTotalChunks
+                && sentThisFrame < LIVE_SAVE_SYNC_CHUNKS_PER_FRAME) {
+            int idx = outboundSaveSyncNextChunk++;
+            int start = idx * LIVE_SAVE_SYNC_CHUNK_BYTES;
+            int len = Math.min(LIVE_SAVE_SYNC_CHUNK_BYTES, zip.length - start);
+            byte[] slice = new byte[len];
+            System.arraycopy(zip, start, slice, 0, len);
+            String b64 = java.util.Base64.getEncoder().encodeToString(slice);
+            CoopMessages.Message chunk = CoopMessages.playerSaveSync(
+                    sessionState.sessionId(),
+                    service.nextSeq(),
+                    clockMillis.getAsLong(),
+                    outboundSaveSyncName,
+                    outboundSaveSyncTransferId,
+                    idx,
+                    outboundSaveSyncTotalChunks,
+                    zip.length,
+                    b64);
+            service.send(chunk);
+            sentThisFrame++;
+        }
+        if (outboundSaveSyncNextChunk >= outboundSaveSyncTotalChunks) {
+            String syncedName = outboundSaveSyncName;
+            outboundSaveSyncZip = null;
+            outboundSaveSyncNextChunk = 0;
+            outboundSaveSyncTotalChunks = 0;
+            CoopLog.info(CoopNetPump.class, "Coop completed live personal save sync upload for " + syncedName);
+            postFeed(FEED_SAVE_CAUGHT_UP, clockMillis.getAsLong(),
+                    coop.ui.CoopUiLang.tr(
+                            "Co-op: synced your save to host.",
+                            "Кооп: ваш сейв синхронизирован с хостом."),
+                    FEED_GOOD_COLOR);
+        }
+    }
+
+    private void handlePlayerSaveSync(CoopMessages.Message message) {
+        if (service.role() != CoopConnectionRole.HOST || !isGameplaySessionActive()) {
+            return;
+        }
+        try {
+            String sender = (message.senderId() == null || message.senderId().isBlank())
+                    ? "guest" : message.senderId().trim();
+            String playerName = CoopMessages.parsePlayerSaveSyncName(message);
+            if (playerName.isBlank()) {
+                playerName = remoteDisplayName();
+            }
+            long transferId = CoopMessages.parsePlayerSaveSyncTransferId(message);
+            int idx = CoopMessages.parsePlayerSaveSyncChunkIndex(message);
+            int totalChunks = CoopMessages.parsePlayerSaveSyncTotalChunks(message);
+            int totalBytes = CoopMessages.parsePlayerSaveSyncTotalBytes(message);
+            String b64 = CoopMessages.parsePlayerSaveSyncData(message);
+            if (totalChunks <= 0 || totalChunks > LIVE_SAVE_SYNC_MAX_CHUNKS
+                    || idx < 0 || idx >= totalChunks || totalBytes <= 0 || b64.isEmpty()) {
+                return;
+            }
+            IncomingSaveSync sync = inboundSaveSyncs.get(sender);
+            if (sync == null || sync.transferId != transferId || sync.chunks.length != totalChunks) {
+                sync = new IncomingSaveSync(playerName, transferId, totalChunks);
+                inboundSaveSyncs.put(sender, sync);
+            }
+            if (sync.chunks[idx] == null) {
+                sync.chunks[idx] = java.util.Base64.getDecoder().decode(b64);
+                sync.received++;
+            }
+            if (sync.received >= sync.chunks.length) {
+                inboundSaveSyncs.remove(sender);
+                int len = 0;
+                for (byte[] ch : sync.chunks) {
+                    if (ch == null) {
+                        return;
+                    }
+                    len += ch.length;
+                }
+                byte[] assembled = new byte[len];
+                int pos = 0;
+                for (byte[] ch : sync.chunks) {
+                    System.arraycopy(ch, 0, assembled, pos, ch.length);
+                    pos += ch.length;
+                }
+                boolean stored = coop.ambient.CoopTitleScreenBridge.storePlayerSaveZip(sync.playerName, assembled);
+                if (stored) {
+                    CoopLog.info(CoopNetPump.class, "Coop stored live personal save in host vault player="
+                            + sync.playerName + " bytes=" + assembled.length);
+                    postFeed(FEED_SAVE_CAUGHT_UP, clockMillis.getAsLong(),
+                            coop.ui.CoopUiLang.tr(
+                                    "Co-op: saved backup for \"" + sync.playerName + "\" on host.",
+                                    "Кооп: сейв игрока «" + sync.playerName + "» синхронизирован у хоста."),
+                            FEED_GOOD_COLOR);
+                }
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to handle PLAYER_SAVE_SYNC", ex);
         }
     }
 

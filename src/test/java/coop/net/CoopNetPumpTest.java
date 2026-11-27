@@ -319,6 +319,67 @@ class CoopNetPumpTest {
     }
 
     @Test
+    void hostReassemblesLivePlayerSaveSyncChunksIntoPlayerVault() throws Exception {
+        RecordingNetService service = new RecordingNetService(CoopConnectionRole.HOST);
+        CoopSessionState session = activeHostSession();
+        CoopNetPump pump = new CoopNetPump(service, session, () -> 10000L,
+                () -> emptyManifest("0.98a-RC8", "commit-a"), () -> false);
+
+        String testPlayer = "TestVault_Sync_User";
+        String vaultKey = coop.ambient.CoopTitleScreenBridge.sanitizePlayerVaultKey(testPlayer);
+        byte[] payload = new byte[45_000];
+        for (int i = 0; i < payload.length; i++) {
+            payload[i] = (byte) ((i * 17) ^ (i >>> 5));
+        }
+        int half = 22_500;
+        byte[] part0 = java.util.Arrays.copyOfRange(payload, 0, half);
+        byte[] part1 = java.util.Arrays.copyOfRange(payload, half, payload.length);
+
+        try {
+            service.inbound.add(new CoopMessages.Message(
+                    CoopMessages.Type.PLAYER_SAVE_SYNC, session.sessionId(), 10L, 10000L,
+                    CoopMessages.playerSaveSync(session.sessionId(), 10L, 10000L,
+                            testPlayer, 42L, 0, 2, payload.length,
+                            java.util.Base64.getEncoder().encodeToString(part0)).payloadJson(),
+                    "guest-player"));
+            service.inbound.add(new CoopMessages.Message(
+                    CoopMessages.Type.PLAYER_SAVE_SYNC, session.sessionId(), 11L, 10010L,
+                    CoopMessages.playerSaveSync(session.sessionId(), 11L, 10010L,
+                            testPlayer, 42L, 1, 2, payload.length,
+                            java.util.Base64.getEncoder().encodeToString(part1)).payloadJson(),
+                    "guest-player"));
+
+            pump.advance(0f);
+
+            assertTrue(coop.ambient.CoopTitleScreenBridge.hasPlayerSaveZip(testPlayer));
+            byte[] stored = coop.ambient.CoopTitleScreenBridge.loadPlayerSaveZip(testPlayer);
+            org.junit.jupiter.api.Assertions.assertArrayEquals(payload, stored);
+        } finally {
+            for (String base : new String[] { "../saves", "saves" }) {
+                java.nio.file.Path zip = java.nio.file.Path.of(base,
+                        coop.ambient.CoopTitleScreenBridge.PLAYER_VAULT_DIR_NAME, vaultKey + ".zip");
+                java.nio.file.Files.deleteIfExists(zip);
+                java.nio.file.Path vault = zip.getParent();
+                if (java.nio.file.Files.isDirectory(vault)) {
+                    try (var s = java.nio.file.Files.list(vault)) {
+                        if (s.findAny().isEmpty()) {
+                            java.nio.file.Files.deleteIfExists(vault);
+                            java.nio.file.Path saves = vault.getParent();
+                            if (saves != null && java.nio.file.Files.isDirectory(saves)) {
+                                try (var s2 = java.nio.file.Files.list(saves)) {
+                                    if (s2.findAny().isEmpty()) {
+                                        java.nio.file.Files.deleteIfExists(saves);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     void guestRejectsSeedLockWhenLocalSeedStringDiffers() {
         RecordingNetService service = new RecordingNetService(CoopConnectionRole.GUEST);
         CoopSessionState session = new CoopSessionState(() -> "guest-player");

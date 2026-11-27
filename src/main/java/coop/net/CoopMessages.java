@@ -412,7 +412,9 @@ public final class CoopMessages {
         /** Live combat authority &rarr; joining partner (UDP): active beam rays snapshot. */
         COMBAT_BEAMS,
         /** Bidirectional live combat control & VFX events (ship death/hulk, EMP arc, explosion, objective, pilot switch, pause, end). */
-        COMBAT_EVENT
+        COMBAT_EVENT,
+        /** Guest &rarr; host: chunked personal save ZIP upload on save/autosave for per-name host vault. */
+        PLAYER_SAVE_SYNC
     }
 
     /**
@@ -497,6 +499,7 @@ public final class CoopMessages {
                   DIALOG_SYNC, DIALOG_VOTE,
                   COMBAT_INIT, COMBAT_SPAWN, COMBAT_STATE, COMBAT_INPUT, COMBAT_ARMOR_DELTA,
                   COMBAT_PROJ_SPAWN, COMBAT_PROJ_HIT, COMBAT_MISSILE_STATE, COMBAT_BEAMS, COMBAT_EVENT,
+                  PLAYER_SAVE_SYNC,
                   SAVE_CHECKPOINT, SAVE_CHECKPOINT_RESULT, RESPAWN_PLAYER, STALL_NOTICE,
                   SESSION_LEAVE,
                   OPTIONS_SNAPSHOT, OPTIONS_APPLIED, SESSION_STATS, LINK_STATUS,
@@ -3025,5 +3028,43 @@ public final class CoopMessages {
 
     public static Message combatEvent(String sessionId, long seq, long sentAtMillis, String body) {
         return bodyMessage(Type.COMBAT_EVENT, sessionId, seq, sentAtMillis, body);
+    }
+
+    /** Chunked guest -> host personal save upload on save/autosave. */
+    public static Message playerSaveSync(String sessionId, long seq, long sentAtMillis,
+                                         String playerName, long transferId, int chunkIndex,
+                                         int totalChunks, int totalBytes, String dataBase64) {
+        String name = playerName == null ? "" : playerName.trim();
+        return new Message(Type.PLAYER_SAVE_SYNC, requireText(sessionId, "sessionId"), seq, sentAtMillis,
+                "{\"name\":\"" + escapeJson(name) + "\","
+                        + "\"transferId\":" + transferId + ","
+                        + "\"chunkIndex\":" + chunkIndex + ","
+                        + "\"totalChunks\":" + totalChunks + ","
+                        + "\"totalBytes\":" + totalBytes + ","
+                        + "\"data\":\"" + escapeJson(dataBase64 == null ? "" : dataBase64) + "\"}");
+    }
+
+    public static String parsePlayerSaveSyncName(Message message) {
+        return optionalPayloadString(message, "name", "");
+    }
+
+    public static long parsePlayerSaveSyncTransferId(Message message) {
+        return requiredPayloadLong(message, "transferId");
+    }
+
+    public static int parsePlayerSaveSyncChunkIndex(Message message) {
+        return (int) requiredPayloadLong(message, "chunkIndex");
+    }
+
+    public static int parsePlayerSaveSyncTotalChunks(Message message) {
+        return (int) requiredPayloadLong(message, "totalChunks");
+    }
+
+    public static int parsePlayerSaveSyncTotalBytes(Message message) {
+        return (int) requiredPayloadLong(message, "totalBytes");
+    }
+
+    public static String parsePlayerSaveSyncData(Message message) {
+        return requiredPayloadString(message, "data");
     }
 }

@@ -89,7 +89,8 @@ class CoopMessageTypePolicyTest {
             CoopMessages.Type.COMBAT_STATE, CoopMessages.Type.COMBAT_INPUT,
             CoopMessages.Type.COMBAT_ARMOR_DELTA, CoopMessages.Type.COMBAT_PROJ_SPAWN,
             CoopMessages.Type.COMBAT_PROJ_HIT, CoopMessages.Type.COMBAT_MISSILE_STATE,
-            CoopMessages.Type.COMBAT_BEAMS, CoopMessages.Type.COMBAT_EVENT);
+            CoopMessages.Type.COMBAT_BEAMS, CoopMessages.Type.COMBAT_EVENT,
+            CoopMessages.Type.PLAYER_SAVE_SYNC);
 
     // ---- table: CoopNetService.coalesceKey(Message) ------------------------------------------
     // Whitelist of whole-state snapshots that may supersede a queued copy of themselves; every

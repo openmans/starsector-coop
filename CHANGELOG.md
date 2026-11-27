@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.17 (Per-player Save Vault by lobby name, live save sync, Title Screen load session fix)
+
+- **Fixed session disappearing right after loading from Title Screen Pre-Game Lobby (`CoopModPlugin`, `CoopTitleScreenOverlay`, `CoopNetPump`):**
+  loading a save via `CoopTitleScreenBridge.loadSaveFromTitleScreen()` could run `CoopModPlugin.onGameLoad()`
+  while `Global.getCurrentState()` still briefly reported `GameState.TITLE` on the same frame, causing
+  `shutdownActiveSessionOnTitleScreen()` to tear down the newly started host/guest session 31 ms later.
+  Added an `awaitingCampaignEntryAfterLoad` guard cleared once campaign frames start ticking.
+- **Per-player Save Vault on the Host keyed by lobby player name (`CoopTitleScreenBridge`, `CoopPreGameLobby`, `CoopInGameLauncherSession`):**
+  on `СТАРТ СЕССИИ`, each guest receives their **own** saved campaign (`<saves>/coop_vault/<sanitizedName>.zip`,
+  extracted into `save_coop_<key>/`) with their own ships, credits, and progress whenever the host has it;
+  first-time guests with no stored save fall back to the host's save + snapshot restore. The lobby member list
+  displays `[Сейв ✓]` next to guests who already have a personal save on the host.
+- **Automatic live save sync (`CoopMessages.PLAYER_SAVE_SYNC`, `CoopNetPump`, `CoopModPlugin.afterGameSave`):**
+  whenever a guest saves manually (`F5`) or via coordinated autosave, their save is packaged and streamed in
+  chunks to the host's `coop_vault` automatically so the host always keeps every player's latest save.
+
 ## 0.2.16 (Allow mid-campaign resume on matching campaignId + seedString despite live sector fingerprint drift)
 
 - **Fixed false-positive `COOP-SEED` rejection when resuming an existing co-op campaign (`CoopNetPump.handleSeedLockRequest`):**

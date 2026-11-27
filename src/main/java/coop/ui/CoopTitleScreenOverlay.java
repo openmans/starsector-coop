@@ -109,11 +109,14 @@ public final class CoopTitleScreenOverlay {
     public static void onTitleFrame() {
         try {
             if (Global.getCurrentState() != GameState.TITLE) {
+                coop.CoopModPlugin.markCampaignFrameEntered();
                 CoopInGameLauncherSession.shared().stopPreGameLobbyOnStateExit();
                 detachAll();
                 return;
             }
-            coop.CoopModPlugin.shutdownActiveSessionOnTitleScreen();
+            if (!launchingIntoGame) {
+                coop.CoopModPlugin.shutdownActiveSessionOnTitleScreen();
+            }
             UIPanelAPI screen = CoopTitleScreenBridge.currentTitleScreenPanel();
             if (screen == null) {
                 return;
@@ -678,11 +681,13 @@ public final class CoopTitleScreenOverlay {
             boolean isSelf = (isHost && m.host()) || (!isHost && !m.host() && m.name().equals(s.playerName()));
             String roleTag = m.host() ? s.tr("[HOST] ", "[ХОСТ] ") : s.tr("[GUEST] ", "[ГОСТЬ] ");
             String youTag = isSelf ? s.tr(" (you)", " (вы)") : "";
+            String vaultTag = (isHost && !m.host() && CoopTitleScreenBridge.hasPlayerSaveZip(m.name()))
+                    ? s.tr(" [Save ✓]", " [Сейв ✓]") : "";
             String badge = m.ready() ? s.tr("READY", "ГОТОВ") : s.tr("NOT READY", "НЕ ГОТОВ");
 
             float badgeW = 128f;
             float nameW = innerW - badgeW - 8f;
-            ButtonAPI namePill = ui.addButton(roleTag + m.name() + youTag, "coop.lobby.member." + shown,
+            ButtonAPI namePill = ui.addButton(roleTag + m.name() + youTag + vaultTag, "coop.lobby.member." + shown,
                     m.ready() ? GREEN_BRIGHT : ACTION_TEXT,
                     m.ready() ? new Color(16, 54, 34) : TAB_INACTIVE_BG,
                     Alignment.LMID, CutStyle.ALL, nameW, 28f, 0f);
