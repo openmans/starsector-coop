@@ -242,7 +242,6 @@ public final class CoopOptionsRegistry {
     public static final String PORT_MAPPING = "coop.portMapping";
     public static final String PASSWORD = "coop.password";
     public static final String PLAYER_NAME = "coop.playerName";
-    public static final String DEDICATED_HOST = "coop.dedicatedHost";
 
     // ---- host policy -------------------------------------------------------------------------
 
@@ -336,11 +335,6 @@ public final class CoopOptionsRegistry {
         options.add(stringOption(PLAYER_NAME, Tier.LAUNCH, "", true, "Phase 20.4",
                 "next connection attempt", ApplyBoundary.NEXT_CONNECTION,
                 "Name shown to your partner. Empty falls back to the local character's own name."));
-        options.add(boolOption(DEDICATED_HOST, Tier.LAUNCH, "false", "Dedicated Server",
-                "next launch", ApplyBoundary.NEXT_CONNECTION,
-                "true runs this install as an unattended Dedicated Host: auto-loads the latest"
-                        + " save, hides/parks the host observer fleet, auto-pauses when 0 guests are"
-                        + " connected, supports 4+ guests, and autosaves periodically."));
 
         // -- Tier 2: host gameplay policy ------------------------------------------------------
         options.add(intOption(MAX_GUESTS, Tier.POLICY, "1", false, 1, 3, "Phase 20.5 / 27",

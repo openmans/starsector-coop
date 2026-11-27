@@ -39,9 +39,6 @@ public class CoopBattleStatusCombatPlugin extends BaseEveryFrameCombatPlugin {
     @Override
     public void advance(float amount, List<InputEventAPI> events) {
         try {
-            // Headless console: also runs outside the campaign (title screen, live battles) so a
-            // windowless host can always be queried and stopped. No-op unless -Dcoop.headless=true.
-            coop.headless.CoopHeadlessConsole.tick(coop.net.CoopNetPump.active());
             if (Global.getCurrentState() == GameState.TITLE) {
                 CoopTitleScreenOverlay.onTitleFrame();
             }

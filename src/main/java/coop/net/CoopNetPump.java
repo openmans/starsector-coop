@@ -373,23 +373,6 @@ public class CoopNetPump implements EveryFrameScript {
 
     private CoopTimeLock.TimeSnapshot latestTimeSnapshot;
     private final CoopSaveCheckpoint saveCheckpoint = new CoopSaveCheckpoint();
-    private final boolean dedicatedHostMode;
-    /**
-     * The pump the headless console talks to. The console's per-frame hook also runs from the global
-     * combat status plugin (title screen, battles) where no pump is on the call stack, and `save` /
-     * `kick` still need the live one.
-     */
-    private static volatile CoopNetPump active;
-
-    /** @return the most recently constructed pump, or null before the campaign installs one */
-    public static CoopNetPump active() {
-        return active;
-    }
-    private static final long DEDICATED_PARK_INTERVAL_MILLIS = 500L;
-    private static final long DEDICATED_AUTOSAVE_INTERVAL_MILLIS = 600_000L;
-    private long nextDedicatedParkAtMillis;
-    private long nextDedicatedAutosaveAtMillis;
-    private boolean dedicatedHadGuests;
     /**
      * Phase 29 M1 wire prerequisite: outbound stream stamping, sender-side redundancy, and the
      * receive-side epoch watermark for the UDP state streams. The stream clock advances by campaign
@@ -1203,9 +1186,6 @@ public class CoopNetPump implements EveryFrameScript {
         this.linkQuality.reset(now);
         this.nextTimeSnapshotAtMillis = now + CoopTimeLock.SNAPSHOT_INTERVAL_MILLIS;
         this.nextGuestSnapshotAtMillis = now;
-        this.dedicatedHostMode = CoopNetStartupConfig.dedicatedHostFromSystemProperties();
-        active = this;
-        this.nextDedicatedAutosaveAtMillis = now + DEDICATED_AUTOSAVE_INTERVAL_MILLIS;
         installPreGameDropInResponder();
         // A full interval out, not zero: the one send that belongs at the start of a session is the
         // forced one behind the lobby release (releaseLobbyNow), and letting the periodic timer also
@@ -1470,59 +1450,6 @@ public class CoopNetPump implements EveryFrameScript {
     /** Bridge-only: the lever's current level, for {@code status} and for tests. */
     public boolean bridgePauseIntent() {
         return bridgePauseIntent;
-    }
-
-    /**
-     * Headless console: force the dedicated-host periodic autosave right now.
-     *
-     * <p>Runs on the campaign thread (the console drains commands from the pump's own frame), which
-     * is the thread {@code CampaignUIAPI.autosave()} belongs to. A screen that is open blocks the
-     * engine's autosave, so that case is reported as deferred and retried instead of being lost.
-     *
-     * @return a short human-readable result for the console
-     */
-    public String headlessSaveNow() {
-        SectorAPI sector = sectorOrNull();
-        if (sector == null) {
-            return "not in campaign yet";
-        }
-        CampaignUIAPI ui = sector.getCampaignUI();
-        if (ui == null) {
-            return "no campaign UI";
-        }
-        if (ui.isShowingDialog() || ui.isShowingMenu()) {
-            return "deferred: a screen is open";
-        }
-        ui.autosave();
-        nextDedicatedAutosaveAtMillis = clockMillis.getAsLong() + DEDICATED_AUTOSAVE_INTERVAL_MILLIS;
-        CoopLog.info(CoopNetPump.class, "Coop Dedicated Host saved on console request");
-        return "ok";
-    }
-
-    /**
-     * Headless console: drops one guest by lobby name or player id, leaving other guests connected.
-     * Only meaningful on the host; a guest-side call reports the role instead of pretending.
-     */
-    public String kickGuestByName(String nameOrId) {
-        if (service.role() != CoopConnectionRole.HOST) {
-            return "not hosting (role=" + service.role() + ")";
-        }
-        CoopSessionState state = sessionStateForBridge();
-        if (state == null || state.guestCount() == 0) {
-            return "no guests connected";
-        }
-        for (CoopSessionState.PeerSession guest : state.guests()) {
-            if (!guest.playerId().equals(nameOrId) && !guest.name().equalsIgnoreCase(nameOrId)) {
-                continue;
-            }
-            boolean dropped = service.dropGuest(guest.playerId(), "kicked from the headless console");
-            CoopLog.info(CoopNetPump.class, "Coop Dedicated Host kick " + guest.name()
-                    + " playerId=" + guest.playerId() + " dropped=" + dropped);
-            return dropped
-                    ? "kicked " + guest.name()
-                    : guest.name() + " has no live socket (already leaving?)";
-        }
-        return "no guest named " + nameOrId;
     }
 
     /**
@@ -3713,10 +3640,6 @@ public class CoopNetPump implements EveryFrameScript {
     @Override
     public void advance(float amount) {
         coop.CoopModPlugin.markCampaignFrameEntered();
-        // Headless console: drains queued stdin/signal commands on this thread, which is the one
-        // allowed to touch the campaign (autosave, kick, save-then-exit). No-op unless
-        // -Dcoop.headless=true.
-        coop.headless.CoopHeadlessConsole.tick(this);
         // Red-team A14: nothing below may take the pump down. An EveryFrameScript that throws is
         // removed by the engine, so one unhandled RuntimeException anywhere in the frame body -- or
         // one LinkageError from a mod-load skew that only shows up on a rarely-taken branch -- ends
@@ -3859,7 +3782,6 @@ public class CoopNetPump implements EveryFrameScript {
         // snapshot resumes applying this frame rather than the next one.
         tickAllyBattle();
         t = profiler.split(SECTION_BATTLE_BRIDGE, t);
-        tickDedicatedHost();
         syncSharedPause();
         // Phase 28 M2: immediately behind it, because syncGuestSharedPauseIntent is where the
         // guest's apply boundary is crossed and the host is waiting to be told that it was.
@@ -7379,8 +7301,7 @@ public class CoopNetPump implements EveryFrameScript {
             pauseCoordinator.setAllowGuestPause(optionsPolicy.appliedBool(
                     coop.config.CoopOptionsRegistry.ALLOW_GUEST_PAUSE));
             pauseCoordinator.setLiveWorldInCombat(
-                    optionsPolicy.appliedBool(coop.config.CoopOptionsRegistry.LIVE_WORLD_IN_COMBAT)
-                            || dedicatedHostMode);
+                    optionsPolicy.appliedBool(coop.config.CoopOptionsRegistry.LIVE_WORLD_IN_COMBAT));
             boolean effective = pauseCoordinator.effectivePaused();
             if (observed != effective) {
                 sector.setPaused(effective);
@@ -7575,63 +7496,6 @@ public class CoopNetPump implements EveryFrameScript {
             nextTimeSnapshotAtMillis = 0L;
             CoopLog.info(CoopNetPump.class, "Coop guest fast-forward intent applied fastForward="
                     + desired + " intentSeq=" + intentSeq);
-        }
-    }
-
-    private void tickDedicatedHost() {
-        if (!dedicatedHostMode || service.role() != CoopConnectionRole.HOST) {
-            return;
-        }
-        try {
-            if (!sessionState.lobbyReleased()) {
-                sessionState.releaseLobby();
-                CoopLog.info(CoopNetPump.class, "Coop Dedicated Host released lobby for drop-in players");
-            }
-            long now = clockMillis.getAsLong();
-            boolean hasGuests = sessionState.guestCount() > 0 && isGameplaySessionActive();
-            pauseCoordinator.setDedicatedEmptyHold(!hasGuests);
-            if (hasGuests && !dedicatedHadGuests) {
-                pauseCoordinator.setHostPauseIntent(false);
-                nextDedicatedAutosaveAtMillis = now + DEDICATED_AUTOSAVE_INTERVAL_MILLIS;
-                CoopLog.info(CoopNetPump.class, "Coop Dedicated Host: player connected, world unpaused");
-            } else if (!hasGuests && dedicatedHadGuests) {
-                CoopLog.info(CoopNetPump.class, "Coop Dedicated Host: 0 players connected, world paused");
-            }
-            dedicatedHadGuests = hasGuests;
-
-            SectorAPI sector = sectorOrNull();
-            if (sector == null) {
-                return;
-            }
-            if (!hasGuests && !sector.isPaused()) {
-                sector.setPaused(true);
-            }
-            if (now >= nextDedicatedParkAtMillis) {
-                nextDedicatedParkAtMillis = now + DEDICATED_PARK_INTERVAL_MILLIS;
-                CampaignFleetAPI fleet = sector.getPlayerFleet();
-                if (fleet != null) {
-                    fleet.setHidden(true);
-                    fleet.setTransponderOn(false);
-                    fleet.setDoNotAdvanceAI(true);
-                    fleet.setVelocity(0f, 0f);
-                    com.fs.starfarer.api.campaign.rules.MemoryAPI mem = fleet.getMemoryWithoutUpdate();
-                    if (mem != null) {
-                        mem.set(com.fs.starfarer.api.impl.campaign.ids.MemFlags.FLEET_IGNORED_BY_OTHER_FLEETS, true);
-                        mem.set(com.fs.starfarer.api.impl.campaign.ids.MemFlags.FLEET_IGNORES_OTHER_FLEETS, true);
-                        mem.set("$makeHostile", false);
-                    }
-                }
-            }
-            if (hasGuests && now >= nextDedicatedAutosaveAtMillis) {
-                nextDedicatedAutosaveAtMillis = now + DEDICATED_AUTOSAVE_INTERVAL_MILLIS;
-                CampaignUIAPI ui = sector.getCampaignUI();
-                if (ui != null && !ui.isShowingDialog() && !ui.isShowingMenu()) {
-                    ui.autosave();
-                    CoopLog.info(CoopNetPump.class, "Coop Dedicated Host triggered periodic autosave");
-                }
-            }
-        } catch (RuntimeException | LinkageError ex) {
-            CoopLog.warn(CoopNetPump.class, "Coop Dedicated Host tick failed", ex);
         }
     }
 
@@ -7982,9 +7846,6 @@ public class CoopNetPump implements EveryFrameScript {
     }
 
     private void maybeSendFleetSnapshot() {
-        if (dedicatedHostMode && service.role() == CoopConnectionRole.HOST) {
-            return;
-        }
         if (!shouldStreamFleet()) {
             return;
         }
@@ -8027,9 +7888,6 @@ public class CoopNetPump implements EveryFrameScript {
      * @return true when a roster went out (test seam)
      */
     boolean maybeSendFleetRoster(CoopFleetSnapshot snapshot) {
-        if (dedicatedHostMode && service.role() == CoopConnectionRole.HOST) {
-            return false;
-        }
         if (snapshot == null || snapshot.fleetHash16().equals(lastSentRosterHash)) {
             return false;
         }

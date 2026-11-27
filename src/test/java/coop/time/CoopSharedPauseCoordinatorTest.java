@@ -333,18 +333,4 @@ class CoopSharedPauseCoordinatorTest {
         assertTrue(coordinator.applyGuestFastForwardIntent("guest-1", true, 3L));
         assertTrue(coordinator.effectiveFastForward());
     }
-
-    @Test
-    void dedicatedEmptyHoldPausesWorldAndClearsFastForward() {
-        CoopSharedPauseCoordinator coordinator = new CoopSharedPauseCoordinator();
-        assertTrue(coordinator.applyGuestFastForwardIntent("guest-1", true, 1L));
-        assertTrue(coordinator.effectiveFastForward());
-
-        coordinator.setDedicatedEmptyHold(true);
-        assertTrue(coordinator.effectivePaused());
-        assertFalse(coordinator.effectiveFastForward());
-
-        coordinator.setDedicatedEmptyHold(false);
-        assertFalse(coordinator.effectivePaused());
-    }
 }

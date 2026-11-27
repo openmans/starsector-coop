@@ -81,11 +81,6 @@
 	# text | applies: next connection attempt | Phase 20.4
 	"coop.playerName":"",
 
-	# Runs this Starsector instance as an unattended Dedicated Host (auto-loads latest save,
-	# hides/parks the server observer fleet, auto-pauses when 0 guests are connected, supports 4+ guests).
-	# true|false | applies: next launch | Dedicated Server
-	"coop.dedicatedHost":false,
-
 	# Optional AES-256-GCM transport encryption derived from coop.password. off keeps plaintext TCP;
 	# aes-gcm encrypts wire frames when a shared coop.password is configured.
 	# off|aes-gcm | applies: next connection attempt | Security

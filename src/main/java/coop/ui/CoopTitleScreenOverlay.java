@@ -67,7 +67,6 @@ public final class CoopTitleScreenOverlay {
     private static final String ID_SIZE = "coop.host.size";
     private static final String ID_AGE = "coop.host.age";
     private static final String ID_UPNP = "coop.host.upnp";
-    private static final String ID_DEDICATED = "coop.host.dedicated";
     private static final String ID_APPLY_HOST = "coop.host.apply";
     private static final String ID_COPY_INVITE = "coop.host.copy";
     private static final String ID_PASTE_INVITE = "coop.join.paste";
@@ -85,7 +84,6 @@ public final class CoopTitleScreenOverlay {
     private static boolean openModalOnNextConnectError;
     private static boolean pendingOpenLoadGame;
     private static boolean launchingIntoGame;
-    private static boolean dedicatedAutoStartAttempted;
     private static CustomPanelAPI modalPanel;
     private static boolean modalOpen;
     private static boolean rebuildPending;
@@ -125,23 +123,6 @@ public final class CoopTitleScreenOverlay {
             }
             CoopInGameLauncherSession session = CoopInGameLauncherSession.shared();
             session.ensureInitialized();
-            if (!launchingIntoGame && !dedicatedAutoStartAttempted
-                    && coop.net.CoopNetStartupConfig.dedicatedHostFromSystemProperties()
-                    && !CoopTitleScreenBridge.isTitleScreenShowingDialog()) {
-                dedicatedAutoStartAttempted = true;
-                session.setDedicatedHost(true);
-                // Preserve -D launches without overwriting normal singleplayer/client prefs in saves/common
-                if (coop.net.CoopNetStartupConfig.fromSystemProperties().role()
-                        != coop.net.CoopConnectionRole.HOST) {
-                    session.applyHostConfig(CoopOptionsStore.system());
-                }
-                String latestSave = CoopTitleScreenBridge.findLatestHostSaveDirPath();
-                if (!latestSave.isEmpty()) {
-                    CoopLog.info(CoopTitleScreenOverlay.class,
-                            "Coop Dedicated Host auto-loading latest save: " + latestSave);
-                    session.scheduleDedicatedAutoLoad(latestSave);
-                }
-            }
 
             // Advance live pre-game lobby networking on the main frame thread
             if (session.tickPreGameLobby(CoopOptionsStore.system())) {
@@ -882,18 +863,6 @@ public final class CoopTitleScreenOverlay {
         upnpBtn.getPosition().inTL(pad + (thirdW + 8f) * 2f, y);
         y += 32f;
 
-        // Row 4b: Dedicated Server toggle (unattended world host, live combat, auto-pause when empty)
-        ButtonAPI dedBtn = ui.addButton(
-                s.tr("Dedicated Server (live world, 0-player auto-pause): ",
-                        "Выделенный сервер (живой мир, авто-пауза без игроков): ")
-                        + (s.dedicatedHost() ? s.tr("ON", "ВКЛ") : s.tr("OFF", "ВЫКЛ")),
-                ID_DEDICATED,
-                s.dedicatedHost() ? GREEN_BRIGHT : TAB_INACTIVE_TEXT,
-                s.dedicatedHost() ? GREEN_BG : TAB_INACTIVE_BG,
-                Alignment.MID, CutStyle.ALL, innerW, 24f, 0f);
-        dedBtn.getPosition().inTL(pad, y);
-        y += 32f;
-
         // Row 5: Primary Host action + Copy Invite + Disable
         float primaryW = 212f;
         float copyW = 176f;
@@ -1070,10 +1039,6 @@ public final class CoopTitleScreenOverlay {
             }
             case ID_UPNP -> {
                 s.togglePortMapping();
-                return true;
-            }
-            case ID_DEDICATED -> {
-                s.toggleDedicatedHost();
                 return true;
             }
             case ID_COPY_INVITE -> {

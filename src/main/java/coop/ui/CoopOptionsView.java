@@ -118,7 +118,6 @@ public record CoopOptionsView(List<Section> sections) {
         LABELS.put(CoopOptionsRegistry.PORT_MAPPING, "Router port mapping");
         LABELS.put(CoopOptionsRegistry.PASSWORD, "Session password");
         LABELS.put(CoopOptionsRegistry.PLAYER_NAME, "Your display name");
-        LABELS.put(CoopOptionsRegistry.DEDICATED_HOST, "Dedicated host server mode");
         LABELS.put(CoopOptionsRegistry.MAX_GUESTS, "Maximum guests");
         LABELS.put(CoopOptionsRegistry.RECONNECT_GRACE_SECONDS, "Reconnect grace");
         LABELS.put(CoopOptionsRegistry.ALLOW_GUEST_PAUSE, "Guest may pause the world");
