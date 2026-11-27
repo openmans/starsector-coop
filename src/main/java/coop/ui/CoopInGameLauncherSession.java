@@ -41,6 +41,8 @@ public final class CoopInGameLauncherSession {
     private String playerName = "";
     private final CoopPreGameLobby preGameLobby = new CoopPreGameLobby();
     private String lastSyncedGuestLobbySeed = "";
+    private boolean launchedFromPreGameLobby;
+    private boolean pendingAutoEnterGame;
 
     // Host fields
     private String hostAddress = "";
@@ -540,14 +542,16 @@ public final class CoopInGameLauncherSession {
             return true;
         }
         if (preGameLobby.isLaunchTriggered()) {
+            launchedFromPreGameLobby = true;
+            pendingAutoEnterGame = true;
             if (!preGameLobby.isHost()) {
                 syncGuestSettingsFromLobby(store);
-                setStatus(tr("HOST IS STARTING THE WORLD! Close this window and click New Game or Load Game.",
-                        "ХОСТ ЗАПУСКАЕТ МИР! Закройте окно и нажмите «Новая игра» или «Загрузить»."),
+                setStatus(tr("HOST IS STARTING! Entering the game...",
+                        "ХОСТ ЗАПУСКАЕТ СЕССИЮ! Входим в игру..."),
                         new Color(110, 255, 165));
             } else {
-                setStatus(tr("LOBBY LAUNCHED! Close this window and click New Game or Load Game.",
-                        "ЛОББИ ЗАПУЩЕНО! Закройте окно и нажмите «Новая игра» или «Загрузить»."),
+                setStatus(tr("SESSION STARTING! Entering the game...",
+                        "ЗАПУСК СЕССИИ! Входим в игру..."),
                         new Color(110, 255, 165));
             }
             return true;
@@ -591,18 +595,49 @@ public final class CoopInGameLauncherSession {
         preGameLobby.toggleLocalReady();
     }
 
-    public void startGameFromLobby() {
+    /** True when the current campaign launch came directly from our Title Screen Pre-Game Lobby. */
+    public boolean wasLaunchedFromPreGameLobby() {
+        return launchedFromPreGameLobby;
+    }
+
+    public void clearLaunchedFromPreGameLobby() {
+        launchedFromPreGameLobby = false;
+    }
+
+    /** One-shot latch consumed on the Title Screen to enter Continue / New Game immediately. */
+    public boolean consumePendingAutoEnterGame() {
+        if (!pendingAutoEnterGame) {
+            return false;
+        }
+        pendingAutoEnterGame = false;
+        return true;
+    }
+
+    public boolean startGameFromLobby() {
         if (!preGameLobby.isHost() || preGameLobby.state() != CoopPreGameLobby.State.HOSTING) {
-            return;
+            return false;
+        }
+        if (!preGameLobby.allReady()) {
+            setStatus(tr("Waiting for all players to press READY ("
+                            + preGameLobby.readyCount() + "/" + preGameLobby.totalCount() + ").",
+                    "Ждём готовности всех участников ("
+                            + preGameLobby.readyCount() + "/" + preGameLobby.totalCount() + ")."),
+                    new Color(255, 195, 95));
+            return false;
         }
         preGameLobby.triggerHostStart();
-        setStatus(tr("LOBBY LAUNCHED! Close this window and click New Game or Load Game.",
-                "ЛОББИ ЗАПУЩЕНО! Закройте окно и нажмите «Новая игра» или «Загрузить»."),
+        launchedFromPreGameLobby = true;
+        pendingAutoEnterGame = true;
+        setStatus(tr("SESSION STARTING! Entering the game...",
+                "ЗАПУСК СЕССИИ! Входим в игру..."),
                 new Color(110, 255, 165));
+        return true;
     }
 
     public void leavePreGameLobby() {
         preGameLobby.stop();
+        launchedFromPreGameLobby = false;
+        pendingAutoEnterGame = false;
         setStatus(tr("Left the pre-game lobby.", "Вы вышли из лобби."), new Color(180, 200, 210));
     }
 

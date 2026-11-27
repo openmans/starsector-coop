@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.10 (Unified bottom-left Lobby dock + instant game start + no duplicate in-save lobby)
+
+- **Removed redundant green `CO-OP` button below Exit on the Title Screen (`CoopTitleScreenOverlay`):**
+  kept only the compact bottom-left **`CO-OP ЛОББИ`** window with clean **`Настройки`** and
+  **`Выйти из лобби`** buttons for both Host and Guest alongside **`CONNECT`**, **`ГОТОВ`**, and
+  **`СТАРТ СЕССИИ`** (enabled once all lobby participants are ready).
+- **One-click session start straight into the game (`CoopTitleScreenBridge.enterGameFromTitleScreen`):**
+  pressing **`СТАРТ СЕССИИ`** when all participants are ready immediately launches both Host and
+  Guest into the campaign (Continue latest save, or New Game with the synced seed if no save exists).
+- **Eliminated duplicate in-save lobby dialog (`CoopNetPump`):**
+  sessions launched from the Title Screen Pre-Game Lobby now auto-ready and skip the second
+  in-campaign `CoopLobbyDialog`, dropping both players directly into live gameplay.
+
 ## 0.2.9 (Remember user-selected Starsector install folder across launcher restarts)
 
 - **Remember chosen `starsector.exe` path across restarts (`CoopInstallLayout` + `CoopLauncherApp` + `StarsectorCoopLauncher.exe`):**

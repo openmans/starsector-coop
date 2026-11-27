@@ -118,8 +118,15 @@ class CoopPreGameLobbyTest {
 
             session.toggleLobbyReady();
             assertEquals("CO-OP · ЛОББИ (0/1)", session.titleButtonLabel());
+            // Start is blocked until all players are ready
+            assertFalse(session.startGameFromLobby());
+            assertTrue(session.isPreGameLobbyActive());
 
-            session.startGameFromLobby();
+            session.toggleLobbyReady();
+            assertTrue(session.startGameFromLobby());
+            assertTrue(session.wasLaunchedFromPreGameLobby());
+            assertTrue(session.consumePendingAutoEnterGame());
+            assertFalse(session.consumePendingAutoEnterGame());
             assertFalse(session.isPreGameLobbyActive());
             assertEquals("CO-OP · ВХОД В МИР!", session.titleButtonLabel());
         } finally {

@@ -47,16 +47,13 @@ public final class CoopTitleScreenOverlay {
     static final Color LABEL_MUTED = new Color(150, 195, 212);
     static final Color FIELD_BG = new Color(9, 19, 29);
 
-    private static final float BUTTON_W = 250f;
-    private static final float BUTTON_H = 36f;
     private static final float MODAL_W = 600f;
     private static final float MODAL_H = 524f;
-    private static final float DOCK_W = 312f;
-    private static final float DOCK_H = 228f;
+    private static final float DOCK_W = 328f;
+    private static final float DOCK_H = 256f;
     private static final float DOCK_MARGIN = 18f;
 
     // Button IDs
-    private static final String ID_OPEN = "coop.open";
     private static final String ID_DOCK_CONNECT = "coop.dock.connect";
     private static final String ID_DOCK_OPEN = "coop.dock.open";
     private static final String ID_CLOSE = "coop.close";
@@ -79,8 +76,6 @@ public final class CoopTitleScreenOverlay {
     private static final String ID_LOBBY_LEAVE = "coop.lobby.leave";
 
     private static UIPanelAPI attachedScreen;
-    private static CustomPanelAPI buttonPanel;
-    private static ButtonAPI openButton;
     private static CustomPanelAPI dockPanel;
     private static boolean dockRebuildPending;
     private static long dockLastRevision = -1L;
@@ -172,17 +167,18 @@ public final class CoopTitleScreenOverlay {
             if (vanillaDialogOpen) {
                 removeModal();
                 removeDock();
-                removeButton();
                 return;
             }
 
-            if (buttonPanel == null) {
-                attachButton(screen, session);
-            } else if (openButton != null) {
-                String expected = session.titleButtonLabel();
-                if (!expected.equals(openButton.getText())) {
-                    openButton.setText(expected);
+            // If all lobby members were ready and Start Session triggered, drop straight into the game!
+            if (session.consumePendingAutoEnterGame()) {
+                modalOpen = false;
+                removeModal();
+                removeDock();
+                if (CoopTitleScreenBridge.enterGameFromTitleScreen()) {
+                    return;
                 }
+                dockRebuildPending = true;
             }
 
             if (modalOpen) {
@@ -215,7 +211,6 @@ public final class CoopTitleScreenOverlay {
     private static void detachAll() {
         removeModal();
         removeDock();
-        removeButton();
         attachedScreen = null;
         modalOpen = false;
         rebuildPending = false;
@@ -232,17 +227,6 @@ public final class CoopTitleScreenOverlay {
             }
         }
         dockPanel = null;
-    }
-
-    private static void removeButton() {
-        if (attachedScreen != null && buttonPanel != null) {
-            try {
-                attachedScreen.removeComponent(buttonPanel);
-            } catch (Throwable ignored) {
-            }
-        }
-        buttonPanel = null;
-        openButton = null;
     }
 
     private static void removeModal() {
@@ -266,31 +250,6 @@ public final class CoopTitleScreenOverlay {
         guestHostField = null;
         guestPortField = null;
         guestPwField = null;
-    }
-
-    private static void attachButton(UIPanelAPI screen, CoopInGameLauncherSession session) {
-        CustomPanelAPI panel = Global.getSettings().createCustom(BUTTON_W, BUTTON_H, new ButtonPlugin());
-        TooltipMakerAPI ui = panel.createUIElement(BUTTON_W, BUTTON_H, false);
-        ButtonAPI btn = ui.addButton(session.titleButtonLabel(), ID_OPEN,
-                GREEN_BRIGHT, GREEN_BG, Alignment.MID, CutStyle.ALL, BUTTON_W, BUTTON_H, 0f);
-        btn.setQuickMode(false);
-        panel.addUIElement(ui).inTL(0f, 0f);
-
-        float screenW = Global.getSettings().getScreenWidth();
-        float screenH = Global.getSettings().getScreenHeight();
-        float[] menu = CoopTitleScreenBridge.titleMenuBounds();
-        PositionAPI pos = screen.addComponent(panel);
-        if (menu != null) {
-            // Directly below the 250x400 main menu panel, aligned pixel-for-pixel with its column
-            float x = Math.max(12f, Math.min(screenW - BUTTON_W - 12f, menu[0]));
-            float y = Math.max(14f, Math.min(screenH - BUTTON_H - 14f, menu[1] - BUTTON_H - 10f));
-            pos.inBL(x, y);
-        } else {
-            pos.inBR(32f, 24f);
-        }
-        screen.bringComponentToTop(panel);
-        buttonPanel = panel;
-        openButton = btn;
     }
 
     /**
@@ -369,7 +328,7 @@ public final class CoopTitleScreenOverlay {
                 LabelAPI seedLbl = ui.addPara(session.tr("Seed: ", "Сид: ") + lobby.worldSeed(),
                         LABEL_MUTED, 0f);
                 seedLbl.getPosition().setSize(innerW, 18f);
-                seedLbl.getPosition().inTL(10f, DOCK_H - 60f);
+                seedLbl.getPosition().inTL(10f, DOCK_H - 94f);
             }
         } else if (lst == coop.net.CoopPreGameLobby.State.CONNECTING) {
             LabelAPI connLbl = ui.addPara(
@@ -412,46 +371,66 @@ public final class CoopTitleScreenOverlay {
             hintLbl.getPosition().inTL(10f, y);
         }
 
-        // Bottom action bar inside dock
-        float barY = DOCK_H - 38f;
+        // Bottom action area inside dock
         if (lobby.isConnected()) {
-            ButtonAPI readyBtn = ui.addButton(
-                    lobby.isLocalReady() ? session.tr("Unready", "Не готов") : session.tr("READY", "ГОТОВ"),
-                    ID_LOBBY_READY,
-                    lobby.isLocalReady() ? new Color(255, 215, 110) : GREEN_BRIGHT,
-                    lobby.isLocalReady() ? new Color(82, 58, 20) : GREEN_BG,
-                    Alignment.MID, CutStyle.ALL, 102f, 28f, 0f);
-            readyBtn.getPosition().inTL(10f, barY);
-
+            float row1Y = DOCK_H - 72f;
+            float row2Y = DOCK_H - 36f;
             if (lobby.isHost()) {
-                ButtonAPI startBtn = ui.addButton(session.tr("START", "СТАРТ"), ID_LOBBY_START,
-                        GREEN_BRIGHT, GREEN_TAB_ACTIVE_BG, Alignment.MID, CutStyle.ALL, 96f, 28f, 0f);
-                startBtn.getPosition().inTL(118f, barY);
+                ButtonAPI readyBtn = ui.addButton(
+                        lobby.isLocalReady() ? session.tr("Unready", "Не готов") : session.tr("READY", "ГОТОВ"),
+                        ID_LOBBY_READY,
+                        lobby.isLocalReady() ? new Color(255, 215, 110) : GREEN_BRIGHT,
+                        lobby.isLocalReady() ? new Color(82, 58, 20) : GREEN_BG,
+                        Alignment.MID, CutStyle.ALL, 126f, 28f, 0f);
+                readyBtn.getPosition().inTL(10f, row1Y);
+
+                boolean allReady = lobby.allReady();
+                ButtonAPI startBtn = ui.addButton(
+                        allReady ? session.tr("START SESSION", "СТАРТ СЕССИИ")
+                                : session.tr("Wait (" + lobby.readyCount() + "/" + lobby.totalCount() + ")",
+                                        "Ждём (" + lobby.readyCount() + "/" + lobby.totalCount() + ")"),
+                        ID_LOBBY_START,
+                        allReady ? GREEN_BRIGHT : LABEL_MUTED,
+                        allReady ? GREEN_TAB_ACTIVE_BG : TAB_INACTIVE_BG,
+                        Alignment.MID, CutStyle.ALL, 176f, 28f, 0f);
+                startBtn.setEnabled(allReady);
+                startBtn.getPosition().inTL(142f, row1Y);
             } else {
-                ButtonAPI leaveBtn = ui.addButton(session.tr("Leave", "Выйти"), ID_LOBBY_LEAVE,
-                        DANGER_TEXT, DANGER_BG, Alignment.MID, CutStyle.ALL, 96f, 28f, 0f);
-                leaveBtn.getPosition().inTL(118f, barY);
+                ButtonAPI readyBtn = ui.addButton(
+                        lobby.isLocalReady() ? session.tr("READY (click to cancel)", "ГОТОВ (отменить)")
+                                : session.tr("I AM READY", "Я ГОТОВ"),
+                        ID_LOBBY_READY,
+                        lobby.isLocalReady() ? new Color(255, 215, 110) : GREEN_BRIGHT,
+                        lobby.isLocalReady() ? new Color(82, 58, 20) : GREEN_TAB_ACTIVE_BG,
+                        Alignment.MID, CutStyle.ALL, innerW, 28f, 0f);
+                readyBtn.getPosition().inTL(10f, row1Y);
             }
 
-            ButtonAPI openBtn = ui.addButton(session.tr("Full", "Окно"), ID_DOCK_OPEN,
-                    ACTION_TEXT, ACTION_BG, Alignment.MID, CutStyle.ALL, 82f, 28f, 0f);
-            openBtn.getPosition().inTL(220f, barY);
+            ButtonAPI cfgBtn = ui.addButton(session.tr("Settings", "Настройки"), ID_DOCK_OPEN,
+                    ACTION_TEXT, ACTION_BG, Alignment.MID, CutStyle.ALL, 146f, 26f, 0f);
+            cfgBtn.getPosition().inTL(10f, row2Y);
+
+            ButtonAPI leaveBtn = ui.addButton(session.tr("Leave Lobby", "Выйти из лобби"), ID_LOBBY_LEAVE,
+                    DANGER_TEXT, DANGER_BG, Alignment.MID, CutStyle.ALL, 156f, 26f, 0f);
+            leaveBtn.getPosition().inTL(162f, row2Y);
         } else if (lst == coop.net.CoopPreGameLobby.State.CONNECTING) {
+            float barY = DOCK_H - 40f;
             ButtonAPI cancelBtn = ui.addButton(session.tr("Cancel", "Отмена"), ID_LOBBY_LEAVE,
-                    DANGER_TEXT, DANGER_BG, Alignment.MID, CutStyle.ALL, 140f, 28f, 0f);
+                    DANGER_TEXT, DANGER_BG, Alignment.MID, CutStyle.ALL, 148f, 30f, 0f);
             cancelBtn.getPosition().inTL(10f, barY);
 
             ButtonAPI cfgBtn = ui.addButton(session.tr("Settings", "Настройки"), ID_DOCK_OPEN,
-                    ACTION_TEXT, ACTION_BG, Alignment.MID, CutStyle.ALL, 146f, 28f, 0f);
-            cfgBtn.getPosition().inTL(156f, barY);
+                    ACTION_TEXT, ACTION_BG, Alignment.MID, CutStyle.ALL, 154f, 30f, 0f);
+            cfgBtn.getPosition().inTL(164f, barY);
         } else {
+            float barY = DOCK_H - 40f;
             ButtonAPI connectBtn = ui.addButton("CONNECT", ID_DOCK_CONNECT,
-                    GREEN_BRIGHT, GREEN_TAB_ACTIVE_BG, Alignment.MID, CutStyle.ALL, 152f, 28f, 0f);
+                    GREEN_BRIGHT, GREEN_TAB_ACTIVE_BG, Alignment.MID, CutStyle.ALL, 156f, 30f, 0f);
             connectBtn.getPosition().inTL(10f, barY);
 
             ButtonAPI cfgBtn = ui.addButton(session.tr("Settings", "Настройки"), ID_DOCK_OPEN,
-                    ACTION_TEXT, ACTION_BG, Alignment.MID, CutStyle.ALL, 134f, 28f, 0f);
-            cfgBtn.getPosition().inTL(168f, barY);
+                    ACTION_TEXT, ACTION_BG, Alignment.MID, CutStyle.ALL, 146f, 30f, 0f);
+            cfgBtn.getPosition().inTL(172f, barY);
         }
 
         panel.addUIElement(ui).inTL(0f, 0f);
@@ -674,16 +653,18 @@ public final class CoopTitleScreenOverlay {
                     DANGER_TEXT, DANGER_BG, Alignment.MID, CutStyle.ALL, leaveW, 32f, 0f);
             leaveBtn.getPosition().inTL(pad + readyW + copyW + 16f, barY);
 
-            String startLabel = lobby.totalCount() <= 1
-                    ? s.tr("START GAME (SOLO)", "НАЧАТЬ ИГРУ (СОЛО)")
-                    : (lobby.allReady()
-                    ? s.tr("ALL READY — START GAME", "ВСЕ ГОТОВЫ — НАЧАТЬ ИГРУ")
-                    : s.tr("START GAME ANYWAY (" + lobby.readyCount() + "/" + lobby.totalCount() + " READY)",
-                            "НАЧАТЬ ИГРУ (" + lobby.readyCount() + "/" + lobby.totalCount() + " ГОТОВЫ)"));
+            boolean allReady = lobby.allReady();
+            String startLabel = allReady
+                    ? (lobby.totalCount() <= 1
+                            ? s.tr("START SESSION (SOLO)", "СТАРТ СЕССИИ (СОЛО)")
+                            : s.tr("ALL READY — START SESSION", "ВСЕ ГОТОВЫ — СТАРТ СЕССИИ"))
+                    : s.tr("WAITING FOR ALL READY (" + lobby.readyCount() + "/" + lobby.totalCount() + ")",
+                            "ЖДЁМ ГОТОВНОСТИ ВСЕХ (" + lobby.readyCount() + "/" + lobby.totalCount() + ")");
             ButtonAPI startBtn = ui.addButton(startLabel, ID_LOBBY_START,
-                    GREEN_BRIGHT,
-                    lobby.allReady() ? new Color(26, 132, 68) : GREEN_BG,
+                    allReady ? GREEN_BRIGHT : LABEL_MUTED,
+                    allReady ? new Color(26, 132, 68) : TAB_INACTIVE_BG,
                     Alignment.MID, CutStyle.ALL, innerW, 36f, 0f);
+            startBtn.setEnabled(allReady);
             startBtn.getPosition().inTL(pad, barY + 40f);
             return barY + 82f;
         } else {
@@ -1036,24 +1017,6 @@ public final class CoopTitleScreenOverlay {
             lookupInFlight = false;
         }
         return ip;
-    }
-
-    // ---- Title Screen button plugin ----
-
-    private static final class ButtonPlugin implements CustomUIPanelPlugin {
-        @Override public void positionChanged(PositionAPI position) {}
-        @Override public void renderBelow(float alphaMult) {}
-        @Override public void render(float alphaMult) {}
-        @Override public void advance(float amount) {}
-        @Override public void processInput(List<InputEventAPI> events) {}
-
-        @Override
-        public void buttonPressed(Object buttonId) {
-            if (ID_OPEN.equals(buttonId)) {
-                modalOpen = !modalOpen;
-                rebuildPending = modalOpen;
-            }
-        }
     }
 
     // ---- Title Screen bottom-left compact Lobby & Roster dock plugin ----

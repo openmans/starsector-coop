@@ -50,6 +50,9 @@ public final class CoopTitleScreenBridge {
     private static volatile VarHandle titleScreenPanelField;
     private static volatile VarHandle titleWidgetField;
     private static volatile MethodHandle titleIsShowingDialog;
+    private static volatile MethodHandle titleMenuItemSelected;
+    private static volatile Object titleContinueAction;
+    private static volatile MethodHandle titleShowNewGameDialog;
 
     private CoopTitleScreenBridge() {
     }
@@ -79,6 +82,21 @@ public final class CoopTitleScreenBridge {
                 titleWidgetField = findFieldHandle(priv, loader, titleCls, "titleWidget", "com.fs.starfarer.title.B");
                 titleIsShowingDialog = pub.findVirtual(titleCls, "isShowingDialog",
                         MethodType.methodType(boolean.class));
+                try {
+                    Class<?> menuActionCls = Class.forName("com.fs.starfarer.title.C$o$o", false, loader);
+                    Object[] constants = menuActionCls.getEnumConstants();
+                    if (constants != null && constants.length > 0) {
+                        titleContinueAction = constants[0]; // OO0000 -> case 1 (Continue)
+                        titleMenuItemSelected = pub.findVirtual(titleCls, "menuItemSelected",
+                                MethodType.methodType(void.class, menuActionCls));
+                    }
+                } catch (Throwable ignored) {
+                }
+                try {
+                    titleShowNewGameDialog = priv.findSpecial(titleCls, "showNewGameDialog",
+                            MethodType.methodType(void.class), titleCls);
+                } catch (Throwable ignored) {
+                }
             } catch (Throwable ignored) {
                 // Headless tests or unknown engine version: degrade silently.
             } finally {
@@ -142,6 +160,55 @@ public final class CoopTitleScreenBridge {
         } catch (Throwable ignored) {
             return false;
         }
+    }
+
+    /**
+     * Programmatically triggers entering the game from the Title Screen when the pre-game lobby
+     * starts: calls Starsector's Continue action if at least one save exists, otherwise opens the
+     * New Game dialog (with the synced seed already armed).
+     */
+    public static boolean enterGameFromTitleScreen() {
+        Object state = currentTitleState();
+        if (state == null) {
+            return false;
+        }
+        try {
+            if (hasAnySaveGame() && titleMenuItemSelected != null && titleContinueAction != null) {
+                titleMenuItemSelected.invoke(state, titleContinueAction);
+                return true;
+            }
+            if (titleShowNewGameDialog != null) {
+                titleShowNewGameDialog.invoke(state);
+                return true;
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    private static boolean hasAnySaveGame() {
+        try {
+            java.io.File[] dirs = {
+                    new java.io.File("../saves"),
+                    new java.io.File("saves")
+            };
+            for (java.io.File savesDir : dirs) {
+                if (!savesDir.isDirectory()) {
+                    continue;
+                }
+                java.io.File[] entries = savesDir.listFiles();
+                if (entries == null) {
+                    continue;
+                }
+                for (java.io.File f : entries) {
+                    if (f != null && f.isDirectory() && f.getName().startsWith("save_")) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
     }
 
     /**

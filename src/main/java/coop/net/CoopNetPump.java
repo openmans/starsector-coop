@@ -2582,6 +2582,18 @@ public class CoopNetPump implements EveryFrameScript {
             return;
         }
 
+        // Players already readied up and pressed Start in the Title Screen Pre-Game Lobby:
+        // skip the duplicate in-save CoopLobbyDialog completely and release straight into gameplay.
+        if (coop.ui.CoopInGameLauncherSession.shared().wasLaunchedFromPreGameLobby()) {
+            closeLobbyUi();
+            if (!reconnect.active() && (lobbyRoster.allReady() || activeGuests.isEmpty())) {
+                releaseLobbyNow(now, activeGuests.isEmpty());
+                return;
+            }
+            maybeSendLobbyStatus(now, false);
+            return;
+        }
+
         maybeSendLobbyStatus(now, false);
         requestLobbyDialog();
     }
@@ -3120,6 +3132,10 @@ public class CoopNetPump implements EveryFrameScript {
         if (guestConnectStartedAtMillis == 0L) {
             guestConnectStartedAtMillis = now;
         }
+        boolean fromPreGameLobby = coop.ui.CoopInGameLauncherSession.shared().wasLaunchedFromPreGameLobby();
+        if (fromPreGameLobby) {
+            guestReadyRequested = true;
+        }
         coop.session.CoopJoinPhase phase = guestJoinPhase();
         maybeSendReadyState(now, phase);
 
@@ -3130,7 +3146,17 @@ public class CoopNetPump implements EveryFrameScript {
         coop.ui.CoopConnectingDialog.Failure failure = guestJoinFailure(now);
         if (failure == null && phase != null
                 && phase.atLeast(coop.session.CoopJoinPhase.SNAPSHOT_APPLIED)) {
+            if (fromPreGameLobby) {
+                // Already readied in the Title Screen lobby: never pop a duplicate lobby dialog in-save
+                closeLobbyUi();
+                return;
+            }
             requestLobbyDialog();
+            return;
+        }
+        if (fromPreGameLobby && failure == null) {
+            // Keep screen unobstructed while handshake/snapshot finishes quietly behind the scenes
+            closeLobbyUi();
             return;
         }
         requestConnectingDialog(failure);
