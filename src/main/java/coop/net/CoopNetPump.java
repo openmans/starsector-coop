@@ -11043,7 +11043,8 @@ public class CoopNetPump implements EveryFrameScript {
             String fighterName = sessionState.localName();
 
             for (com.fs.starfarer.api.campaign.CampaignFleetAPI fleet : loc.getFleets()) {
-                if (fleet == null || fleet == player || fleet.getBattle() != null) {
+                if (fleet == null || fleet == player
+                        || (fleet.getBattle() != null && fleet.getBattle() != battle)) {
                     continue;
                 }
                 if (fleet.getMemoryWithoutUpdate() == null
