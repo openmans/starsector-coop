@@ -594,9 +594,10 @@ public final class CoopNpcFleetReplicator {
                 String fullRecord = CoopNpcFleetMotion.encodeRecord(motion, null);
                 int cost = 1 + CoopMessages.utf8Length(record);
                 int fullCost = 1 + CoopMessages.utf8Length(fullRecord);
-                boolean overNow = used + cost > CoopNetService.MAX_DATAGRAM_BYTES;
+                int budget = service.datagramPlaintextBudget();
+                boolean overNow = used + cost > budget;
                 boolean overNextTick = overhead + (redundancyDepth + 1) * (fullForm + fullCost)
-                        > CoopNetService.MAX_DATAGRAM_BYTES;
+                        > budget;
                 if (!taken.isEmpty() && (overNow || overNextTick)) {
                     break;
                 }
@@ -606,7 +607,7 @@ public final class CoopNpcFleetReplicator {
                 fullForm += fullCost;
                 taken.add(motion);
                 index++;
-                if (used > CoopNetService.MAX_DATAGRAM_BYTES) {
+                if (used > service.datagramPlaintextBudget()) {
                     // A single record that does not fit on its own. Impossible with today's field
                     // set (a record is ~70 B), so this is a format change nobody sized — ship it and
                     // let the transport's own cap and the escalation path decide, but say so once.

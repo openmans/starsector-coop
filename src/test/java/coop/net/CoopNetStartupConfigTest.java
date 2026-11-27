@@ -658,4 +658,46 @@ class CoopNetStartupConfigTest {
         }
     }
 
+
+    @Test
+    void aesGcmWithAPasswordBuildsAnEncryptingCodec() {
+        Properties properties = new Properties();
+        properties.setProperty("coop.hostPort", "7777");
+        properties.setProperty("coop.encryption", "aes-gcm");
+        properties.setProperty("coop.password", "shared-secret");
+
+        CoopNetStartupConfig config = CoopNetStartupConfig.from(properties);
+
+        assertEquals("aes-gcm", config.encryptionMode());
+        assertTrue(config.transportEncryptionEnabled());
+        assertEquals("frame", config.transportCodec().open(config.transportCodec().seal("frame")));
+    }
+
+    @Test
+    void aesGcmWithoutAPasswordDoesNotPretendToEncrypt() {
+        CoopNetStartupConfig.resetEncryptionWarnLatchForTests();
+        LogCapture log = LogCapture.attach(CoopNetStartupConfig.class);
+        try {
+            Properties properties = new Properties();
+            properties.setProperty("coop.hostPort", "7777");
+            properties.setProperty("coop.encryption", "aes-gcm");
+
+            CoopNetStartupConfig config = CoopNetStartupConfig.from(properties);
+
+            assertFalse(config.transportEncryptionEnabled());
+            assertTrue(log.messages().stream().anyMatch(m -> m.contains("coop.password")),
+                    "the reason has to name the missing setting: " + log.messages());
+        } finally {
+            log.detach();
+        }
+    }
+
+    @Test
+    void anUnknownEncryptionModeFromTheCommandLineIsRefused() {
+        Properties properties = new Properties();
+        properties.setProperty("coop.hostPort", "7777");
+        properties.setProperty("coop.encryption", "rot13");
+
+        assertThrows(IllegalArgumentException.class, () -> CoopNetStartupConfig.from(properties));
+    }
 }

@@ -8842,7 +8842,9 @@ public class CoopNetPump implements EveryFrameScript {
         }
         if (!stateStreamFallbackActive) {
             int bytes = CoopMessages.utf8Length(datagram);
-            if (bytes <= CoopNetService.MAX_DATAGRAM_BYTES) {
+            // The budget is the sealed size when encryption is on, so a datagram that would not fit
+            // the wire once sealed takes the TCP path instead of being dropped by the flush.
+            if (bytes <= service.datagramPlaintextBudget()) {
                 service.sendDatagram(datagram);
                 return;
             }
@@ -8878,7 +8880,7 @@ public class CoopNetPump implements EveryFrameScript {
         wiretap.recordEscalation(type);
         if (escalationLoggedTypes.add(type)) {
             CoopLog.warn(CoopNetPump.class, "Coop " + type + " composed to " + bytes + " B, above the "
-                    + CoopNetService.MAX_DATAGRAM_BYTES
+                    + service.datagramPlaintextBudget()
                     + " B UDP budget; routing it over TCP (logged once per type)");
         }
         wiretap.recordSend(datagram, bytes);

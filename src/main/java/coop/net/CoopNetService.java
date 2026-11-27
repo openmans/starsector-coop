@@ -363,6 +363,13 @@ public class CoopNetService {
     private volatile boolean connected;
     private SocketChannel pendingConnectChannel;
     private DatagramChannel udpChannel;
+
+    /**
+     * Item 5: every wire read and write goes through this. Plaintext by default, replaced at session
+     * start from {@code coop.encryption}/{@code coop.password}; never null, so there is no branch that
+     * quietly bypasses it.
+     */
+    private volatile CoopTransportCodec transportCodec = CoopTransportCodec.plaintext();
     /** The active debug outage, or null. Guarded by {@link #lifecycleLock} like every other poll state. */
     private CoopNetFault netFault;
     private boolean noTokenWarned;
@@ -387,6 +394,10 @@ public class CoopNetService {
     private long keepalivesReceived;
     private long icmpTransients;
     private long oversizedDatagrams;
+    /** Datagrams that failed to open (wrong key / encryption mismatch); counted apart from garbage. */
+    private long droppedUndecryptableDatagrams;
+    private boolean undecryptableDatagramWarned;
+
     /** Composed datagrams the pump rerouted onto TCP for exceeding {@link #MAX_DATAGRAM_BYTES}. */
     private long escalatedToTcp;
     private long connectionAttempts;
@@ -766,6 +777,7 @@ public class CoopNetService {
         synchronized (lifecycleLock) {
             String senderId = localSenderId;
             shutdownLocked();
+            applyConfiguredTransportCodecLocked();
             // Restored across the teardown: shutdownLocked() clears the id because a finished session
             // has no local player, but starting a session is not finishing one, and the pump is free
             // to set the id on either side of this call. See connect() for the case that was broken.
@@ -797,6 +809,7 @@ public class CoopNetService {
             shutdownLocked();
             applyLocalSenderIdLocked(senderId);
             role = CoopConnectionRole.GUEST;
+            applyConfiguredTransportCodecLocked();
             connectHost = host;
             connectPort = port;
             nextConnectAttemptAtMillis = 0L;
@@ -1733,6 +1746,54 @@ public class CoopNetService {
         connected = any;
     }
 
+    /**
+     * Replaces the codec from this launch's settings. Called inside every session start, after the
+     * teardown that resets the transport, so a stopped session never leaves a cipher armed for the
+     * next one.
+     */
+    private void applyConfiguredTransportCodecLocked() {
+        CoopTransportCodec codec = CoopTransportCodec.plaintext();
+        String mode = CoopCipher.MODE_OFF;
+        try {
+            CoopNetStartupConfig config = CoopNetStartupConfig.fromSystemProperties();
+            mode = config.encryptionMode();
+            codec = config.transportCodec();
+        } catch (RuntimeException ex) {
+            CoopLog.warn(CoopNetService.class, "Coop could not resolve coop.encryption; using "
+                    + CoopCipher.MODE_OFF, ex);
+        }
+        transportCodec = codec;
+        if (codec.encrypted()) {
+            CoopLog.info(CoopNetService.class, "Coop transport encryption: " + CoopCipher.MODE_AES_GCM
+                    + " (TCP frames and UDP datagrams)");
+        } else if (CoopCipher.isEnabledMode(mode)) {
+            CoopLog.warn(CoopNetService.class, "Coop transport encryption requested but no "
+                    + "coop.password is set; the session is NOT encrypted");
+        }
+    }
+
+    /** Whether this transport seals its frames; the doctor and the HUD read it. */
+    public boolean transportEncrypted() {
+        return transportCodec.encrypted();
+    }
+
+    /**
+     * The largest <em>plaintext</em> datagram payload that stays inside
+     * {@link #MAX_DATAGRAM_BYTES} once sealed. Producers that pack to fit ask this instead of the
+     * constant, so an encrypted session's snapshots either fit the wire budget or take the TCP
+     * escalation path; they never get truncated or dropped by the flush.
+     */
+    public int datagramPlaintextBudget() {
+        if (!transportCodec.encrypted()) {
+            return MAX_DATAGRAM_BYTES;
+        }
+        int budget = MAX_DATAGRAM_BYTES;
+        while (budget > 0 && CoopTransportCodec.sealedLength(budget) > MAX_DATAGRAM_BYTES) {
+            budget -= 16;
+        }
+        return budget;
+    }
+
     private void openUdpLocked(InetSocketAddress bindAddress, SocketAddress remoteAddress) {
         try {
             DatagramChannel channel = DatagramChannel.open();
@@ -1818,7 +1879,23 @@ public class CoopNetService {
      * counts the rejection. Nothing learned from a packet — not the return address, not a candidate —
      * happens before all three stages pass.
      */
-    private void acceptDatagramLocked(SocketAddress source, String payload) {
+    private void acceptDatagramLocked(SocketAddress source, String wire) {
+        String payload;
+        try {
+            payload = transportCodec.open(wire);
+        } catch (RuntimeException ex) {
+            // A datagram that will not open is not a malformed envelope: it is a wrong key, a
+            // stripped seal or a peer with a different coop.encryption. Counted apart from
+            // droppedMalformed so the doctor can tell "garbage" from "misconfigured".
+            droppedUndecryptableDatagrams++;
+            if (!undecryptableDatagramWarned) {
+                undecryptableDatagramWarned = true;
+                CoopLog.warn(CoopNetService.class, "Coop UDP dropping a datagram that does not open"
+                        + " (wrong coop.password or coop.encryption mismatch with " + source
+                        + "); further ones are counted, not logged", ex);
+            }
+            return;
+        }
         CoopPeerLink peer = peerForSourceLocked(source);
         if (peer == null) {
             droppedForeignSource++;
@@ -2055,7 +2132,8 @@ public class CoopNetService {
 
         String payload;
         while ((payload = peer.outboundDatagrams().poll()) != null) {
-            byte[] bytes = payload.getBytes(StandardCharsets.UTF_8);
+            String sealed = transportCodec.seal(payload);
+            byte[] bytes = sealed.getBytes(StandardCharsets.UTF_8);
             if (bytes.length > MAX_DATAGRAM_BYTES) {
                 oversizedDatagrams++;
                 CoopLog.warn(CoopNetService.class,
@@ -2066,7 +2144,7 @@ public class CoopNetService {
             // rather than at sendDatagram so the size histogram measures datagrams that actually
             // reach the socket, at the exact byte length the wire sees. Disabled, this is one static
             // boolean read.
-            CoopWiretap.noteSend(payload, bytes.length);
+            CoopWiretap.noteSend(sealed, bytes.length);
             sendDatagramBytesLocked(peer, remote, bytes);
         }
     }
@@ -2076,8 +2154,9 @@ public class CoopNetService {
         if (udpChannel == null || remote == null) {
             return;
         }
-        byte[] bytes = payload.getBytes(StandardCharsets.UTF_8);
-        CoopWiretap.noteSend(payload, bytes.length);
+        String sealed = transportCodec.seal(payload);
+        byte[] bytes = sealed.getBytes(StandardCharsets.UTF_8);
+        CoopWiretap.noteSend(sealed, bytes.length);
         sendDatagramBytesLocked(peer, remote, bytes);
     }
 
@@ -2423,7 +2502,7 @@ public class CoopNetService {
                 nextSeq(),
                 System.currentTimeMillis(),
                 reason);
-        ByteBuffer frame = ByteBuffer.wrap((CoopMessages.encode(reject) + "\n")
+        ByteBuffer frame = ByteBuffer.wrap((transportCodec.seal(CoopMessages.encode(reject)) + "\n")
                 .getBytes(StandardCharsets.UTF_8));
         channel.write(frame);
         return !frame.hasRemaining();
@@ -2766,7 +2845,9 @@ public class CoopNetService {
         }
         CoopMessages.Message message;
         try {
-            message = CoopMessages.decode(frame);
+            // The seal is opened before the message parser sees anything: a plaintext frame on an
+            // encrypted transport (or the reverse) throws here and takes the ordinary bad-frame path.
+            message = CoopMessages.decode(transportCodec.open(frame));
         } catch (RuntimeException ex) {
             noteBadFrameLocked(peer, "an invalid frame", ex);
             return;
@@ -3076,7 +3157,8 @@ public class CoopNetService {
                 }
                 cursor.remove();
                 inFlight = message;
-                byte[] frame = (CoopMessages.encode(message) + "\n").getBytes(StandardCharsets.UTF_8);
+                byte[] frame = (transportCodec.seal(CoopMessages.encode(message)) + "\n")
+                        .getBytes(StandardCharsets.UTF_8);
                 if (frame.length > MAX_FRAME_BYTES) {
                     // The receiver's inbound cap would discard it anyway; dropping here keeps the
                     // failure on the sender's log where the message type is still known.

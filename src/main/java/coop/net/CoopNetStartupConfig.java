@@ -59,6 +59,13 @@ public final class CoopNetStartupConfig {
      */
     public static final String PASSWORD_PROPERTY = CoopOptionsRegistry.PASSWORD;
     /**
+     * Item 5: {@code off} (default) or {@code aes-gcm}. With {@code aes-gcm} both the TCP frame
+     * stream and the UDP state datagrams are sealed with AES-256-GCM derived from
+     * {@link #PASSWORD_PROPERTY}; both sides must run the same mode and the same password, and the
+     * transport refuses a plaintext frame rather than silently accepting a downgrade.
+     */
+    public static final String ENCRYPTION_PROPERTY = CoopOptionsRegistry.ENCRYPTION;
+    /**
      * Phase 20.5 peer-table capacity. Any value other than {@link #MAX_GUESTS_V1} is clamped with a
      * warning: the transport is N-ready, the <em>gameplay</em> arbitration is not (Phase 27), and
      * silently honouring {@code coop.maxGuests=3} would produce a session that connects and then
@@ -110,7 +117,7 @@ public final class CoopNetStartupConfig {
 
     private static final CoopNetStartupConfig EMPTY =
             new CoopNetStartupConfig(false, CoopConnectionRole.NONE, "", 0, "", true,
-                    DEFAULT_RECONNECT_GRACE_SECONDS, "", MAX_GUESTS_V1);
+                    DEFAULT_RECONNECT_GRACE_SECONDS, "", MAX_GUESTS_V1, CoopCipher.MODE_OFF);
 
     private final boolean present;
     private final CoopConnectionRole role;
@@ -121,10 +128,12 @@ public final class CoopNetStartupConfig {
     private final int reconnectGraceSeconds;
     private final String password;
     private final int maxGuests;
+    private final String encryptionMode;
 
     private CoopNetStartupConfig(boolean present, CoopConnectionRole role, String host, int port,
                                  String newGameSeed, boolean portMappingEnabled,
-                                 int reconnectGraceSeconds, String password, int maxGuests) {
+                                 int reconnectGraceSeconds, String password, int maxGuests,
+                                 String encryptionMode) {
         this.present = present;
         this.role = Objects.requireNonNull(role, "role");
         this.host = Objects.requireNonNull(host, "host");
@@ -134,6 +143,7 @@ public final class CoopNetStartupConfig {
         this.reconnectGraceSeconds = reconnectGraceSeconds;
         this.password = Objects.requireNonNull(password, "password");
         this.maxGuests = maxGuests;
+        this.encryptionMode = encryptionMode == null ? CoopCipher.MODE_OFF : encryptionMode;
     }
 
     public static CoopNetStartupConfig fromSystemProperties() {
@@ -212,6 +222,11 @@ public final class CoopNetStartupConfig {
                 : store.integer(RECONNECT_GRACE_PROPERTY);
         String password = trimToEmpty(store.raw(PASSWORD_PROPERTY));
         int maxGuests = parseMaxGuests(store.raw(MAX_GUESTS_PROPERTY));
+        // store.string() canonicalises the enum: anything unrecognised becomes "off" with one WARN
+        // naming the key, which is the forgiving half of the rule this class documents.
+        String encryptionMode = fromCommandLine(store, ENCRYPTION_PROPERTY)
+                ? parseEncryption(store.raw(ENCRYPTION_PROPERTY))
+                : store.string(ENCRYPTION_PROPERTY);
 
         boolean hostConfigured = hostPort != null;
         boolean guestConfigured = connectHost != null || connectPort != null;
@@ -221,16 +236,17 @@ public final class CoopNetStartupConfig {
         if (hostConfigured) {
             return new CoopNetStartupConfig(true, CoopConnectionRole.HOST, "",
                     parsePort(hostPort, HOST_PORT_PROPERTY), newGameSeed, portMappingEnabled,
-                    reconnectGrace, password, maxGuests);
+                    reconnectGrace, password, maxGuests, encryptionMode);
         }
         if (!guestConfigured) {
             if (newGameSeed.isEmpty() && portMappingEnabled
                     && reconnectGrace == DEFAULT_RECONNECT_GRACE_SECONDS
-                    && password.isEmpty() && maxGuests == MAX_GUESTS_V1) {
+                    && password.isEmpty() && maxGuests == MAX_GUESTS_V1
+                    && !CoopCipher.isEnabledMode(encryptionMode)) {
                 return EMPTY;
             }
             return new CoopNetStartupConfig(false, CoopConnectionRole.NONE, "", 0, newGameSeed,
-                    portMappingEnabled, reconnectGrace, password, maxGuests);
+                    portMappingEnabled, reconnectGrace, password, maxGuests, encryptionMode);
         }
         if (connectHost == null) {
             throw new IllegalArgumentException(CONNECT_HOST_PROPERTY + " is required when connecting as guest");
@@ -240,7 +256,7 @@ public final class CoopNetStartupConfig {
         }
         return new CoopNetStartupConfig(true, CoopConnectionRole.GUEST, connectHost,
                 parsePort(connectPort, CONNECT_PORT_PROPERTY), newGameSeed, portMappingEnabled,
-                reconnectGrace, password, maxGuests);
+                reconnectGrace, password, maxGuests, encryptionMode);
     }
 
     public boolean isPresent() {
@@ -298,9 +314,49 @@ public final class CoopNetStartupConfig {
         return !password.isEmpty();
     }
 
+    /** {@code off} or {@code aes-gcm}; canonical, never null. */
+    public String encryptionMode() {
+        return encryptionMode;
+    }
+
+    /**
+     * The codec this launch must use for every TCP frame and UDP datagram. {@code aes-gcm} without a
+     * password resolves to plaintext with one WARN: there is no secret to derive a key from, and a
+     * session that quietly ran unencrypted under an encryption setting would be worse than one that
+     * says so.
+     */
+    public CoopTransportCodec transportCodec() {
+        if (CoopCipher.isEnabledMode(encryptionMode) && password.isEmpty()) {
+            warnAboutEncryptionWithoutPasswordOnce();
+            return CoopTransportCodec.plaintext();
+        }
+        return CoopTransportCodec.of(encryptionMode, password);
+    }
+
+    /** Whether the transport will actually seal frames on this launch. */
+    public boolean transportEncryptionEnabled() {
+        return transportCodec().encrypted();
+    }
+
     /** Peer-table capacity, already clamped to {@link #MAX_GUESTS_V1}. */
     public int maxGuests() {
         return maxGuests;
+    }
+
+    private static String parseEncryption(String value) {
+        String trimmed = trimToNull(value);
+        if (trimmed == null) {
+            return CoopCipher.MODE_OFF;
+        }
+        String normalized = trimmed.toLowerCase(Locale.ROOT);
+        if (CoopCipher.isEnabledMode(normalized)) {
+            return CoopCipher.MODE_AES_GCM;
+        }
+        if (normalized.equals(CoopCipher.MODE_OFF)) {
+            return CoopCipher.MODE_OFF;
+        }
+        throw new IllegalArgumentException(ENCRYPTION_PROPERTY + " must be \""
+                + CoopCipher.MODE_OFF + "\" or \"" + CoopCipher.MODE_AES_GCM + "\"");
     }
 
     private static String roleValue(CoopOptionsStore store, String key, boolean propertiesOnly) {
@@ -402,6 +458,23 @@ public final class CoopNetStartupConfig {
      * {@link #from(CoopOptionsStore)}, and the pump, the doctor and the HUD each ask more than once
      * per launch; without this latch a single unsupported {@code coop.maxGuests} papers the log.
      */
+    private static boolean encryptionWithoutPasswordWarned;
+
+    private static synchronized void warnAboutEncryptionWithoutPasswordOnce() {
+        if (encryptionWithoutPasswordWarned) {
+            return;
+        }
+        encryptionWithoutPasswordWarned = true;
+        coop.util.CoopLog.warn(CoopNetStartupConfig.class, ENCRYPTION_PROPERTY + "="
+                + CoopCipher.MODE_AES_GCM + " needs " + PASSWORD_PROPERTY
+                + " to derive its key; running unencrypted until one is set");
+    }
+
+    /** Test-only: clears the once-per-process encryption warn latch. */
+    static void resetEncryptionWarnLatchForTests() {
+        encryptionWithoutPasswordWarned = false;
+    }
+
     private static synchronized void warnAboutMaxGuestsOnce(String message) {
         if (maxGuestsWarned) {
             return;
