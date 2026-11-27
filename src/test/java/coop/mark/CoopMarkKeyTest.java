@@ -21,7 +21,7 @@ class CoopMarkKeyTest {
 
     /** A few real LWJGL codes, plus KEY_NONE for everything else, which is what LWJGL answers. */
     private static final Map<String, Integer> KEYS = Map.of(
-            "F11", 0x57, "F9", 0x43, "HOME", 0xC7, "INSERT", 0xD2);
+            "F11", 0x57, "F9", 0x43, "F8", 0x42, "HOME", 0xC7, "INSERT", 0xD2);
 
     private static final ToIntFunction<String> LOOKUP =
             name -> KEYS.getOrDefault(name, CoopMarkKey.KEY_NONE);
@@ -48,6 +48,32 @@ class CoopMarkKeyTest {
             assertEquals(CoopMarkKey.DEFAULT_NAME, key.name());
             assertEquals(0x57, key.code());
             assertFalse(key.fellBack(), "an unset key is not a misconfigured one");
+        }
+    }
+
+    @Test
+    void theGenericResolverUsesTheOptionsOwnDefault() {
+        CoopMarkKey key = CoopMarkKey.resolve(
+                coop.config.CoopOptionsRegistry.CHAT_KEY, CoopMarkKey.DEFAULT_CHAT_NAME, "", LOOKUP);
+
+        assertEquals("F8", key.name(), "blank chatKey means F8, not the marker default");
+        assertEquals(0x42, key.code());
+        assertFalse(key.fellBack());
+    }
+
+    @Test
+    void theGenericResolverFallsBackToItsOwnDefaultAndNamesTheOption() {
+        LogCapture log = LogCapture.attach(CoopMarkKey.class);
+        try {
+            CoopMarkKey key = CoopMarkKey.resolve(
+                    coop.config.CoopOptionsRegistry.CHAT_KEY, CoopMarkKey.DEFAULT_CHAT_NAME, "F13ish", LOOKUP);
+
+            assertEquals("F8", key.name());
+            assertTrue(key.fellBack());
+            assertTrue(log.messages().stream().anyMatch(m -> m.contains("coop.chatKey")),
+                    "the warning has to name the option the player edited: " + log.messages());
+        } finally {
+            log.detach();
         }
     }
 

@@ -11252,6 +11252,9 @@ public class CoopNetPump implements EveryFrameScript {
             }
             // Both roles: either player may be the one who sees something wrong.
             timeLock.syncMarkInputListener(connectedActive, this::onMarkKey);
+            // Item 5 / 0.2.21: the chat hotkey (coop.chatKey, default F8). Same lifecycle as the
+            // marker key; the dialog itself yields to any higher-priority controller.
+            timeLock.syncChatInputListener(connectedActive, this::requestChatDialog);
             syncMarkSession();
         } catch (RuntimeException ex) {
             CoopLog.warn(CoopNetPump.class, "Failed to sync coop campaign input listeners", ex);
@@ -11532,7 +11535,22 @@ public class CoopNetPump implements EveryFrameScript {
         if (!isGameplaySessionActive()) {
             return;
         }
+        if (!chatMayRequest()) {
+            return;
+        }
         chatDialogs.request(new coop.ui.CoopChatDialog(chatService, this::sendLocalChatMessage));
+    }
+
+    /** Chat outranks only trade and dialog-spectator; a reconnect/desync/lobby screen keeps the slot. */
+    private boolean chatMayRequest() {
+        return coop.ui.CoopDialogArbiter.mayRequest(coop.ui.CoopDialogArbiter.CHAT,
+                reconnectDialogs.isRequested() ? coop.ui.CoopDialogArbiter.RECONNECT : null,
+                desyncDialogs.isRequested() ? coop.ui.CoopDialogArbiter.DESYNC : null,
+                lobbyDialogs.isRequested() ? coop.ui.CoopDialogArbiter.LOBBY : null,
+                connectingDialogs.isRequested() ? coop.ui.CoopDialogArbiter.CONNECTING : null,
+                markDialogs.isRequested() ? coop.ui.CoopDialogArbiter.MARK : null,
+                allyJoinDialogs.isRequested() ? coop.ui.CoopDialogArbiter.ALLY_JOIN : null,
+                tacticalMapDialogs.isRequested() ? coop.ui.CoopDialogArbiter.TACTICAL_MAP : null);
     }
 
     private void sendLocalChatMessage(String text) {

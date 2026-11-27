@@ -22,8 +22,11 @@ import java.util.function.ToIntFunction;
  */
 public final class CoopMarkKey {
 
-    /** The shipped key, and the fallback for anything unparsable. */
+    /** The shipped marker key, and the fallback for anything unparsable. */
     public static final String DEFAULT_NAME = "F11";
+
+    /** The shipped in-game chat key ({@code coop.chatKey}). */
+    public static final String DEFAULT_CHAT_NAME = "F8";
 
     /** LWJGL's {@code Keyboard.KEY_NONE}: what {@code getKeyIndex} answers for a name it lacks. */
     public static final int KEY_NONE = 0;
@@ -60,20 +63,45 @@ public final class CoopMarkKey {
      * @param lookup     name to LWJGL key code, answering {@link #KEY_NONE} for an unknown name
      */
     public static CoopMarkKey resolve(String configured, ToIntFunction<String> lookup) {
+        return resolve(CoopOptionsRegistry.MARK_KEY, DEFAULT_NAME, configured, lookup);
+    }
+
+    /**
+     * The same rules for any hotkey option: {@code optionKey} only names the setting in the warning,
+     * {@code defaultName} is both the blank-value default and the unparsable-value fallback.
+     */
+    public static CoopMarkKey resolve(String optionKey, String defaultName, String configured,
+                                      ToIntFunction<String> lookup) {
+        String fallbackName = defaultName == null || defaultName.isBlank()
+                ? DEFAULT_NAME : defaultName.trim().toUpperCase(Locale.ROOT);
         String wanted = configured == null ? "" : configured.trim().toUpperCase(Locale.ROOT);
         if (wanted.isEmpty()) {
-            wanted = DEFAULT_NAME;
+            wanted = fallbackName;
         }
         int code = safeLookup(lookup, wanted);
         if (code != KEY_NONE) {
             return new CoopMarkKey(wanted, code, false);
         }
-        int fallback = safeLookup(lookup, DEFAULT_NAME);
-        CoopLog.warn(CoopMarkKey.class, "Coop marker key " + CoopOptionsRegistry.MARK_KEY + "=\""
-                + configured + "\" is not an LWJGL key name; falling back to " + DEFAULT_NAME
+        int fallback = safeLookup(lookup, fallbackName);
+        CoopLog.warn(CoopMarkKey.class, "Coop hotkey " + optionKey + "=\"" + configured
+                + "\" is not an LWJGL key name; falling back to " + fallbackName
                 + ". Valid names are the org.lwjgl.input.Keyboard KEY_* constants without the"
                 + " KEY_ prefix (F11, F9, HOME, INSERT, ...).");
-        return new CoopMarkKey(DEFAULT_NAME, fallback, true);
+        return new CoopMarkKey(fallbackName, fallback, true);
+    }
+
+    /** The in-game chat hotkey ({@code coop.chatKey}, default {@code F8}). */
+    public static CoopMarkKey resolveChatKey() {
+        String configured;
+        try {
+            configured = CoopOptionsStore.system().string(CoopOptionsRegistry.CHAT_KEY);
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopMarkKey.class, "Could not read " + CoopOptionsRegistry.CHAT_KEY
+                    + "; using " + DEFAULT_CHAT_NAME, ex);
+            configured = DEFAULT_CHAT_NAME;
+        }
+        return resolve(CoopOptionsRegistry.CHAT_KEY, DEFAULT_CHAT_NAME, configured,
+                CoopMarkKey::lwjglKeyIndex);
     }
 
     /**

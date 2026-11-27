@@ -578,6 +578,7 @@ campaign already in progress; use the options page for that.
 | `coop.feedVerbosity` | `all` | How much of the co-op event feed is shown: `all`, `important`, `minimal`. No effect in this build. |
 | `coop.partnerColor` | unset | Colour of your partner's presence marker. No effect in this build. |
 | `coop.markKey` | `F11` | Which key writes a `COOP-MARK` line into both logs. An LWJGL key name (`F11`, `F9`, `HOME`); an unknown name is warned about in the log and falls back to `F11`. Read once when the game loads. |
+| `coop.chatKey` | `F8` | Which key opens the in-game chat. An LWJGL key name; an unknown name is warned about and falls back to `F8`. Read once when the game loads. Chat holds four canned messages plus a free-text field. |
 
 **One-shot and diagnostic keys.** These never appear in the shipped defaults file, and a value for
 one of them in `data\config\coop_options.json` is skipped with a warning. Your own settings file is

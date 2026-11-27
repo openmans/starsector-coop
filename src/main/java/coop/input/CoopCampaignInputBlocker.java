@@ -107,6 +107,11 @@ public class CoopCampaignInputBlocker implements CampaignInputListener {
         if (event.isMouseMoveEvent() || event.isMouseScrollEvent()) {
             return false;
         }
+        if (isChatKey(event)) {
+            // Same reasoning as the marker key below: the chat listener also sits at
+            // Integer.MAX_VALUE, so the blocker declining the key is a fact rather than a race.
+            return false;
+        }
         if (isMarkKey(event)) {
             // The log-marker hotkey is never world input. Both listeners sit at Integer.MAX_VALUE
             // and the engine gives equal priorities no defined order, so "install the marker
@@ -148,6 +153,18 @@ public class CoopCampaignInputBlocker implements CampaignInputListener {
     }
 
     /** True for the key {@code CoopMarkInputListener} is currently watching, if any. */
+    private boolean isChatKey(InputEventAPI event) {
+        int code = CoopChatInputListener.passThroughKeyCode();
+        if (code == coop.mark.CoopMarkKey.KEY_NONE || !event.isKeyboardEvent()) {
+            return false;
+        }
+        try {
+            return event.getEventValue() == code;
+        } catch (RuntimeException | LinkageError ex) {
+            return false;
+        }
+    }
+
     private boolean isMarkKey(InputEventAPI event) {
         int code = CoopMarkInputListener.passThroughKeyCode();
         if (code == coop.mark.CoopMarkKey.KEY_NONE || !event.isKeyboardEvent()) {

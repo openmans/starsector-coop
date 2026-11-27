@@ -178,6 +178,32 @@ public class CoopTimeLock {
         }
     }
 
+    /** The chat half of {@link #syncMarkInputListener}: {@code coop.chatKey}, default {@code F8}. */
+    public void syncChatInputListener(boolean active, Runnable onChat) {
+        if (onChat == null) {
+            return;
+        }
+        SectorAPI sector = sectorOrNull();
+        if (sector == null) {
+            return;
+        }
+        ListenerManagerAPI listeners = sector.getListenerManager();
+        if (listeners == null) {
+            return;
+        }
+        boolean installed = listeners.hasListenerOfClass(coop.input.CoopChatInputListener.class);
+        if (active && !installed) {
+            CoopMarkKey key = CoopMarkKey.resolveChatKey();
+            listeners.addListener(new coop.input.CoopChatInputListener(key, onChat), true);
+            coop.input.CoopChatInputListener.setPassThroughKeyCode(key.code());
+            CoopLog.info(CoopTimeLock.class, "Coop chat key is " + key.name()
+                    + " (code " + key.code() + ")");
+        } else if (!active && installed) {
+            listeners.removeListenerOfClass(coop.input.CoopChatInputListener.class);
+            coop.input.CoopChatInputListener.setPassThroughKeyCode(CoopMarkKey.KEY_NONE);
+        }
+    }
+
     /**
      * Phase 9: toggle the installed guest input blocker's interaction lock (consume world input
      * except camera movement while the remote player holds an interaction). No-op when no blocker is
