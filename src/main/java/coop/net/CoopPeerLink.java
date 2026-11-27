@@ -386,6 +386,16 @@ public final class CoopPeerLink {
         this.proven = false;
     }
 
+    /**
+     * Hands the live TCP socket out of this gameplay slot without closing it, resetting slot state
+     * so a Title Screen {@code CoopPreGameLobby} drop-in handshake can continue on that socket.
+     */
+    SocketChannel detachChannelWithoutClosing() {
+        SocketChannel detached = this.channel;
+        reset();
+        return detached;
+    }
+
     SocketChannel channel() {
         return channel;
     }

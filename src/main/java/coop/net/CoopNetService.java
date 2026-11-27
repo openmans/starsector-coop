@@ -317,6 +317,44 @@ public class CoopNetService {
 
     private CoopConnectionRole role = CoopConnectionRole.NONE;
     private ServerSocketChannel serverChannel;
+    private volatile PreGameLobbyResponder preGameLobbyResponder;
+    private final List<PreGameDropInLink> preGameDropInLinks = new ArrayList<>();
+
+    /** Save & world bundle prepared by the host for a Title Screen client joining a live session. */
+    public record PreGameDropInPlan(String seed, String sectorSize, String sectorAge, int port,
+                                    String saveName, byte[] saveZip, boolean ownSave) {
+    }
+
+    /** Callback supplying password check & per-player save resolution for Title Screen drop-in joins. */
+    public interface PreGameLobbyResponder {
+        boolean verifyPassword(String password);
+
+        PreGameDropInPlan prepareJoin(String playerName);
+    }
+
+    private static final int PRE_GAME_MAX_LINKS = 8;
+    private static final int PRE_GAME_CHUNK_BYTES = 48 * 1024;
+    private static final int PRE_GAME_CHUNKS_PER_TICK = 4;
+    private static final long PRE_GAME_TRANSFER_TIMEOUT_MS = 30_000L;
+
+    private static final class PreGameDropInLink {
+        final SocketChannel channel;
+        final StringBuilder rx = new StringBuilder();
+        final ByteBuffer readBuf = ByteBuffer.allocate(4096);
+        final List<ByteBuffer> txQueue = new ArrayList<>();
+        PreGameDropInPlan plan;
+        byte[] outboundZip;
+        int totalChunks;
+        int nextChunk;
+        boolean endSent;
+        long lastActivityAt;
+        long closingAt;
+
+        PreGameDropInLink(SocketChannel channel, long nowMillis) {
+            this.channel = channel;
+            this.lastActivityAt = nowMillis;
+        }
+    }
     /**
      * Cached answer for {@link #isConnected()}. Derived from the peer table by
      * {@link #refreshConnectedLocked()}, which every path that can change it calls; volatile so the
@@ -776,6 +814,24 @@ public class CoopNetService {
     public CoopConnectionRole role() {
         synchronized (lifecycleLock) {
             return role;
+        }
+    }
+
+    public void setPreGameLobbyResponder(PreGameLobbyResponder responder) {
+        this.preGameLobbyResponder = responder;
+    }
+
+    public int boundPort() {
+        synchronized (lifecycleLock) {
+            if (serverChannel == null) {
+                return 0;
+            }
+            try {
+                java.net.SocketAddress addr = serverChannel.getLocalAddress();
+                return addr instanceof InetSocketAddress isa ? isa.getPort() : 0;
+            } catch (Exception ex) {
+                return 0;
+            }
         }
     }
 
@@ -1634,6 +1690,7 @@ public class CoopNetService {
             readAvailableLocked(peer);
             enforceHandshakeDeadlineLocked(peer);
         }
+        tickPreGameDropInLinksLocked(clockMillis.getAsLong());
         readDatagramsLocked();
         refreshConnectedLocked();
     }
@@ -2702,6 +2759,11 @@ public class CoopNetService {
             noteBadFrameLocked(peer, "an empty frame", null);
             return;
         }
+        if (role == CoopConnectionRole.HOST && !peer.proven()
+                && preGameLobbyResponder != null && looksLikePreGameLobbyJson(frame)) {
+            acceptPreGameDropInLocked(peer, frame);
+            return;
+        }
         CoopMessages.Message message;
         try {
             message = CoopMessages.decode(frame);
@@ -2762,6 +2824,219 @@ public class CoopNetService {
             CoopLog.warn(CoopNetService.class, "Coop TCP dropping a pre-session connection after "
                     + strikes + " undecodable frames on peer slot " + peer.slot());
             closeLinkLocked(peer);
+        }
+    }
+
+    private static boolean looksLikePreGameLobbyJson(String frame) {
+        String trimmed = frame.trim();
+        return trimmed.startsWith("{")
+                && trimmed.contains("\"t\"")
+                && !trimmed.contains("\"type\"");
+    }
+
+    private void acceptPreGameDropInLocked(CoopPeerLink peer, String firstLine) {
+        if (preGameDropInLinks.size() >= PRE_GAME_MAX_LINKS) {
+            closeLinkLocked(peer);
+            return;
+        }
+        SocketChannel ch = peer.detachChannelWithoutClosing();
+        if (ch == null) {
+            return;
+        }
+        long now = clockMillis.getAsLong();
+        PreGameDropInLink link = new PreGameDropInLink(ch, now);
+        preGameDropInLinks.add(link);
+        refreshConnectedLocked();
+        processPreGameDropInLineLocked(link, firstLine, now);
+        flushPreGameDropInLocked(link);
+    }
+
+    private void tickPreGameDropInLinksLocked(long now) {
+        if (preGameDropInLinks.isEmpty()) {
+            return;
+        }
+        Iterator<PreGameDropInLink> it = preGameDropInLinks.iterator();
+        while (it.hasNext()) {
+            PreGameDropInLink link = it.next();
+            if (link.closingAt > 0L) {
+                flushPreGameDropInLocked(link);
+                if (now >= link.closingAt) {
+                    closeChannel(link.channel);
+                    it.remove();
+                }
+                continue;
+            }
+            if (now - link.lastActivityAt > PRE_GAME_TRANSFER_TIMEOUT_MS) {
+                closeChannel(link.channel);
+                it.remove();
+                continue;
+            }
+            if (!readAndProcessPreGameDropInLocked(link, now)) {
+                closeChannel(link.channel);
+                it.remove();
+                continue;
+            }
+            if (link.outboundZip != null && link.nextChunk < link.totalChunks) {
+                int sent = 0;
+                while (link.nextChunk < link.totalChunks && sent < PRE_GAME_CHUNKS_PER_TICK) {
+                    int idx = link.nextChunk++;
+                    int off = idx * PRE_GAME_CHUNK_BYTES;
+                    int len = Math.min(PRE_GAME_CHUNK_BYTES, link.outboundZip.length - off);
+                    byte[] slice = new byte[len];
+                    System.arraycopy(link.outboundZip, off, slice, 0, len);
+                    org.json.JSONObject chunkMsg = new org.json.JSONObject();
+                    try {
+                        chunkMsg.put("t", "SAVE_CHUNK");
+                        chunkMsg.put("i", idx);
+                        chunkMsg.put("d", java.util.Base64.getEncoder().encodeToString(slice));
+                        enqueuePreGameJsonLocked(link, chunkMsg);
+                    } catch (Exception ignored) {
+                    }
+                    sent++;
+                }
+                if (link.nextChunk >= link.totalChunks && !link.endSent) {
+                    link.endSent = true;
+                    org.json.JSONObject endMsg = new org.json.JSONObject();
+                    try {
+                        endMsg.put("t", "SAVE_END");
+                        enqueuePreGameJsonLocked(link, endMsg);
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+            if (!flushPreGameDropInLocked(link)) {
+                closeChannel(link.channel);
+                it.remove();
+            }
+        }
+    }
+
+    private boolean readAndProcessPreGameDropInLocked(PreGameDropInLink link, long now) {
+        try {
+            while (true) {
+                link.readBuf.clear();
+                int n = link.channel.read(link.readBuf);
+                if (n < 0) {
+                    return false;
+                }
+                if (n == 0) {
+                    return true;
+                }
+                link.lastActivityAt = now;
+                link.readBuf.flip();
+                byte[] bytes = new byte[link.readBuf.remaining()];
+                link.readBuf.get(bytes);
+                link.rx.append(new String(bytes, StandardCharsets.UTF_8));
+                if (link.rx.length() > MAX_FRAME_BYTES) {
+                    return false;
+                }
+                int nl;
+                while ((nl = link.rx.indexOf("\n")) >= 0) {
+                    String line = link.rx.substring(0, nl).trim();
+                    link.rx.delete(0, nl + 1);
+                    if (!line.isEmpty()) {
+                        processPreGameDropInLineLocked(link, line, now);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    private void processPreGameDropInLineLocked(PreGameDropInLink link, String line, long now) {
+        try {
+            org.json.JSONObject msg = new org.json.JSONObject(line);
+            String type = msg.optString("t", "");
+            switch (type) {
+                case "HELLO" -> {
+                    PreGameLobbyResponder responder = this.preGameLobbyResponder;
+                    if (responder == null) {
+                        link.closingAt = now;
+                        return;
+                    }
+                    String pw = msg.optString("pw", "").trim();
+                    if (!responder.verifyPassword(pw)) {
+                        org.json.JSONObject rej = new org.json.JSONObject();
+                        rej.put("t", "REJECT");
+                        rej.put("reason", "wrong_password");
+                        enqueuePreGameJsonLocked(link, rej);
+                        link.closingAt = now + 300L;
+                        return;
+                    }
+                    String playerName = msg.optString("name", "").trim();
+                    PreGameDropInPlan plan = responder.prepareJoin(playerName);
+                    link.plan = plan;
+                    if (plan != null && plan.saveZip() != null && plan.saveZip().length > 0) {
+                        byte[] zip = plan.saveZip();
+                        link.outboundZip = zip;
+                        link.totalChunks = (zip.length + PRE_GAME_CHUNK_BYTES - 1) / PRE_GAME_CHUNK_BYTES;
+                        link.nextChunk = 0;
+                        link.endSent = false;
+                        org.json.JSONObject begin = new org.json.JSONObject();
+                        begin.put("t", "SAVE_BEGIN");
+                        begin.put("name", (plan.saveName() == null || plan.saveName().isBlank())
+                                ? "save_coop_shared" : plan.saveName());
+                        begin.put("size", zip.length);
+                        begin.put("chunks", link.totalChunks);
+                        begin.put("ownSave", plan.ownSave());
+                        enqueuePreGameJsonLocked(link, begin);
+                        CoopLog.info(CoopNetService.class, "Serving Title Screen drop-in save to '"
+                                + playerName + "' (ownSave=" + plan.ownSave() + ", bytes=" + zip.length + ")");
+                    } else {
+                        enqueuePreGameStartLocked(link, plan, false);
+                        link.closingAt = now + 300L;
+                    }
+                }
+                case "SAVE_ACK" -> {
+                    enqueuePreGameStartLocked(link, link.plan, true);
+                    link.closingAt = now + 300L;
+                }
+                case "PING" -> {
+                    org.json.JSONObject pong = new org.json.JSONObject();
+                    pong.put("t", "PONG");
+                    enqueuePreGameJsonLocked(link, pong);
+                }
+                case "LEAVE" -> link.closingAt = now;
+                default -> {
+                }
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void enqueuePreGameStartLocked(PreGameDropInLink link, PreGameDropInPlan plan, boolean sharedSave) {
+        try {
+            org.json.JSONObject start = new org.json.JSONObject();
+            start.put("t", "START");
+            start.put("useSharedSave", sharedSave);
+            start.put("seed", plan == null || plan.seed() == null ? "" : plan.seed());
+            start.put("size", plan == null || plan.sectorSize() == null ? "normal" : plan.sectorSize());
+            start.put("age", plan == null || plan.sectorAge() == null ? "mixed" : plan.sectorAge());
+            start.put("port", (plan != null && plan.port() > 0) ? plan.port() : boundPort());
+            enqueuePreGameJsonLocked(link, start);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static void enqueuePreGameJsonLocked(PreGameDropInLink link, org.json.JSONObject obj) {
+        byte[] data = (obj.toString() + "\n").getBytes(StandardCharsets.UTF_8);
+        link.txQueue.add(ByteBuffer.wrap(data));
+    }
+
+    private static boolean flushPreGameDropInLocked(PreGameDropInLink link) {
+        try {
+            while (!link.txQueue.isEmpty()) {
+                ByteBuffer buf = link.txQueue.get(0);
+                link.channel.write(buf);
+                if (buf.hasRemaining()) {
+                    break;
+                }
+                link.txQueue.remove(0);
+            }
+            return true;
+        } catch (Exception ex) {
+            return false;
         }
     }
 
@@ -2885,6 +3160,10 @@ public class CoopNetService {
         }
         closeChannel(pendingConnectChannel);
         closeChannel(udpChannel);
+        for (PreGameDropInLink dropIn : preGameDropInLinks) {
+            closeChannel(dropIn.channel);
+        }
+        preGameDropInLinks.clear();
         serverChannel = null;
         connected = false;
         pendingConnectChannel = null;

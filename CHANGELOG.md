@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.21 (Allow Title Screen Drop-In & Vault Save Download Directly from a Live Dedicated Server / Host)
+
+- **Fixed `Missing string field: type` on the live host/dedicated port (`CoopNetService`, `CoopPeerLink`, `CoopNetPump`):**
+  when a Title Screen client clicked `CONNECT` / `ВОЙТИ В ЛОББИ` while the Dedicated Server (or Host) was already inside `CampaignState`, `CoopNetService` rejected the Pre-Game Lobby `{"t":"HELLO",...}` packet as an invalid gameplay frame.
+  Live hosts now accept Title Screen `CoopPreGameLobby` handshakes cleanly on the same game port, verify the lobby password, stream the player's personal save from `saves/coop_vault/<name>.zip` (or the host's fallback save + snapshot), send `START` with synced seed/world settings, and detach the temporary transfer socket without affecting active players.
+
 ## 0.2.20 (Headless dedicated server: no window, no GPU, no OpenGL/OpenAL)
 
 - **Headless Dedicated Server (`Start Headless Dedicated Server.cmd`, `scripts/start-headless-dedicated.sh`):**

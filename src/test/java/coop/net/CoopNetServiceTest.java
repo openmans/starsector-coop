@@ -3028,4 +3028,64 @@ class CoopNetServiceTest {
         }, description);
         return message.get();
     }
+
+    @Test
+    void hostServesTitleScreenPreGameLobbyDropInOverLiveGamePort() throws Exception {
+        byte[] personalZip = new byte[70_000];
+        for (int i = 0; i < personalZip.length; i++) {
+            personalZip[i] = (byte) ((i * 19) ^ (i >>> 6));
+        }
+
+        CoopNetService host = new CoopNetService();
+        CoopPreGameLobby guestLobby = new CoopPreGameLobby();
+        try {
+            host.setPreGameLobbyResponder(new CoopNetService.PreGameLobbyResponder() {
+                @Override
+                public boolean verifyPassword(String password) {
+                    return "secret".equals(password);
+                }
+
+                @Override
+                public CoopNetService.PreGameDropInPlan prepareJoin(String playerName) {
+                    assertEquals("Banan", playerName);
+                    return new CoopNetService.PreGameDropInPlan(
+                            "MN-12345678", "normal", "mixed", host.boundPort(),
+                            "save_coop_banan", personalZip, true);
+                }
+            });
+            host.startHost(0);
+            int port = host.boundPort();
+            assertTrue(port > 0);
+
+            assertTrue(guestLobby.startGuest("127.0.0.1", port, "secret", "Banan", 1_000L));
+            long now = 1_000L;
+            byte[] received = null;
+            boolean ownSave = false;
+            for (int i = 0; i < 80; i++) {
+                now += 25L;
+                host.flushOutbound();
+                guestLobby.tick(now);
+                byte[] chunked = guestLobby.consumeCompletedSaveZip();
+                if (chunked != null) {
+                    received = chunked;
+                    ownSave = guestLobby.consumeCompletedSaveIsOwn();
+                }
+                if (guestLobby.isLaunchTriggered()) {
+                    break;
+                }
+                Thread.sleep(10);
+            }
+
+            org.junit.jupiter.api.Assertions.assertArrayEquals(personalZip, received);
+            assertTrue(ownSave);
+            assertTrue(guestLobby.isLaunchTriggered());
+            assertTrue(guestLobby.useSharedSaveOnStart());
+            assertEquals("MN-12345678", guestLobby.worldSeed());
+            assertEquals(0L, host.datagramStats().invalidFrames(),
+                    "Drop-in lobby JSON must not be treated as invalid gameplay frame");
+        } finally {
+            guestLobby.stop();
+            host.shutdown();
+        }
+    }
 }

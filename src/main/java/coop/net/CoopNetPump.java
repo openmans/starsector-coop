@@ -1203,6 +1203,7 @@ public class CoopNetPump implements EveryFrameScript {
         this.dedicatedHostMode = CoopNetStartupConfig.dedicatedHostFromSystemProperties();
         active = this;
         this.nextDedicatedAutosaveAtMillis = now + DEDICATED_AUTOSAVE_INTERVAL_MILLIS;
+        installPreGameDropInResponder();
         // A full interval out, not zero: the one send that belongs at the start of a session is the
         // forced one behind the lobby release (releaseLobbyNow), and letting the periodic timer also
         // fire on the first frame would put two identical payloads on the wire back to back.
@@ -7591,6 +7592,50 @@ public class CoopNetPump implements EveryFrameScript {
         } catch (RuntimeException | LinkageError ex) {
             CoopLog.warn(CoopNetPump.class, "Coop Dedicated Host tick failed", ex);
         }
+    }
+
+    private void installPreGameDropInResponder() {
+        service.setPreGameLobbyResponder(new CoopNetService.PreGameLobbyResponder() {
+            @Override
+            public boolean verifyPassword(String password) {
+                String expected = lobbyPassword == null ? "" : lobbyPassword.trim();
+                String got = password == null ? "" : password.trim();
+                return expected.isEmpty() || expected.equals(got);
+            }
+
+            @Override
+            public CoopNetService.PreGameDropInPlan prepareJoin(String playerName) {
+                String seed = "";
+                try {
+                    seed = sectorSeedStringSupplier.get();
+                } catch (RuntimeException ignored) {
+                }
+                if (seed == null || seed.isBlank()) {
+                    seed = CoopSeedSync.currentSectorSeedString();
+                }
+                String size = "normal";
+                String age = "mixed";
+                try {
+                    size = coop.newgame.CoopWorldSettings.currentSectorSize();
+                    age = coop.newgame.CoopWorldSettings.currentSectorAge();
+                } catch (RuntimeException | LinkageError ignored) {
+                }
+                int port = service.boundPort();
+                byte[] personal = coop.ambient.CoopTitleScreenBridge.loadPlayerSaveZip(playerName);
+                if (personal != null && personal.length > 0) {
+                    String saveName = "save_coop_"
+                            + coop.ambient.CoopTitleScreenBridge.sanitizePlayerVaultKey(playerName);
+                    return new CoopNetService.PreGameDropInPlan(seed, size, age, port, saveName, personal, true);
+                }
+                String hostSave = coop.ambient.CoopTitleScreenBridge.findLatestHostSaveDirPath();
+                byte[] hostZip = (hostSave == null || hostSave.isEmpty())
+                        ? null
+                        : coop.ambient.CoopTitleScreenBridge.packageSaveDirectoryAsZip(hostSave);
+                return new CoopNetService.PreGameDropInPlan(
+                        seed, size, age, port,
+                        coop.ambient.CoopTitleScreenBridge.SHARED_SAVE_DIR_NAME, hostZip, false);
+            }
+        });
     }
 
     private void resetSharedPauseState() {
