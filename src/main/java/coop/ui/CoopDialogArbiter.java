@@ -15,6 +15,8 @@ package coop.ui;
  *   <li>{@link #CONNECTING} — the session does not exist yet.</li>
  *   <li>{@link #MARK} — the log marker's note box, which is the only one of these a player asked
  *   for on purpose and the only one that is safe to simply not show.</li>
+ *   <li>{@link #ALLY_RECOVERY} — the post-battle wreck-recovery prompt, which is bounded by the
+ *   wrecks of one battle and expires with them.</li>
  * </ol>
  *
  * <p>Higher in that list wins: a lower-priority controller must not <em>request</em> while a
@@ -26,6 +28,7 @@ public enum CoopDialogArbiter {
     LOBBY,
     CONNECTING,
     MARK,
+    ALLY_RECOVERY,
     ALLY_JOIN,
     TACTICAL_MAP,
     CHAT,

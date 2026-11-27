@@ -48,6 +48,12 @@ final class CoopAllyBattleTracker {
     private Object observedBattle;
     /** Sender-side ids of the ships the mirror took into the battle, for the destroyed diff. */
     private List<String> preBattleSenderIds = List.of();
+    /**
+     * The subset of {@link #preBattleSenderIds} that could come back as a wreck: everything except
+     * fighters, which vanilla never offers for recovery. Read once at the join edge because the
+     * members themselves are gone by the time the outcome is composed.
+     */
+    private List<String> preBattleRecoverableIds = List.of();
     private CoopAllyBattleJoin pendingJoin;
     private final Deque<CoopAllyBattleOutcome> pendingOutcomes = new ArrayDeque<>();
 
@@ -121,6 +127,7 @@ final class CoopAllyBattleTracker {
     void reset() {
         observedBattle = null;
         preBattleSenderIds = List.of();
+        preBattleRecoverableIds = List.of();
         pendingJoin = null;
         pendingOutcomes.clear();
     }
@@ -129,6 +136,7 @@ final class CoopAllyBattleTracker {
                                   Map<String, String> senderIdsByEngineId) {
         observedBattle = battle;
         preBattleSenderIds = new ArrayList<>(liveSenderIds(mirror, senderIdsByEngineId));
+        preBattleRecoverableIds = recoverableIds(mirror, senderIdsByEngineId);
         pendingJoin = new CoopAllyBattleJoin(ownerPlayerId, enemySummary(mirror, battle));
         CoopLog.info(CoopAllyBattleTracker.class, "Coop ally mirror pulled into a battle owner="
                 + ownerPlayerId + " against='" + pendingJoin.enemySummary() + "' ships="
@@ -168,16 +176,49 @@ final class CoopAllyBattleTracker {
             return;
         }
         List<String> destroyed = new ArrayList<>();
+        List<String> recoverable = new ArrayList<>();
         for (String senderId : preBattleSenderIds) {
             if (!survived.contains(senderId)) {
                 destroyed.add(senderId);
+                if (preBattleRecoverableIds.contains(senderId)) {
+                    recoverable.add(senderId);
+                }
             }
         }
-        pendingOutcomes.addLast(new CoopAllyBattleOutcome(ownerPlayerId, destroyed, survivors));
+        pendingOutcomes.addLast(new CoopAllyBattleOutcome(ownerPlayerId, destroyed, survivors,
+                recoverable));
         preBattleSenderIds = List.of();
+        preBattleRecoverableIds = List.of();
         CoopLog.info(CoopAllyBattleTracker.class, "Coop ally mirror left its battle owner="
                 + ownerPlayerId + " destroyed=" + destroyed.size() + " survivors=" + survivors.size()
                 + "; the mirror stays frozen until the result is taken");
+    }
+
+    /**
+     * The sender ids of the non-fighter ships in {@code mirror}, read at the join edge so the
+     * outcome can name the wrecks the owner may recover. A ship the mapping does not know (the
+     * mirror was not built from this roster) cannot be recovered on the owner's side either.
+     */
+    private static List<String> recoverableIds(CampaignFleetAPI mirror,
+                                               Map<String, String> senderIdsByEngineId) {
+        List<String> ids = new ArrayList<>();
+        try {
+            for (FleetMemberAPI member : mirror.getFleetData().getMembersListCopy()) {
+                if (member == null || member.isFighterWing()) {
+                    continue;
+                }
+                String senderId = senderIdsByEngineId.get(member.getId());
+                if (senderId != null && !senderId.isEmpty()) {
+                    ids.add(senderId);
+                }
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            // No list means no wrecks offered this battle; the losses themselves are unaffected.
+            CoopLog.warn(CoopAllyBattleTracker.class,
+                    "Coop could not read the ally mirror's roster for wreck recovery", ex);
+            return List.of();
+        }
+        return List.copyOf(ids);
     }
 
     /** One surviving ship, or null when the engine will not name it or the mapping does not know it. */

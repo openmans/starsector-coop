@@ -608,6 +608,11 @@ public class CoopNetPump implements EveryFrameScript {
             new coop.ui.CoopDialogController("tacticalMap", this::nowMillis);
     private coop.ui.CoopTacticalMapDialogPlugin activeTacticalMapDialog;
     /** Interactive partner battle reinforcement prompt (up to coop.allyJoinRange su). */
+    /** Item 2.5: the post-battle wreck-recovery prompt, ranked just under the marker dialog. */
+    private final coop.ui.CoopDialogController allyRecoveryDialogs =
+            new coop.ui.CoopDialogController("ally-recovery");
+    /** Armed when a battle result names recoverable wrecks; shown on the first frame the arbiter allows. */
+    private coop.ui.CoopAllyRecoveryDialogPlugin pendingWreckRecovery;
     private final coop.ui.CoopDialogController allyJoinDialogs =
             new coop.ui.CoopDialogController("allyJoin", this::nowMillis);
     private final coop.ui.CoopDialogController chatDialogs =
@@ -1426,7 +1431,8 @@ public class CoopNetPump implements EveryFrameScript {
      */
     public java.util.List<coop.ui.CoopDialogController> coopDialogsForBridge() {
         return java.util.List.of(reconnectDialogs, desyncDialogs, lobbyDialogs, connectingDialogs,
-                markDialogs, allyJoinDialogs, tacticalMapDialogs, chatDialogs, tradeDialogs,
+                markDialogs, allyRecoveryDialogs, allyJoinDialogs, tacticalMapDialogs, chatDialogs,
+                tradeDialogs,
                 dialogSpectatorDialogs);
     }
 
@@ -3755,6 +3761,7 @@ public class CoopNetPump implements EveryFrameScript {
         t = profiler.split(SECTION_HANDSHAKE_MANIFEST, t);
         maybeSendSeedLockRequest();
         maybeSendGuestSnapshotRestore();
+        maybeRequestWreckRecovery();
         t = profiler.split(SECTION_SEED_LOCK_REQUEST, t);
         // Phase 21: before tickLobby so the lower-ranked lobby and connecting controllers see this
         // one's request on the same frame rather than one frame late.
@@ -11063,6 +11070,11 @@ public class CoopNetPump implements EveryFrameScript {
             oldest.next();
             oldest.remove();
         }
+        // Item 2.5: read the wrecks off the owner's real fleet BEFORE the loss applier removes them;
+        // afterwards the members are gone and there is nothing left to name.
+        java.util.List<coop.combat.CoopAllyWreckRecovery.RecoverableShip> wrecks =
+                recoverableWrecks(result.outcome());
+        java.util.Map<String, Long> partnerShares = lootSharesFor(wrecks);
         String pilot = displayNameFor(result.pilotPlayerId());
         coop.combat.CoopAllyLossApplier.Report report;
         try {
@@ -11089,6 +11101,178 @@ public class CoopNetPump implements EveryFrameScript {
                     + " did not apply in full: unknownIds=" + report.unknownIds()
                     + " failedWrites=" + report.failedWrites());
         }
+        armWreckRecovery(wrecks, partnerShares);
+    }
+
+    /**
+     * Item 2.5: the owner-side wrecks named by an {@code ALLY_BATTLE_RESULT}, read from the real
+     * fleet while the members still exist. Ships the applier could not match are skipped - the
+     * outcome already reports those separately.
+     */
+    private java.util.List<coop.combat.CoopAllyWreckRecovery.RecoverableShip> recoverableWrecks(
+            coop.combat.CoopAllyBattleOutcome outcome) {
+        if (outcome == null || outcome.recoverableDestroyedIds().isEmpty()) {
+            return java.util.List.of();
+        }
+        java.util.List<coop.combat.CoopAllyWreckRecovery.RecoverableShip> wrecks =
+                new java.util.ArrayList<>();
+        try {
+            com.fs.starfarer.api.campaign.CampaignFleetAPI fleet =
+                    com.fs.starfarer.api.Global.getSector().getPlayerFleet();
+            if (fleet == null || fleet.getFleetData() == null) {
+                return java.util.List.of();
+            }
+            java.util.Set<String> wanted =
+                    new java.util.HashSet<>(outcome.recoverableDestroyedIds());
+            for (com.fs.starfarer.api.fleet.FleetMemberAPI member
+                    : fleet.getFleetData().getMembersListCopy()) {
+                if (member == null || member.isFighterWing() || !wanted.contains(member.getId())) {
+                    continue;
+                }
+                String hullId = member.getHullSpec() == null ? "" : member.getHullSpec().getHullId();
+                String variantId = member.getVariant() == null ? "" : member.getVariant().getHullVariantId();
+                int dmods = 0;
+                try {
+                    dmods = com.fs.starfarer.api.impl.campaign.DModManager.getNumDMods(member.getVariant());
+                } catch (RuntimeException | LinkageError ignored) {
+                    // A member without a readable variant simply has no existing D-mods counted.
+                }
+                int supplies = 1;
+                try {
+                    supplies = Math.max(1, Math.round(member.getHullSpec().getSuppliesToRecover()));
+                } catch (RuntimeException | LinkageError ignored) {
+                    // Fall back to one supply rather than to a free recovery.
+                }
+                wrecks.add(new coop.combat.CoopAllyWreckRecovery.RecoverableShip(
+                        member.getId(), hullId, variantId, member.getShipName(), dmods, supplies));
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Coop could not read recoverable wrecks off the fleet", ex);
+            return java.util.List.of();
+        }
+        return wrecks;
+    }
+
+    /**
+     * Item 2.4: with {@code coop.lootSplit=equal} the recovering owner owes the partner half of each
+     * hull's base value; {@code pilot-keeps} owes nothing. The splitter keeps the rounding rule in
+     * one place, so the amount the dialog shows is the amount the ledger sends.
+     */
+    private java.util.Map<String, Long> lootSharesFor(
+            java.util.List<coop.combat.CoopAllyWreckRecovery.RecoverableShip> wrecks) {
+        if (wrecks.isEmpty()) {
+            return java.util.Map.of();
+        }
+        String policy = "equal";
+        try {
+            policy = optionsPolicy.applied(coop.config.CoopOptionsRegistry.LOOT_SPLIT);
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Coop could not read coop.lootSplit; using equal", ex);
+        }
+        java.util.Map<String, Long> shares = new java.util.HashMap<>();
+        for (coop.combat.CoopAllyWreckRecovery.RecoverableShip wreck : wrecks) {
+            long value = hullValueOf(wreck);
+            long share = coop.rewards.CoopRewardSplitter
+                    .splitSalvageCredits(value, participantCount(), policy).remoteShare();
+            if (share > 0L) {
+                shares.put(wreck.memberId(), share);
+            }
+        }
+        return shares;
+    }
+
+    /** Base value of the hull behind a wreck, or 0 when the engine will not say. */
+    private long hullValueOf(coop.combat.CoopAllyWreckRecovery.RecoverableShip wreck) {
+        try {
+            com.fs.starfarer.api.campaign.CampaignFleetAPI fleet =
+                    com.fs.starfarer.api.Global.getSector().getPlayerFleet();
+            for (com.fs.starfarer.api.fleet.FleetMemberAPI member
+                    : fleet.getFleetData().getMembersListCopy()) {
+                if (member != null && member.getId().equals(wreck.memberId())
+                        && member.getHullSpec() != null) {
+                    return Math.max(0L, Math.round(member.getHullSpec().getBaseValue()));
+                }
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Coop could not price a recoverable wreck", ex);
+        }
+        return 0L;
+    }
+
+    private int participantCount() {
+        try {
+            return Math.max(2, sessionState.maxGuests() + 1);
+        } catch (RuntimeException | LinkageError ex) {
+            return 2;
+        }
+    }
+
+    private void armWreckRecovery(
+            java.util.List<coop.combat.CoopAllyWreckRecovery.RecoverableShip> wrecks,
+            java.util.Map<String, Long> partnerShares) {
+        if (wrecks.isEmpty()) {
+            return;
+        }
+        try {
+            com.fs.starfarer.api.campaign.CampaignFleetAPI fleet =
+                    com.fs.starfarer.api.Global.getSector().getPlayerFleet();
+            if (fleet == null) {
+                return;
+            }
+            pendingWreckRecovery = new coop.ui.CoopAllyRecoveryDialogPlugin(wrecks,
+                    coop.combat.CoopAllyWreckRecovery.liveTarget(fleet), partnerShares,
+                    this::onAllyWreckRecovered);
+            CoopLog.info(CoopNetPump.class, "Coop " + wrecks.size()
+                    + " allied wreck(s) can be recovered; offering the dialog");
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Coop could not arm the wreck-recovery dialog", ex);
+        }
+    }
+
+    private void maybeRequestWreckRecovery() {
+        if (!isGameplaySessionActive()) {
+            pendingWreckRecovery = null;
+            allyRecoveryDialogs.close();
+            return;
+        }
+        if (pendingWreckRecovery != null && !allyRecoveryDialogs.isRequested()) {
+            if (allyRecoveryMayRequest()) {
+                coop.ui.CoopAllyRecoveryDialogPlugin plugin = pendingWreckRecovery;
+                pendingWreckRecovery = null;
+                allyRecoveryDialogs.request(plugin);
+            }
+        }
+        allyRecoveryDialogs.tick();
+    }
+
+    private boolean allyRecoveryMayRequest() {
+        return coop.ui.CoopDialogArbiter.mayRequest(coop.ui.CoopDialogArbiter.ALLY_RECOVERY,
+                reconnectDialogs.isRequested() ? coop.ui.CoopDialogArbiter.RECONNECT : null,
+                desyncDialogs.isRequested() ? coop.ui.CoopDialogArbiter.DESYNC : null,
+                lobbyDialogs.isRequested() ? coop.ui.CoopDialogArbiter.LOBBY : null,
+                connectingDialogs.isRequested() ? coop.ui.CoopDialogArbiter.CONNECTING : null,
+                markDialogs.isRequested() ? coop.ui.CoopDialogArbiter.MARK : null);
+    }
+
+    /**
+     * Item 2.4: pays the partner's half through the ordinary credit ledger. {@code send()} debits
+     * this wallet and emits a {@code CREDITS_GRANT} with a fresh ledger id, so a reconnect cannot
+     * double-pay it and a discarded frame is refunded by the existing discard listener.
+     */
+    private void onAllyWreckRecovered(String memberId, long partnerShare) {
+        if (partnerShare <= 0L) {
+            return;
+        }
+        coop.campaign.CoopCreditTransfer transfer = coop.campaign.CoopCreditTransfer.active();
+        if (transfer == null) {
+            CoopLog.warn(CoopNetPump.class, "Coop recovered " + memberId
+                    + " but no credit transfer is installed for the loot split");
+            return;
+        }
+        int amount = (int) Math.min(partnerShare, coop.campaign.CoopCreditTransfer.MAX_AMOUNT);
+        coop.campaign.CoopCreditTransfer.Result result = transfer.send(amount);
+        CoopLog.info(CoopNetPump.class, "Coop loot split sent " + amount + " credits to the partner"
+                + " for recovered " + memberId + " result=" + result);
     }
 
     /**
@@ -11506,7 +11690,8 @@ public class CoopNetPump implements EveryFrameScript {
                 desyncDialogs.isRequested() ? coop.ui.CoopDialogArbiter.DESYNC : null,
                 lobbyDialogs.isRequested() ? coop.ui.CoopDialogArbiter.LOBBY : null,
                 connectingDialogs.isRequested() ? coop.ui.CoopDialogArbiter.CONNECTING : null,
-                markDialogs.isRequested() ? coop.ui.CoopDialogArbiter.MARK : null);
+                markDialogs.isRequested() ? coop.ui.CoopDialogArbiter.MARK : null,
+                allyRecoveryDialogs.isRequested() ? coop.ui.CoopDialogArbiter.ALLY_RECOVERY : null);
     }
 
     private void tickTacticalMapDialog() {
@@ -11529,7 +11714,8 @@ public class CoopNetPump implements EveryFrameScript {
                 desyncDialogs.isRequested() ? coop.ui.CoopDialogArbiter.DESYNC : null,
                 lobbyDialogs.isRequested() ? coop.ui.CoopDialogArbiter.LOBBY : null,
                 connectingDialogs.isRequested() ? coop.ui.CoopDialogArbiter.CONNECTING : null,
-                markDialogs.isRequested() ? coop.ui.CoopDialogArbiter.MARK : null);
+                markDialogs.isRequested() ? coop.ui.CoopDialogArbiter.MARK : null,
+                allyRecoveryDialogs.isRequested() ? coop.ui.CoopDialogArbiter.ALLY_RECOVERY : null);
     }
 
     /**
@@ -11625,6 +11811,7 @@ public class CoopNetPump implements EveryFrameScript {
                 lobbyDialogs.isRequested() ? coop.ui.CoopDialogArbiter.LOBBY : null,
                 connectingDialogs.isRequested() ? coop.ui.CoopDialogArbiter.CONNECTING : null,
                 markDialogs.isRequested() ? coop.ui.CoopDialogArbiter.MARK : null,
+                allyRecoveryDialogs.isRequested() ? coop.ui.CoopDialogArbiter.ALLY_RECOVERY : null,
                 allyJoinDialogs.isRequested() ? coop.ui.CoopDialogArbiter.ALLY_JOIN : null,
                 tacticalMapDialogs.isRequested() ? coop.ui.CoopDialogArbiter.TACTICAL_MAP : null);
     }
@@ -12090,6 +12277,7 @@ public class CoopNetPump implements EveryFrameScript {
                 lobbyDialogs.isRequested() ? coop.ui.CoopDialogArbiter.LOBBY : null,
                 connectingDialogs.isRequested() ? coop.ui.CoopDialogArbiter.CONNECTING : null,
                 markDialogs.isRequested() ? coop.ui.CoopDialogArbiter.MARK : null,
+                allyRecoveryDialogs.isRequested() ? coop.ui.CoopDialogArbiter.ALLY_RECOVERY : null,
                 allyJoinDialogs.isRequested() ? coop.ui.CoopDialogArbiter.ALLY_JOIN : null,
                 tacticalMapDialogs.isRequested() ? coop.ui.CoopDialogArbiter.TACTICAL_MAP : null,
                 chatDialogs.isRequested() ? coop.ui.CoopDialogArbiter.CHAT : null,

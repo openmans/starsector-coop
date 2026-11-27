@@ -89,6 +89,43 @@ class CoopAllyBattleTrackerTest {
     }
 
     @Test
+    void aDestroyedShipIsNamedAsARecoverableWreckForItsOwner() {
+        FakeMirror mirror = new FakeMirror("a", "b");
+        CoopAllyBattleTracker tracker = new CoopAllyBattleTracker();
+        mirror.battle = battleNamed("Pirate Raiders");
+        tracker.poll(mirror.fleet(), OWNER, mirror.senderIds);
+
+        mirror.destroy("b");
+        mirror.battle = null;
+        tracker.poll(mirror.fleet(), OWNER, mirror.senderIds);
+
+        CoopAllyBattleOutcome outcome = tracker.takeOutcome();
+        assertNotNull(outcome);
+        assertEquals(List.of("owner-b"), outcome.destroyedMemberIds());
+        assertEquals(List.of("owner-b"), outcome.recoverableDestroyedIds(),
+                "the owner gets to tow back what the battle sank");
+    }
+
+    @Test
+    void aDestroyedFighterWingIsALossButNotARecoverableWreck() {
+        FakeMirror mirror = new FakeMirror("a", "wing");
+        mirror.member("wing").fighterWing = true;
+        CoopAllyBattleTracker tracker = new CoopAllyBattleTracker();
+        mirror.battle = battleNamed("Pirate Raiders");
+        tracker.poll(mirror.fleet(), OWNER, mirror.senderIds);
+
+        mirror.destroy("wing");
+        mirror.battle = null;
+        tracker.poll(mirror.fleet(), OWNER, mirror.senderIds);
+
+        CoopAllyBattleOutcome outcome = tracker.takeOutcome();
+        assertNotNull(outcome);
+        assertEquals(List.of("owner-wing"), outcome.destroyedMemberIds());
+        assertTrue(outcome.recoverableDestroyedIds().isEmpty(),
+                "vanilla never offers a fighter wing as a wreck");
+    }
+
+    @Test
     void theFreezeHoldsUntilTheOutcomeIsTakenAndThenLifts() {
         FakeMirror mirror = new FakeMirror("a");
         CoopAllyBattleTracker tracker = new CoopAllyBattleTracker();
@@ -294,6 +331,7 @@ class CoopAllyBattleTrackerTest {
         final String engineId;
         float hullFraction;
         float cr;
+        boolean fighterWing;
 
         FakeMember(String engineId, float hullFraction, float cr) {
             this.engineId = engineId;
@@ -327,6 +365,7 @@ class CoopAllyBattleTrackerTest {
                     new Class<?>[] {FleetMemberAPI.class},
                     (proxy, method, args) -> switch (method.getName()) {
                         case "getId" -> engineId;
+                        case "isFighterWing" -> fighterWing;
                         case "getStatus" -> status;
                         case "getRepairTracker" -> tracker;
                         case "toString" -> "Member " + engineId;
