@@ -1,5 +1,6 @@
 package coop.net;
 
+import coop.config.CoopOptionsRegistry;
 import coop.util.CoopLog;
 
 import java.net.InetAddress;
@@ -798,6 +799,34 @@ public class CoopNetService {
             // to set the id on either side of this call. See connect() for the case that was broken.
             applyLocalSenderIdLocked(senderId);
             role = CoopConnectionRole.HOST;
+            CoopRelayProtocol.Endpoint relay = relayEndpoint();
+            if (relay != null) {
+                String room = relayRoom();
+                String token = relayToken();
+                if (room.isEmpty() || token.isEmpty()) {
+                    CoopLog.warn(CoopNetService.class, "Coop " + CoopOptionsRegistry.RELAY_ADDRESS
+                            + " is set but " + CoopOptionsRegistry.RELAY_ROOM + " or "
+                            + CoopOptionsRegistry.RELAY_TOKEN
+                            + " is blank; hosting on the local port instead of the relay");
+                } else {
+                    try {
+                        SocketChannel bridged = openRelayChannelLocked(
+                                CoopRelayProtocol.formatRegister(room, token));
+                        attachChannelLocked(freeSlotLocked(), bridged);
+                        // UDP cannot traverse the relay, so the state stream has to ride TCP; opening
+                        // no datagram channel at all is what makes the link-quality fallback take it
+                        // there instead of waiting for a silence threshold.
+                        CoopLog.info(CoopNetService.class, "Coop host registered on relay "
+                                + relay.host() + ":" + relay.port() + " room=" + room
+                                + " (TCP only; state stream uses the TCP fallback)");
+                        return;
+                    } catch (Exception ex) {
+                        shutdownLocked();
+                        throw new IllegalStateException("Unable to register on the coop relay at "
+                                + relay.host() + ":" + relay.port(), ex);
+                    }
+                }
+            }
             try {
                 ServerSocketChannel channel = ServerSocketChannel.open();
                 channel.configureBlocking(false);
@@ -829,6 +858,24 @@ public class CoopNetService {
             connectPort = port;
             nextConnectAttemptAtMillis = 0L;
             connectFailureLogged = false;
+            CoopRelayProtocol.Endpoint relay = relayEndpoint();
+            String relayRoom = relayRoom();
+            String relayToken = relayToken();
+            if (relay != null && !relayRoom.isEmpty() && !relayToken.isEmpty()) {
+                try {
+                    SocketChannel bridged = openRelayChannelLocked(
+                            CoopRelayProtocol.formatJoin(relayRoom, relayToken));
+                    attachChannelLocked(freeSlotLocked(), bridged);
+                    CoopLog.info(CoopNetService.class, "Coop guest joined relay " + relay.host()
+                            + ":" + relay.port() + " room=" + relayRoom
+                            + " (TCP only; state stream uses the TCP fallback)");
+                    return;
+                } catch (Exception ex) {
+                    shutdownLocked();
+                    throw new IllegalStateException("Unable to join the coop relay at "
+                            + relay.host() + ":" + relay.port(), ex);
+                }
+            }
             // Guest binds an ephemeral UDP port and sends to the host's known address; the host
             // learns the guest's UDP address from the first datagram it receives. Null target while
             // the name has not resolved: flushDatagramsLocked drops rather than buffers, and the
@@ -1759,6 +1806,94 @@ public class CoopNetService {
             }
         }
         connected = any;
+    }
+
+    /** How long the relay dial waits before giving up; it runs once, at session start. */
+    private static final int RELAY_CONNECT_TIMEOUT_MILLIS = 8_000;
+
+    /** The relay this launch is configured for, or null when {@code coop.relayAddress} is blank. */
+    private CoopRelayProtocol.Endpoint relayEndpoint() {
+        String raw = CoopNetStartupConfig.relayAddressFromSystemProperties();
+        if (raw.isEmpty()) {
+            return null;
+        }
+        CoopRelayProtocol.Endpoint endpoint = CoopRelayProtocol.parseAddress(raw);
+        if (endpoint == null) {
+            CoopLog.warn(CoopNetService.class, "Coop " + CoopOptionsRegistry.RELAY_ADDRESS + "=\""
+                    + raw + "\" is not host:port; the relay stays off");
+        }
+        return endpoint;
+    }
+
+    private String relayRoom() {
+        return CoopNetStartupConfig.relayRoomFromSystemProperties();
+    }
+
+    private String relayToken() {
+        return CoopNetStartupConfig.relayTokenFromSystemProperties();
+    }
+
+    /**
+     * Item 5: dials the CGNAT relay and completes its one-line handshake, returning a channel that
+     * carries the bridged byte stream from then on.
+     *
+     * <p>Deliberately blocking, for the length of the dial and one reply line: this runs inside a
+     * session start, before a single frame exists to lose, and a state machine for it would be a
+     * poll-driven handshake competing with the poll that is not running yet. The connect itself is
+     * bounded by {@link #RELAY_CONNECT_TIMEOUT_MILLIS}; the reply is bounded by the socket timeout.
+     */
+    private SocketChannel openRelayChannelLocked(String handshake) throws Exception {
+        CoopRelayProtocol.Endpoint endpoint = relayEndpoint();
+        if (endpoint == null) {
+            throw new IllegalStateException("no relay endpoint configured");
+        }
+        SocketChannel channel = SocketChannel.open();
+        try {
+            channel.configureBlocking(true);
+            channel.socket().setTcpNoDelay(true);
+            channel.socket().connect(new java.net.InetSocketAddress(endpoint.host(), endpoint.port()),
+                    RELAY_CONNECT_TIMEOUT_MILLIS);
+            channel.socket().setSoTimeout(RELAY_CONNECT_TIMEOUT_MILLIS);
+            // Raw channel writes and one-byte reads, deliberately: Starsector's script sandbox treats
+            // any java.io reference in this package as file access, so the handshake cannot borrow
+            // Channels.newInputStream the way a normal client would.
+            java.nio.ByteBuffer out = java.nio.ByteBuffer.wrap(
+                    handshake.getBytes(StandardCharsets.UTF_8));
+            while (out.hasRemaining()) {
+                channel.write(out);
+            }
+            String reply = readRelayReply(channel);
+            if (!CoopRelayProtocol.RESP_OK.equalsIgnoreCase(reply)) {
+                throw new IllegalStateException("relay refused the handshake: " + reply);
+            }
+            channel.socket().setSoTimeout(0);
+            channel.configureBlocking(false);
+            return channel;
+        } catch (Exception ex) {
+            closeChannel(channel);
+            throw ex;
+        }
+    }
+
+    /** One reply line from the relay, bounded so a silent relay cannot hold the start forever. */
+    private static String readRelayReply(SocketChannel channel) throws Exception {
+        StringBuilder sb = new StringBuilder(32);
+        java.nio.ByteBuffer one = java.nio.ByteBuffer.allocate(1);
+        while (sb.length() <= 120) {
+            one.clear();
+            if (channel.read(one) < 1) {
+                break;
+            }
+            one.flip();
+            byte b = one.get();
+            if (b == '\n') {
+                break;
+            }
+            if (b != '\r') {
+                sb.append((char) b);
+            }
+        }
+        return sb.toString().trim();
     }
 
     /**

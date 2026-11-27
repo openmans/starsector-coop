@@ -91,6 +91,16 @@
 	# text | applies: next connection attempt | Relay
 	"coop.relayAddress":"",
 
+	# Relay room code shared by both players. The relay server pairs a host and a guest that present
+	# the same room and token; leave it blank and the relay stays off even with an address set.
+	# text | applies: next connection attempt | Relay
+	"coop.relayRoom":"",
+
+	# Relay shared token, checked by the relay server. Same secret on both installs; it goes to the
+	# relay only, never to the other player.
+	# text | applies: next connection attempt | Relay
+	"coop.relayToken":"",
+
 
 	##############################################################
 	# Tier: host policy (host-authoritative gameplay rules)

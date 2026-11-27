@@ -314,6 +314,21 @@ public final class CoopNetStartupConfig {
         return !password.isEmpty();
     }
 
+    /** Relay {@code host:port}, or {@code ""} when the relay is not configured. */
+    public static String relayAddressFromSystemProperties() {
+        return trimToEmpty(CoopOptionsStore.system().raw(CoopOptionsRegistry.RELAY_ADDRESS));
+    }
+
+    /** Relay room code, or {@code ""}. Both players must agree on it. */
+    public static String relayRoomFromSystemProperties() {
+        return trimToEmpty(CoopOptionsStore.system().raw(CoopOptionsRegistry.RELAY_ROOM));
+    }
+
+    /** Relay shared token, or {@code ""}. Never logged. */
+    public static String relayTokenFromSystemProperties() {
+        return trimToEmpty(CoopOptionsStore.system().raw(CoopOptionsRegistry.RELAY_TOKEN));
+    }
+
     /** {@code off} or {@code aes-gcm}; canonical, never null. */
     public String encryptionMode() {
         return encryptionMode;

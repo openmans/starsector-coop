@@ -136,6 +136,8 @@ public record CoopOptionsView(List<Section> sections) {
         LABELS.put(CoopOptionsRegistry.CHAT_KEY, "In-game chat key");
         LABELS.put(CoopOptionsRegistry.ENCRYPTION, "Transport encryption");
         LABELS.put(CoopOptionsRegistry.RELAY_ADDRESS, "Relay server address");
+        LABELS.put(CoopOptionsRegistry.RELAY_ROOM, "Relay room code (both players)");
+        LABELS.put(CoopOptionsRegistry.RELAY_TOKEN, "Relay shared token");
 
         // 15 s is the granularity a reconnect window is actually chosen at; 1 s steps would mean 60
         // presses to cross the default. Ports get no stepper at all - nobody finds 7777 by clicking.

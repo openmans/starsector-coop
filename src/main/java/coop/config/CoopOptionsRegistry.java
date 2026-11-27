@@ -299,6 +299,10 @@ public final class CoopOptionsRegistry {
     public static final String ENCRYPTION = "coop.encryption";
     /** Optional relay server address (host:port) for CGNAT traversal. */
     public static final String RELAY_ADDRESS = "coop.relayAddress";
+    /** Relay room code; both players must set the same value. Blank disables the relay. */
+    public static final String RELAY_ROOM = "coop.relayRoom";
+    /** Relay shared token; both players must set the same value. */
+    public static final String RELAY_TOKEN = "coop.relayToken";
     /** Hotkey opening the in-game co-op chat input box (default F8). */
     public static final String CHAT_KEY = "coop.chatKey";
 
@@ -412,6 +416,15 @@ public final class CoopOptionsRegistry {
                 "next launch", ApplyBoundary.NEXT_CONNECTION,
                 "Optional relay server host:port for CGNAT traversal when direct UPnP/NAT-PMP"
                         + " fails (empty = direct P2P)."));
+        options.add(stringOption(RELAY_ROOM, Tier.LAUNCH, "", true, "Connectivity",
+                "next launch", ApplyBoundary.NEXT_CONNECTION,
+                "Relay room code: the two players must agree on one value. The relay pairs a host"
+                        + " and a guest that present the same room and token; blank keeps the relay"
+                        + " off even when coop.relayAddress is set."));
+        options.add(stringOption(RELAY_TOKEN, Tier.LAUNCH, "", true, "Connectivity",
+                "next launch", ApplyBoundary.NEXT_CONNECTION,
+                "Relay shared token, checked by the relay server; set it to the same secret on"
+                        + " both installs. Sent only to the relay, never to the other player."));
         // Read once when the marker listener is installed, which is why this is not IMMEDIATE:
         // resolving it means an option read plus an LWJGL key lookup, and neither belongs on a
         // per-frame path for a key that gets pressed a handful of times a session.

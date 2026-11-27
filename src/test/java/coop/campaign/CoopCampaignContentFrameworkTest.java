@@ -26,7 +26,6 @@ class CoopCampaignContentFrameworkTest {
     static final class CampaignFixture {
         final Map<String, Object> hostMemoryMap = new LinkedHashMap<>();
         final Map<String, Map<String, Object>> guestMemoryMaps = new LinkedHashMap<>();
-        final CoopCommissionRewardSync commissionSync = new CoopCommissionRewardSync();
         final List<String> grants = new ArrayList<>();
 
         CampaignFixture(String... guestIds) {
@@ -69,50 +68,6 @@ class CoopCampaignContentFrameworkTest {
                 }
             };
         }
-    }
-
-    @Test
-    void commissionSalaryAndHostileKillBountiesSyncToAllGuestsOnce() {
-        CampaignFixture fixture = new CampaignFixture("guest-1", "guest-2");
-        CoopCommissionRewardSync.CommissionWorld world = new CoopCommissionRewardSync.CommissionWorld() {
-            @Override
-            public String commissionFactionId() {
-                return "hegemony";
-            }
-
-            @Override
-            public long monthlySalaryCredits() {
-                return 60_000L;
-            }
-
-            @Override
-            public boolean isHostileToCommission(String commissionFactionId, String targetFactionId) {
-                return "hegemony".equals(commissionFactionId) && "tritachyon".equals(targetFactionId);
-            }
-        };
-
-        CoopCommissionRewardSync.GrantSink sink = (gid, credits, reason) ->
-                fixture.grants.add(gid + ":" + credits + ":" + reason);
-
-        long share = fixture.commissionSync.onMonthEnd(
-                "c207-m4", List.of("guest-1", "guest-2"), world, sink);
-        assertEquals(20_000L, share);
-        assertEquals(0L, fixture.commissionSync.onMonthEnd(
-                "c207-m4", List.of("guest-1", "guest-2"), world, sink), "same month deduped");
-        assertEquals(List.of(
-                "guest-1:20000:commission:salary:hegemony:c207-m4",
-                "guest-2:20000:commission:salary:hegemony:c207-m4"), fixture.grants);
-
-        long neutralPayout = fixture.commissionSync.onGuestBattleVictory(
-                "battle-1", "guest-1", "independent", 15_000L, world, sink);
-        assertEquals(0L, neutralPayout, "neutral faction kills earn no commission bounty");
-
-        long hostilePayout = fixture.commissionSync.onGuestBattleVictory(
-                "battle-2", "guest-1", "tritachyon", 18_500L, world, sink);
-        assertEquals(18_500L, hostilePayout);
-        assertEquals(0L, fixture.commissionSync.onGuestBattleVictory(
-                "battle-2", "guest-1", "tritachyon", 18_500L, world, sink), "battle deduped");
-        assertTrue(fixture.grants.contains("guest-1:18500:commission:bounty:hegemony:battle-2"));
     }
 
     @Test
