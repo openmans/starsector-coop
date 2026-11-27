@@ -90,6 +90,56 @@ class CoopExtendedFeaturesTest {
     }
 
     @Test
+    void tradeSessionSupportsOneWayCreditGiftUnlockAndRevisionTracking() {
+        CoopTradeSession trade = new CoopTradeSession("t-3", "host", "guest-1");
+        long r0 = trade.revision();
+        assertFalse(trade.hasAnythingOffered());
+        assertEquals("guest-1", trade.otherPlayerId("host"));
+        assertEquals("host", trade.otherPlayerId("guest-1"));
+
+        // One-way money transfer (host sends 75,000 credits, guest sends nothing)
+        assertTrue(trade.updateOffer("host", 75_000L, List.of(), List.of()));
+        assertTrue(trade.revision() > r0);
+        assertTrue(trade.hasAnythingOffered());
+
+        long r1 = trade.revision();
+        assertTrue(trade.lock("host"));
+        assertTrue(trade.lock("guest-1"));
+        assertEquals(CoopTradeSession.State.LOCKED, trade.state());
+        assertTrue(trade.revision() > r1);
+
+        // Host confirms, then guest unlocks to add a commodity -> clears host confirmation & returns to OPEN
+        List<String> transfers = new ArrayList<>();
+        CoopTradeSession.Settlement sink = (from, to, offer) -> {
+            transfers.add(from + "->" + to + ":" + offer.credits() + ":" + offer.cargo().size());
+            return true;
+        };
+        assertTrue(trade.confirm("host", sink));
+        assertTrue(trade.offerOf("host").confirmed());
+
+        assertTrue(trade.unlock("guest-1"));
+        assertEquals(CoopTradeSession.State.OPEN, trade.state());
+        assertFalse(trade.offerOf("guest-1").locked());
+        assertFalse(trade.offerOf("host").confirmed());
+        assertTrue(transfers.isEmpty());
+
+        // Re-lock and confirm both sides -> atomic commit of one-way credit transfer
+        assertTrue(trade.lock("guest-1"));
+        assertEquals(CoopTradeSession.State.LOCKED, trade.state());
+        assertTrue(trade.confirm("host", sink));
+        assertTrue(trade.confirm("guest-1", sink));
+        assertEquals(CoopTradeSession.State.COMMITTED, trade.state());
+        assertEquals(List.of("host->guest-1:75000:0", "guest-1->host:0:0"), transfers);
+
+        // OPEN and UNLOCK wire round-trip
+        String openWire = CoopTradeSession.encodeOffer("t-3", "host", "OPEN", CoopTradeSession.Offer.EMPTY);
+        CoopTradeSession.WireFrame openDecoded = CoopTradeSession.decodeOffer(openWire);
+        assertNotNull(openDecoded);
+        assertEquals("OPEN", openDecoded.action());
+        assertEquals(0L, openDecoded.offer().credits());
+    }
+
+    @Test
     void chatServiceSanitizesBoundsHistoryAndRateLimits() {
         CoopChatService chat = new CoopChatService();
         CoopChatService.ChatMessage m1 = chat.accept("p1", "Alice", "Hello\nworld\t!", 1_000L);

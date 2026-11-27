@@ -41,7 +41,8 @@ public final class CoopPartnerCampaignPlugin extends BaseCampaignPlugin {
             if (label != null && label.startsWith("partner ")) {
                 label = label.substring("partner ".length()).trim();
             }
-            return new PluginPick<>(new CoopPartnerCommPlugin(label), PickPriority.MOD_GENERAL);
+            String partnerId = mem.getString(CoopMirrorTags.PLAYER_MIRROR_OWNER_ID);
+            return new PluginPick<>(new CoopPartnerCommPlugin(partnerId, label), PickPriority.MOD_SPECIFIC);
         } catch (RuntimeException | LinkageError ex) {
             return null;
         }

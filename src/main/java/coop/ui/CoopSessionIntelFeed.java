@@ -71,6 +71,7 @@ public final class CoopSessionIntelFeed {
     private volatile Runnable tacticalMapOpener;
     private volatile Runnable chatOpener;
     private volatile Runnable tradeOpener;
+    private volatile java.util.function.Consumer<String> tradePartnerOpener;
 
     /** Wall-clock timestamp plus the line; the display age is derived at snapshot time. */
     private record EventEntry(long atMillis, String line) {
@@ -181,6 +182,14 @@ public final class CoopSessionIntelFeed {
     public void setCommsHooks(Runnable chatOpener, Runnable tradeOpener) {
         this.chatOpener = chatOpener;
         this.tradeOpener = tradeOpener;
+        this.tradePartnerOpener = tradeOpener == null ? null : ignored -> tradeOpener.run();
+    }
+
+    /** Registers optional openers supporting an explicit partner playerId for direct trade. */
+    public void setCommsHooks(Runnable chatOpener, java.util.function.Consumer<String> tradePartnerOpener) {
+        this.chatOpener = chatOpener;
+        this.tradePartnerOpener = tradePartnerOpener;
+        this.tradeOpener = tradePartnerOpener == null ? null : () -> tradePartnerOpener.accept(null);
     }
 
     public static boolean isChatAvailable() {
@@ -190,7 +199,8 @@ public final class CoopSessionIntelFeed {
 
     public static boolean isTradeAvailable() {
         CoopSessionIntelFeed feed = active;
-        return feed != null && feed.tradeOpener != null && feed.currentRole() != CoopConnectionRole.NONE;
+        return feed != null && (feed.tradePartnerOpener != null || feed.tradeOpener != null)
+                && feed.currentRole() != CoopConnectionRole.NONE;
     }
 
     public static void requestOpenChat() {
@@ -206,8 +216,24 @@ public final class CoopSessionIntelFeed {
     }
 
     public static void requestOpenTrade() {
+        requestOpenTrade(null);
+    }
+
+    public static void requestOpenTrade(String partnerId) {
         CoopSessionIntelFeed feed = active;
-        Runnable opener = feed == null ? null : feed.tradeOpener;
+        if (feed == null) {
+            return;
+        }
+        java.util.function.Consumer<String> targeted = feed.tradePartnerOpener;
+        if (targeted != null) {
+            try {
+                targeted.accept(partnerId);
+            } catch (RuntimeException | LinkageError ignored) {
+                // never crash intel UI
+            }
+            return;
+        }
+        Runnable opener = feed.tradeOpener;
         if (opener != null) {
             try {
                 opener.run();

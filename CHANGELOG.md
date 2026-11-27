@@ -2,6 +2,18 @@
 
 ## 0.2.5 (3-mode Starsector launcher + .exe installer + 3000 su tactical battles & partner comm link)
 
+- **Direct player-to-player commodity exchange & credit transfers on partner fleet click:**
+  clicking a friend's mirrored fleet on the campaign map now releases the engagement shield strictly
+  for the targeted partner mirror (`CoopNetPump.assertMirrorEngagementShields`), identifies the
+  exact partner (`CoopMirrorTags.PLAYER_MIRROR_OWNER_ID` / `CoopPartnerCampaignPlugin`), and opens
+  the Partner Comm Link (`CoopPartnerCommPlugin`) with one-click access to the rebuilt native
+  `CoopTradeDialogPlugin`. Initiating a trade immediately auto-opens the trade window on the
+  partner's screen (`TRADE_SYNC` `OPEN`/`OFFER`/`LOCK`/`UNLOCK`/`CONFIRM`/`CANCEL`) with live
+  frame-by-frame refresh (`CoopTradeSession.revision()`), lists every real commodity stack in the
+  player's cargo with native icons and clamped `-50/-10/-1/+1/+10/+50/All` controls, supports
+  custom credit amounts + quick `+1k/+10k/+50k/+100k` transfer buttons (both two-way swaps and
+  one-way gifts), enforces two-step mutual confirmation (`Lock` -> `Confirm`) with automatic unlock
+  on any edit, and atomically validates both credits and every commodity stack before settling.
 - **Baldur's Gate 3-style live dialog, trade & Comm Directory spectating, partner cursor & option voting:**
   added symmetric Host &harr; Guest live mirroring (`CoopDialogSpectatorBridge`,
   `CoopDialogSpectatorState`, `CoopDialogSpectatorPlugin`, `DIALOG_SYNC` / `DIALOG_VOTE`): whenever

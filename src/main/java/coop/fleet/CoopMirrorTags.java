@@ -12,6 +12,8 @@ package coop.fleet;
 public final class CoopMirrorTags {
 
     public static final String PLAYER_MIRROR_TAG = "$coopMirrorFleet";
+    /** Stable co-op playerId of the remote player represented by a player mirror fleet. */
+    public static final String PLAYER_MIRROR_OWNER_ID = "$coopMirrorPlayerId";
     public static final String NPC_MIRROR_TAG = "$coopNpcFleetId";
 
     /**

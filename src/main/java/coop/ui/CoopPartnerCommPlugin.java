@@ -26,10 +26,16 @@ public final class CoopPartnerCommPlugin implements InteractionDialogPlugin {
     private static final String OPT_TOGGLE_LANG = "comm_toggle_lang";
     private static final String OPT_CLOSE = "comm_close";
 
+    private final String partnerId;
     private final String partnerName;
     private InteractionDialogAPI dialog;
 
     public CoopPartnerCommPlugin(String partnerName) {
+        this(null, partnerName);
+    }
+
+    public CoopPartnerCommPlugin(String partnerId, String partnerName) {
+        this.partnerId = partnerId == null || partnerId.isBlank() ? null : partnerId.trim();
         this.partnerName = partnerName == null || partnerName.isBlank() ? "Partner" : partnerName.trim();
     }
 
@@ -45,7 +51,7 @@ public final class CoopPartnerCommPlugin implements InteractionDialogPlugin {
         switch (id) {
             case OPT_TRADE -> {
                 dismiss();
-                CoopSessionIntelFeed.requestOpenTrade();
+                CoopSessionIntelFeed.requestOpenTrade(partnerId);
             }
             case OPT_CHAT -> {
                 dismiss();
@@ -92,8 +98,8 @@ public final class CoopPartnerCommPlugin implements InteractionDialogPlugin {
                 Misc.getGrayColor());
 
         opts.addOption(CoopUiLang.tr(
-                "Trade with " + partnerName + " (credits / supplies / fuel)",
-                "Торговля с " + partnerName + " (кредиты / припасы / топливо)"), OPT_TRADE);
+                "Trade goods & transfer credits with " + partnerName,
+                "Обмен товарами и передача кредитов с " + partnerName), OPT_TRADE);
         opts.addOption(CoopUiLang.tr("Open Co-op Chat", "Открыть чат коопа"), OPT_CHAT);
         opts.addOption(allyOn
                 ? CoopUiLang.tr("Turn Fight Alongside OFF", "Выключить «Сражаться вместе»")

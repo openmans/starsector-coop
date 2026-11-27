@@ -1094,7 +1094,8 @@ public class CoopNetPump implements EveryFrameScript {
         // checkpoint above — a game load replaces the previous session's feed.
         this.intelFeed.setTacticalMapHook(battleBridge::isRemoteBattleActive,
                 this::requestTacticalMapDialog);
-        this.intelFeed.setCommsHooks(this::requestChatDialog, this::requestTradeDialog);
+        this.intelFeed.setCommsHooks(this::requestChatDialog,
+                (java.util.function.Consumer<String>) this::requestTradeDialog);
         this.sessionState.setMaxGuests(this.service.peerCapacity());
         coop.ui.CoopSessionIntelFeed.install(this.intelFeed);
         // Phase 28: same static-handle argument. The options page is constructed by the intel screen
@@ -7422,20 +7423,22 @@ public class CoopNetPump implements EveryFrameScript {
         // One clock read for the whole pass: the mirrors rate-limit their engine call against it (the
         // noEngaging fader lasts ~1 s, so refreshing it every frame per mirror was pure allocation).
         long now = clockMillis.getAsLong();
-        fleetMirror.assertEngagementShield(now);
+        // Release the shield ONLY for the exact fleet the local player clicked/targeted so clicking a
+        // partner's mirror fleet can open CoopPartnerCommPlugin (Direct Trade & Comm Link), while
+        // keeping every non-targeted mirror shielded against accidental engagement.
+        ScreenTargets targets = screenTargets();
+        fleetMirror.assertEngagementShield(targets.engagementTarget(), now);
         for (CoopFleetMirror extra : extraPlayerMirrors.values()) {
-            extra.assertEngagementShield(now);
+            extra.assertEngagementShield(targets.engagementTarget(), now);
         }
         // Phase 14b: the remote player's sensor identity has to be re-pinned every frame — the engine
         // rewrites sensor strength from the roster each frame and local terrain re-applies its own
         // detectability mods each frame. See CoopSensorSync.
         fleetMirror.assertSensorState();
         if (npcFleetRegistry.size() == 0) {
-            // Host (or a guest before the first NPC_FLEET_SET): nothing to shield, so skip the sector
-            // read entirely rather than paying for it every frame.
+            // Host (or a guest before the first NPC_FLEET_SET): nothing further to shield.
             return;
         }
-        ScreenTargets targets = screenTargets();
         npcFleetRegistry.assertEngagementShields(targets.engagementTarget(), now);
         // 2026-09-13: the other half of the same sector read. While a dialog IS open the registry
         // holds structural rebuilds of the mirror it opened on — a roster rebuilt underneath an open
@@ -10095,21 +10098,62 @@ public class CoopNetPump implements EveryFrameScript {
             String localId = sessionState.localPlayerId();
             String remoteId = frame.playerId().isEmpty()
                     ? (message.senderId() == null ? "partner" : message.senderId()) : frame.playerId();
+            if (localId.equals(remoteId)) {
+                return;
+            }
+            String remoteName = sessionState.guestDisplayName(remoteId);
+            if ("CANCEL".equals(frame.action())) {
+                if (activeTradeSession != null && activeTradeSession.tradeId().equals(frame.tradeId())) {
+                    activeTradeSession.cancel("partner-cancelled");
+                    if (!tradeDialogs.isShown()) {
+                        tradeDialogs.close();
+                        coop.ui.CoopFeed.post(coop.ui.CoopUiLang.tr(
+                                        remoteName + " cancelled the trade.",
+                                        remoteName + " отменил обмен."),
+                                null, coop.ui.CoopFeed.Severity.IMPORTANT);
+                    }
+                }
+                return;
+            }
+            boolean newlyOpened = false;
             if (activeTradeSession == null || !activeTradeSession.tradeId().equals(frame.tradeId())) {
                 activeTradeSession = new coop.trade.CoopTradeSession(frame.tradeId(), remoteId, localId);
+                newlyOpened = true;
             }
             switch (frame.action()) {
+                case "OPEN" -> {
+                    // Session initialized above; auto-open below.
+                }
                 case "OFFER" -> activeTradeSession.updateOffer(remoteId, frame.offer().credits(),
                         frame.offer().cargo(), frame.offer().shipMemberIds());
                 case "LOCK" -> activeTradeSession.lock(remoteId);
+                case "UNLOCK" -> activeTradeSession.unlock(remoteId);
                 case "CONFIRM" -> activeTradeSession.confirm(remoteId, this::settleTradeTransfer);
-                case "CANCEL" -> activeTradeSession.cancel("partner-cancelled");
                 default -> {
                 }
             }
-            coop.ui.CoopFeed.post("Co-op trade [" + frame.action() + "] updated by "
-                            + sessionState.guestDisplayName(remoteId) + ".",
-                    null, coop.ui.CoopFeed.Severity.IMPORTANT);
+            if (newlyOpened) {
+                coop.ui.CoopFeed.post(coop.ui.CoopUiLang.tr(
+                                remoteName + " opened a direct trade with you!",
+                                remoteName + " предлагает обмен!"),
+                        com.fs.starfarer.api.util.Misc.getHighlightColor(),
+                        coop.ui.CoopFeed.Severity.IMPORTANT);
+            }
+            coop.trade.CoopTradeSession.State st = activeTradeSession.state();
+            if (st == coop.trade.CoopTradeSession.State.OPEN
+                    || st == coop.trade.CoopTradeSession.State.LOCKED) {
+                if (dialogSpectatorDialogs.isRequested()) {
+                    dialogSpectatorDialogs.close();
+                }
+                openTradeDialog(activeTradeSession, localId, remoteId);
+            } else if (st == coop.trade.CoopTradeSession.State.COMMITTED && !tradeDialogs.isShown()) {
+                tradeDialogs.close();
+                coop.ui.CoopFeed.post(coop.ui.CoopUiLang.tr(
+                                "Trade with " + remoteName + " completed!",
+                                "Обмен с " + remoteName + " успешно завершён!"),
+                        com.fs.starfarer.api.util.Misc.getPositiveHighlightColor(),
+                        coop.ui.CoopFeed.Severity.IMPORTANT);
+            }
         } catch (RuntimeException | LinkageError ex) {
             CoopLog.warn(CoopNetPump.class, "Failed to handle TRADE_SYNC", ex);
         }
@@ -10968,30 +11012,71 @@ public class CoopNetPump implements EveryFrameScript {
     }
 
     /** Opens the direct player-to-player trade dialog from Intel or Partner Comm Link. */
-    private void requestTradeDialog() {
+    private void requestTradeDialog(String explicitPartnerId) {
         if (!isGameplaySessionActive()) {
             return;
         }
         String localId = sessionState.localPlayerId();
-        String partnerId = sessionState.remotePlayerId();
+        String partnerId = (explicitPartnerId != null && !explicitPartnerId.isBlank()
+                && !explicitPartnerId.trim().equals(localId))
+                ? explicitPartnerId.trim()
+                : sessionState.remotePlayerId();
         if (partnerId == null || partnerId.isBlank()) {
             partnerId = "partner";
         }
-        if (activeTradeSession == null
-                || activeTradeSession.state() == coop.trade.CoopTradeSession.State.COMMITTED
-                || activeTradeSession.state() == coop.trade.CoopTradeSession.State.CANCELLED) {
+        boolean reuseExisting = activeTradeSession != null
+                && activeTradeSession.state() != coop.trade.CoopTradeSession.State.COMMITTED
+                && activeTradeSession.state() != coop.trade.CoopTradeSession.State.CANCELLED
+                && (partnerId.equals(activeTradeSession.partnerId())
+                || partnerId.equals(activeTradeSession.initiatorId()));
+        if (!reuseExisting) {
+            if (activeTradeSession != null
+                    && activeTradeSession.state() != coop.trade.CoopTradeSession.State.COMMITTED
+                    && activeTradeSession.state() != coop.trade.CoopTradeSession.State.CANCELLED) {
+                String oldPartner = activeTradeSession.otherPlayerId(localId);
+                activeTradeSession.cancel("superseded");
+                sendTradeFrame(oldPartner, coop.trade.CoopTradeSession.encodeOffer(
+                        activeTradeSession.tradeId(), localId, "CANCEL",
+                        coop.trade.CoopTradeSession.Offer.EMPTY));
+            }
             activeTradeSession = new coop.trade.CoopTradeSession(
                     "trade-" + clockMillis.getAsLong(), localId, partnerId);
+            sendTradeFrame(partnerId, coop.trade.CoopTradeSession.encodeOffer(
+                    activeTradeSession.tradeId(), localId, "OPEN",
+                    coop.trade.CoopTradeSession.Offer.EMPTY));
+        }
+        if (dialogSpectatorDialogs.isRequested()) {
+            dialogSpectatorDialogs.close();
+        }
+        openTradeDialog(activeTradeSession, localId, partnerId);
+    }
+
+    private void openTradeDialog(coop.trade.CoopTradeSession session, String localId, String partnerId) {
+        if (tradeDialogs.isRequested()
+                && tradeDialogs.pending() instanceof coop.ui.CoopTradeDialogPlugin existing
+                && existing.tradeId().equals(session.tradeId())) {
+            return;
         }
         String partnerName = sessionState.guestDisplayName(partnerId);
         coop.ui.CoopTradeDialogPlugin plugin = new coop.ui.CoopTradeDialogPlugin(
-                activeTradeSession,
+                session,
                 localId,
                 partnerName,
-                wire -> service.send(CoopMessages.tradeSync(
-                        sessionState.sessionId(), service.nextSeq(), clockMillis.getAsLong(), wire)),
-                this::settleTradeTransfer);
+                wire -> sendTradeFrame(partnerId, wire),
+                this::settleTradeTransfer,
+                tradeDialogs::close);
         tradeDialogs.request(plugin);
+    }
+
+    private void sendTradeFrame(String partnerId, String wire) {
+        CoopMessages.Message msg = CoopMessages.tradeSync(
+                sessionState.sessionId(), service.nextSeq(), clockMillis.getAsLong(), wire);
+        if (service.role() == CoopConnectionRole.HOST
+                && partnerId != null && !partnerId.isBlank() && !"partner".equals(partnerId)) {
+            service.sendTo(partnerId, msg);
+        } else {
+            service.send(msg);
+        }
     }
 
     private boolean settleTradeTransfer(String fromPlayerId, String toPlayerId,
@@ -11005,10 +11090,17 @@ public class CoopNetPump implements EveryFrameScript {
             }
             String localId = sessionState.localPlayerId();
             if (localId.equals(fromPlayerId)) {
-                if (offer.credits() > 0L) {
-                    if (fleet.getCargo().getCredits().get() < offer.credits()) {
+                // Validate credits AND all cargo commodities BEFORE deducting anything.
+                if (offer.credits() > 0L && fleet.getCargo().getCredits().get() < offer.credits()) {
+                    return false;
+                }
+                for (coop.trade.CoopTradeSession.CargoItem item : offer.cargo()) {
+                    if (item.quantity() > 0
+                            && fleet.getCargo().getCommodityQuantity(item.commodityId()) < item.quantity()) {
                         return false;
                     }
+                }
+                if (offer.credits() > 0L) {
                     fleet.getCargo().getCredits().subtract(offer.credits());
                 }
                 for (coop.trade.CoopTradeSession.CargoItem item : offer.cargo()) {

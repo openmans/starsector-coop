@@ -68,6 +68,7 @@ public final class CoopTradeSession {
     private final Map<String, Offer> offers = new LinkedHashMap<>();
     private State state = State.OPEN;
     private String cancelReason = "";
+    private long revision = 1L;
 
     public CoopTradeSession(String tradeId, String initiatorId, String partnerId) {
         this.tradeId = requireNonBlank(tradeId, "tradeId");
@@ -96,6 +97,11 @@ public final class CoopTradeSession {
         return state;
     }
 
+    /** Monotonic change counter incremented on every offer/lock/unlock/confirm/cancel update. */
+    public synchronized long revision() {
+        return revision;
+    }
+
     public synchronized String cancelReason() {
         return cancelReason;
     }
@@ -103,6 +109,30 @@ public final class CoopTradeSession {
     public synchronized Offer offerOf(String playerId) {
         Offer o = offers.get(playerId);
         return o == null ? Offer.EMPTY : o;
+    }
+
+    public String otherPlayerId(String playerId) {
+        return otherOf(playerId);
+    }
+
+    /** True when at least one side has offered credits, commodities, or ships. */
+    public synchronized boolean hasAnythingOffered() {
+        return !isOfferEmpty(offers.get(initiatorId)) || !isOfferEmpty(offers.get(partnerId));
+    }
+
+    private static boolean isOfferEmpty(Offer o) {
+        if (o == null) {
+            return true;
+        }
+        if (o.credits() > 0L || !o.shipMemberIds().isEmpty()) {
+            return false;
+        }
+        for (CargoItem item : o.cargo()) {
+            if (item.quantity() > 0 && !item.commodityId().isEmpty()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Updates one player's offer and unlocks both sides to prevent bait-and-switch. */
@@ -115,6 +145,7 @@ public final class CoopTradeSession {
         String other = otherOf(playerId);
         offers.put(other, offers.get(other).unlocked());
         state = State.OPEN;
+        revision++;
         return true;
     }
 
@@ -127,6 +158,27 @@ public final class CoopTradeSession {
         if (bothLocked()) {
             state = State.LOCKED;
         }
+        revision++;
+        return true;
+    }
+
+    /**
+     * Unlocks a player's offer before commit so they can keep editing; also clears any pending
+     * confirmations and returns the session to {@link State#OPEN}.
+     */
+    public synchronized boolean unlock(String playerId) {
+        if (!isParticipant(playerId) || state == State.COMMITTED || state == State.CANCELLED) {
+            return false;
+        }
+        offers.put(playerId, offers.get(playerId).unlocked());
+        String other = otherOf(playerId);
+        Offer otherOffer = offers.get(other);
+        if (otherOffer.confirmed()) {
+            offers.put(other, new Offer(otherOffer.credits(), otherOffer.cargo(),
+                    otherOffer.shipMemberIds(), otherOffer.locked(), false));
+        }
+        state = State.OPEN;
+        revision++;
         return true;
     }
 
@@ -140,6 +192,7 @@ public final class CoopTradeSession {
             return false;
         }
         offers.put(playerId, offers.get(playerId).withConfirmed(true));
+        revision++;
         if (!bothConfirmed()) {
             return true;
         }
@@ -158,6 +211,7 @@ public final class CoopTradeSession {
             return false;
         }
         state = State.COMMITTED;
+        revision++;
         return true;
     }
 
@@ -167,6 +221,7 @@ public final class CoopTradeSession {
         }
         state = State.CANCELLED;
         cancelReason = reason == null ? "cancelled" : reason.trim();
+        revision++;
     }
 
     private boolean isParticipant(String playerId) {

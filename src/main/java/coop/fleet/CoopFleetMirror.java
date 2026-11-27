@@ -412,6 +412,11 @@ public class CoopFleetMirror implements CoopNpcMirror {
         // selection, which the snapshot driving overrides anyway.
         playerMirror = true;
         stampPlayerMirrorMemory(mirrorFleet.getMemoryWithoutUpdate(), allyAllowed);
+        if (mirrorFleet.getMemoryWithoutUpdate() != null
+                && snapshot.playerId() != null && !snapshot.playerId().isBlank()) {
+            mirrorFleet.getMemoryWithoutUpdate().set(
+                    CoopMirrorTags.PLAYER_MIRROR_OWNER_ID, snapshot.playerId().trim());
+        }
         // This is the only thing in the mod that creates a player mirror, so publishing it here is
         // what lets the host's per-frame consumers stop scanning the sector for it. See
         // CoopGuestMirrorHandle.
