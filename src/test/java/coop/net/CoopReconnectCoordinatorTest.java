@@ -414,4 +414,50 @@ class CoopReconnectCoordinatorTest {
             events.add("ended:" + previous + ":" + reason);
         }
     }
+
+    // ---- multiguest per-peer grace (Item 2.6) ----------------------------------------------------
+
+    @Test
+    void aPerPeerGraceAcceptsOnlyThatGuestsResumeAndLeavesTheSessionRunning() {
+        CoopReconnectCoordinator reconnect = coordinator();
+
+        assertTrue(reconnect.beginHostWaitForPeer(SESSION, "guest-b", 1_000L));
+        assertFalse(reconnect.beginHostWaitForPeer(SESSION, "guest-b", 1_500L),
+                "one window per peer, not one per drop event");
+        assertTrue(reconnect.isPeerWaiting("guest-b"));
+        assertFalse(reconnect.active(), "a per-peer window never holds the whole session");
+
+        assertEquals(CoopReconnectCoordinator.ResumeDecision.ACCEPT,
+                reconnect.evaluatePeerResumeRequest(SESSION, "guest-b"));
+        // A peer with no window of its own falls through to the single-peer table, which is closed.
+        assertEquals(CoopReconnectCoordinator.ResumeDecision.REJECT_NOT_WAITING,
+                reconnect.evaluatePeerResumeRequest(SESSION, "guest-c"));
+        assertEquals(CoopReconnectCoordinator.ResumeDecision.REJECT_SESSION_MISMATCH,
+                reconnect.evaluatePeerResumeRequest("other-session", "guest-b"));
+
+        assertTrue(reconnect.resumePeer("guest-b"));
+        assertFalse(reconnect.isPeerWaiting("guest-b"));
+        assertFalse(reconnect.resumePeer("guest-b"), "the window is gone after the first resume");
+    }
+
+    @Test
+    void anExpiredPerPeerWindowIsReportedOnceAndDropsOffTheTable() {
+        CoopReconnectCoordinator reconnect = coordinator();
+        reconnect.beginHostWaitForPeer(SESSION, "guest-b", 1_000L);
+        reconnect.beginHostWaitForPeer(SESSION, "guest-c", 30_000L);
+
+        assertTrue(reconnect.tickExpiredPeers(1_000L + GRACE - 1).isEmpty());
+        assertEquals(List.of("guest-b"), reconnect.tickExpiredPeers(1_000L + GRACE));
+        assertTrue(reconnect.tickExpiredPeers(1_000L + GRACE + 1).isEmpty(),
+                "an expired peer is reported once, not every tick");
+        assertTrue(reconnect.isPeerWaiting("guest-c"));
+    }
+
+    @Test
+    void aPerPeerGraceIsRefusedWithoutAGraceWindow() {
+        CoopReconnectCoordinator reconnect = new CoopReconnectCoordinator(0L, listener);
+
+        assertFalse(reconnect.beginHostWaitForPeer(SESSION, "guest-b", 1_000L),
+                "reconnectGraceSeconds=0 disables every window, per-peer included");
+    }
 }

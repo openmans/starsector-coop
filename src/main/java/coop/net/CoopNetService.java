@@ -394,6 +394,21 @@ public class CoopNetService {
     private long keepalivesReceived;
     private long icmpTransients;
     private long oversizedDatagrams;
+    /**
+     * Multiguest drop events: the sender id of every proven link that went away, in order. The pump
+     * drains this to open a per-peer reconnect grace; a single-peer session ignores it and uses the
+     * aggregate {@link #isConnected()} edge as before.
+     */
+    private final java.util.Deque<String> droppedPeerIds = new java.util.ArrayDeque<>();
+    private static final int MAX_DROPPED_PEER_EVENTS = 16;
+
+    /** One dropped proven peer's sender id, or null. Multiguest reconnect reads this. */
+    public String pollDroppedPeer() {
+        synchronized (lifecycleLock) {
+            return droppedPeerIds.pollFirst();
+        }
+    }
+
     /** Datagrams that failed to open (wrong key / encryption mismatch); counted apart from garbage. */
     private long droppedUndecryptableDatagrams;
     private boolean undecryptableDatagramWarned;
@@ -3209,6 +3224,18 @@ public class CoopNetService {
         SocketChannel channel = peer.channel();
         if (channel == null) {
             return;
+        }
+        if (peer.proven()) {
+            // Multiguest: the aggregate isConnected() stays true while other guests are up, so the
+            // pump cannot see this drop at all. The id is the only thing that names whose grace
+            // window to open, and it is read before detach() forgets the link.
+            String droppedId = peer.senderId();
+            if (droppedId != null && !droppedId.isBlank()) {
+                droppedPeerIds.addLast(droppedId.trim());
+                while (droppedPeerIds.size() > MAX_DROPPED_PEER_EVENTS) {
+                    droppedPeerIds.removeFirst();
+                }
+            }
         }
         if (peer.proven() && peer.pinnedPeerAddress() != null) {
             // A link that had proved a session is a peer worth letting back in; see isKnownPeerLocked.

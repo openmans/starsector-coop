@@ -3729,6 +3729,7 @@ public class CoopNetPump implements EveryFrameScript {
         resendSnapshotsDroppedByQueueOverflow();
         t = profiler.split(SECTION_FLUSH_OUTBOUND_PRE, t);
         detectPeerDisconnect();
+        drainDroppedPeerIds();
         // Before the inbound drain: the session edge resets the link measurements, and a LINK_STATUS
         // that lands on the same frame the session goes live must survive that reset.
         syncLinkSupervisionArming();
@@ -4571,6 +4572,36 @@ public class CoopNetPump implements EveryFrameScript {
      * false; the host's connect-time pause hold also re-engages, so the world stops advancing while
      * the partner is gone.
      */
+    /**
+     * Item 2.6: multiguest drops are invisible to {@link #detectPeerDisconnect()} - its edge is the
+     * aggregate {@code isConnected()}, which stays true while any other guest is up. The transport
+     * names each proven link that went away instead, and here that becomes an independent grace
+     * window: the session keeps running for everybody else, the dropped guest's slot and roster row
+     * stay put, and its {@code SESSION_RESUME_REQUEST} is accepted from the per-peer table rather
+     * than refused for a window this host never opened.
+     */
+    private void drainDroppedPeerIds() {
+        String peerId;
+        while ((peerId = service.pollDroppedPeer()) != null) {
+            if (service.role() != CoopConnectionRole.HOST || sessionState.maxGuests() <= 1
+                    || !isGameplaySessionActive() || !service.isConnected()) {
+                // Single-guest hosts and dead sessions keep the aggregate path; nothing else changed.
+                continue;
+            }
+            String sessionId = sessionState.sessionId();
+            long now = clockMillis.getAsLong();
+            if (!reconnect.beginHostWaitForPeer(sessionId, peerId, now)) {
+                continue;
+            }
+            String name = sessionState.guestDisplayName(peerId);
+            postFeed(FEED_RECONNECT_WAIT, now, "Co-op: " + name
+                    + " dropped - holding their slot for " + reconnect.remainingSeconds(now)
+                    + " s while the session keeps running.", FEED_WARN_COLOR);
+            CoopLog.warn(CoopNetPump.class, "Coop guest " + peerId + " dropped mid-session; holding"
+                    + " a per-peer grace window, the session continues");
+        }
+    }
+
     private void detectPeerDisconnect() {
         boolean connected = service.isConnected();
         // Unconditionally, every frame: the generation has to be tracked even across frames where
@@ -4956,7 +4987,22 @@ public class CoopNetPump implements EveryFrameScript {
             return;
         }
         reconnect.tick(clockMillis.getAsLong());
+        tickExpiredPeerGraces();
         reconnectDialogs.tick();
+    }
+
+    /** Item 2.6: a per-peer window that ran out drops that guest's row; the others are untouched. */
+    private void tickExpiredPeerGraces() {
+        java.util.List<String> expired = reconnect.tickExpiredPeers(clockMillis.getAsLong());
+        for (String peerId : expired) {
+            String name = sessionState.guestDisplayName(peerId);
+            if (sessionState.hostRemoveGuest(peerId)) {
+                CoopLog.warn(CoopNetPump.class, "Coop guest " + peerId
+                        + " did not return within the grace window; slot released");
+                postFeed(FEED_RECONNECT_WAIT, clockMillis.getAsLong(),
+                        "Co-op: " + name + " did not come back; their slot is free.", FEED_WARN_COLOR);
+            }
+        }
     }
 
     /** Guest: one {@code SESSION_RESUME_REQUEST} per reconnected socket, in place of the lobby hello. */
@@ -5009,8 +5055,9 @@ public class CoopNetPump implements EveryFrameScript {
         }
         String requestSession = CoopMessages.parseResumeSessionId(message);
         String requestPlayer = CoopMessages.parseResumePlayerId(message);
+        boolean peerGrace = reconnect.isPeerWaiting(requestPlayer);
         CoopReconnectCoordinator.ResumeDecision decision =
-                reconnect.evaluateResumeRequest(requestSession, requestPlayer);
+                reconnect.evaluatePeerResumeRequest(requestSession, requestPlayer);
         if (!decision.accepted()) {
             String reason = CoopReconnectCoordinator.rejectReason(decision);
             CoopMessages.Message reject = CoopMessages.sessionResumeReject(
@@ -5031,7 +5078,16 @@ public class CoopNetPump implements EveryFrameScript {
         log("outbound", accept);
         // Only after the accept is queued: the resume re-sets the datagram token and forces the
         // rebroadcast, and both belong strictly after the guest has been told it may keep the session.
-        reconnect.resume();
+        if (peerGrace) {
+            // Item 2.6: one guest of several came back. Closing the per-peer window must not run the
+            // single-peer resume (that would release a hold nobody took and reset the shared clock
+            // samples for the guests that never left).
+            reconnect.resumePeer(requestPlayer);
+            CoopLog.info(CoopNetPump.class, "Coop guest " + requestPlayer
+                    + " resumed inside its own grace window; the session was never held");
+        } else {
+            reconnect.resume();
+        }
         // S4-I: this socket has now cleared the password gate and named the session it is resuming,
         // so whatever it said while the gate was shut may be applied. Before the replay below, so the
         // guest's own pre-resume events are dispatched in arrival order ahead of our echo of them.
