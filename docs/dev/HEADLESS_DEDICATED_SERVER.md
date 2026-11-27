@@ -1,9 +1,13 @@
+﻿> **ВНИМАНИЕ / WARNING (Консервация / Archived WIP):**
+> Выделенный сервер (Dedicated Host / Headless Null-LWJGL) законсервирован в этой ветке (rchive/dedicated-server-wip).
+> В текущем состоянии он **кривой и лагает** (проблемы с синхронизацией и плавностью движения юнитов).
+> В основной ветке port/rc9 оставлен только встроенный в игру клиент-серверный режим.
 # Headless dedicated server (Null-LWJGL)
 
 Status: **implemented and smoke-tested on Windows** (`0.98.5a-RC9`, mod `0.2.20`).
 Design: `docs/dev/HEADLESS_DEDICATED_SERVER_PLAN.md`. Audit: `docs/dev/HEADLESS_LWJGL_AUDIT.md`.
 
-The server runs the **real** `starfarer_obf.jar` — campaign engine, XStream saves, mods and
+The server runs the **real** `starfarer_obf.jar` вЂ” campaign engine, XStream saves, mods and
 `coop.jar` are untouched. Only LWJGL is replaced: `jars/coop-headless-lwjgl.jar` sits first on the
 classpath and every `org.lwjgl.*` class resolves to a stub that creates no window, loads no native
 library and issues no GL/AL call. No GPU, no OpenGL/OpenAL driver, no X server, no Xvfb.
@@ -52,14 +56,14 @@ killing the process mid-write.
 
 `tools/headless/gen_null_lwjgl.py` reads the game's `lwjgl.jar`, walks every class reachable from
 the audit seeds, and emits a complete stand-in: same fields (with their real constant values), same
-method descriptors, same superclasses/interfaces. Only a handful of methods carry behaviour —
+method descriptors, same superclasses/interfaces. Only a handful of methods carry behaviour вЂ”
 `Display` (virtual 1024x768 mode, frame pacing, close flag), `glGen*`/`alGen*` id counters,
 `glGetInteger`/`glGetString`/`glGet*` answers, `glCheckFramebufferStatusEXT` = complete,
 `alGetSourcei(state)` = stopped, `Sys.getTime`, `Keyboard`/`Mouse` no-ops, `AL` "created" with
 `ALC` extension queries false. Everything else is a no-op.
 
 The jar is a **complete LWJGL replacement**: it also carries the original classes the engine still
-needs (`BufferUtils`, the vector classes, the Java tessellator). Copying them is not cosmetic —
+needs (`BufferUtils`, the vector classes, the Java tessellator). Copying them is not cosmetic вЂ”
 `lwjgl.jar` is `Sealed: true`, so mixing classes from two jars in package `org.lwjgl` fails with
 `sealing violation: can't seal package org.lwjgl: already defined`. One jar, one code source.
 
@@ -73,12 +77,12 @@ python tools/headless/audit_lwjgl.py <jars>        # refresh docs/dev/HEADLESS_L
 
 ### Two engine-level shims
 
-1. **`com.fs.starfarer.combat.CombatMain`** — a source shim that forwards to the real class, which
+1. **`com.fs.starfarer.combat.CombatMain`** вЂ” a source shim that forwards to the real class, which
    ships renamed as `coop.headless.RealCombatMain`. The launcher calls
    `CombatMain.main(new String[]{w, h, fullscreen})`; with three arguments the real class probes
    `Toolkit.getScreenSize()` and its own catch answers with `System.exit(1)` when that throws (no
-   display). The shim always passes zero arguments — the display is fixed by the stub anyway.
-2. **`com.fs.starfarer.launcher.ooOO…` (the launcher settings class)** — its screen-scale method
+   display). The shim always passes zero arguments вЂ” the display is fixed by the stub anyway.
+2. **`com.fs.starfarer.launcher.ooOOвЂ¦` (the launcher settings class)** вЂ” its screen-scale method
    computes `Toolkit.getDefaultToolkit().getScreenSize()`, and `CombatMain` calls it
    unconditionally. The committed class has those six bytes rewritten to
    `coop.headless.HeadlessScreen.size()` (same length, so no offset moves), which removes the last
@@ -107,9 +111,10 @@ Not verified live: a graphical client joining a headless host, and `kick` agains
 ## Notes and limits
 
 - `coop.maxGuests` is clamped by the mod to 3 (4 players total); asking for more only logs a warning.
-- The dedicated host still runs UPnP port mapping (`-Dcoop.portMapping=off` disables it) — on a
+- The dedicated host still runs UPnP port mapping (`-Dcoop.portMapping=off` disables it) вЂ” on a
   test box that maps the router, so pass `off` unless the server should be reachable from outside.
 - Save cadence: the periodic autosave (10 min, guests present) and `save`/`stop` all go through
   `CampaignUIAPI.autosave()`, so they are skipped while a blocking screen is open and retried.
 - The headless jar is never on a graphical client's classpath; `coop.jar` only gains the console
   class, which is inert without `-Dcoop.headless=true`.
+
