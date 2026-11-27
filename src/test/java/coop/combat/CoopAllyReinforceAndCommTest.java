@@ -67,13 +67,13 @@ class CoopAllyReinforceAndCommTest {
         assertTrue(coord.consumeAutoOpenTacticalMap());
         assertFalse(coord.consumeAutoOpenTacticalMap(), "one-shot consume");
 
-        coord.noteLocalChoice(CoopAllyReinforceCoordinator.JoinChoice.JOIN_WINGMAN);
+        coord.noteLocalChoice(CoopAllyReinforceCoordinator.JoinChoice.JOIN_LIVE_COMBAT);
         assertFalse(coord.consumeAutoOpenTacticalMap());
-        assertTrue(coord.isWingmanDirectControlRequested());
+        assertTrue(coord.isLiveCombatRequested());
 
         coord.noteLocalChoice(CoopAllyReinforceCoordinator.JoinChoice.JOIN_AI);
         assertFalse(coord.consumeAutoOpenTacticalMap());
-        assertFalse(coord.isWingmanDirectControlRequested());
+        assertFalse(coord.isLiveCombatRequested());
 
         assertNotNull(coord.consumeOutgoingOffer(offer.offerId()));
         assertNull(coord.consumeOutgoingOffer(offer.offerId()));

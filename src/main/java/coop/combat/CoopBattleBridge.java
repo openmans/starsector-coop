@@ -443,15 +443,51 @@ public final class CoopBattleBridge {
 
     // ---- combat-thread entry point ---------------------------------------------------------------
 
+    /** Hook for built-in real-time co-op physical combat (Authority streaming & Puppet Client). */
+    public interface LiveCombatHook {
+        boolean isClientArenaActive();
+
+        void onClientCombatFrame(CombatEngineAPI engine, float dt,
+                                 List<com.fs.starfarer.api.input.InputEventAPI> events, long nowMillis);
+
+        void onAuthorityCombatFrame(CombatEngineAPI engine, String battleId,
+                                    java.util.Set<String> partnerMemberIds, long nowMillis);
+
+        void onAuthorityBattleEnded();
+    }
+
+    private LiveCombatHook liveCombatHook;
+
+    public void setLiveCombatHook(LiveCombatHook hook) {
+        this.liveCombatHook = hook;
+    }
+
     /**
-     * One combat frame on the engaging client. Begins the coop battle on the first frame and then
-     * captures/sends {@code BATTLE_STATUS} on the throttle. Never throws.
+     * One combat frame on the engaging client (or live co-op puppet client). Begins the coop battle
+     * on the first frame and then captures/sends {@code BATTLE_STATUS} and live combat streams.
      */
     public void onCombatFrame(CombatEngineAPI engine, long nowMillis) {
+        onCombatFrame(engine, 1f / 60f, List.of(), nowMillis);
+    }
+
+    public void onCombatFrame(CombatEngineAPI engine, float dt,
+                              List<com.fs.starfarer.api.input.InputEventAPI> events, long nowMillis) {
         if (engine == null || !isSessionActive() || !service.isConnected()) {
             return;
         }
         try {
+            // Native real-time co-op client puppet arena: never classify as a local campaign battle.
+            LiveCombatHook hook = liveCombatHook;
+            if (hook != null && hook.isClientArenaActive()) {
+                service.beginFrame();
+                Consumer<CombatEngineAPI> drainer = combatInboundDrainer;
+                if (drainer != null) {
+                    drainer.accept(engine);
+                }
+                hook.onClientCombatFrame(engine, dt, events, nowMillis);
+                service.flushOutbound();
+                return;
+            }
             if (!isCampaignBattle(engine)) {
                 return;
             }
@@ -512,6 +548,10 @@ public final class CoopBattleBridge {
             Consumer<CombatEngineAPI> drainer = combatInboundDrainer;
             if (drainer != null) {
                 drainer.accept(engine);
+            }
+            if (hook != null) {
+                hook.onAuthorityCombatFrame(engine, localBattleId, collectAlliedShipIds(engine), nowMillis);
+                service.flushOutbound();
             }
             if (nowMillis < nextStatusAtMillis) {
                 return;
@@ -878,6 +918,9 @@ public final class CoopBattleBridge {
         localBattleActive = false;
         lastCombatEndedAtMillis = clock.getAsLong();
         sawCombatFrame = false;
+        if (liveCombatHook != null) {
+            liveCombatHook.onAuthorityBattleEnded();
+        }
         lastSeenShips.clear();
         localBattleNpcFleetIds.clear();
         if (service.role() == CoopConnectionRole.HOST) {

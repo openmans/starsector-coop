@@ -54,6 +54,9 @@ public final class CoopAllyJoinDialogPlugin implements InteractionDialogPlugin {
         text.addPara(CoopUiLang.tr("Choose how your fleet should participate in this battle:",
                 "Выберите, как ваш флот примет участие в этом бою:"), Misc.getGrayColor());
 
+        opts.addOption(CoopUiLang.tr(
+                "Join battle directly — Real-Time Co-op Piloting (fly your own ship)",
+                "Войти в бой лично — управление кораблём в реальном времени"), JoinChoice.JOIN_LIVE_COMBAT);
         opts.addOption(CoopUiLang.tr("Join battle + Tactical Map (command your ships)",
                 "Войти в бой + Тактическая карта (отдавать приказы кораблям)"), JoinChoice.JOIN_TACTICAL);
         opts.addOption(CoopUiLang.tr("Join battle (AI officers only)",

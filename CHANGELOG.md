@@ -2,6 +2,23 @@
 
 ## 0.2.5 (3-mode Starsector launcher + .exe installer + 3000 su tactical battles & partner comm link)
 
+- **Native Real-Time Co-op Physical Combat (replaces Wingman completely):**
+  implemented our own built-in authoritative real-time joint combat system under `coop.combat.live`
+  (`CoopCombatNetCodec`, `CoopLiveCombatSession`, `CoopRemotePilotShipAI`,
+  `CoopCombatInputCapture`, `CoopLiveCombatAuthority`, `CoopLiveCombatClient`,
+  `CoopCombatBeamRenderer`). When a nearby partner chooses **«Войти в бой лично — управление
+  кораблём в реальном времени»** (`JoinChoice.JOIN_LIVE_COMBAT`), they launch directly into an
+  isolated native `CombatEngineAPI` puppet arena with zero campaign side effects, pilot their own
+  ship in real time at up to 60 Hz over UDP (WASD/strafe, world-space mouse aim, LMB fire, RMB
+  shield/phase, ship system `F`, flux vent `V`, weapon groups `1..7` & autofire `Ctrl+1..7`,
+  fighter recall `Z`, live ship switching `F8`/`[`/`]`, and synchronized `Space` pause), and see
+  full live synchronization of ships, fighters, shields (`ShieldAPI`), sparse delta-compressed armor
+  grids (`ArmorGridAPI`), flux/overloads/venting (`FluxTrackerAPI`), ship systems & phase cloaks
+  (`ShipSystemAPI`), turret tracking & ammo (`WeaponAPI`), ballistic/energy projectiles
+  (`COMBAT_PROJ_SPAWN`/`HIT`), guided missiles & mines (`COMBAT_MISSILE_STATE`), active beam rays
+  (`CoopCombatBeamRenderer`), explosions, EMP arcs, and ship destruction. Automatically falls back
+  to vanilla AI on input timeout or disconnect and applies post-battle outcomes cleanly via
+  `CoopAllyLossApplier`.
 - **Direct player-to-player commodity exchange & credit transfers on partner fleet click:**
   clicking a friend's mirrored fleet on the campaign map now releases the engagement shield strictly
   for the targeted partner mirror (`CoopNetPump.assertMirrorEngagementShields`), identifies the

@@ -392,7 +392,27 @@ public final class CoopMessages {
         /** Speaking player (Host or Guest) &rarr; partner(s): live BG3-style dialog mirror & cursor snapshot. */
         DIALOG_SYNC,
         /** Spectating partner &rarr; speaking player: BG3-style option vote recommendation. */
-        DIALOG_VOTE
+        DIALOG_VOTE,
+        /** Live combat authority &rarr; joining partner: battle arena metadata & start trigger. */
+        COMBAT_INIT,
+        /** Live combat authority &rarr; joining partner: full ship/fighter spawn specification. */
+        COMBAT_SPAWN,
+        /** Live combat authority &rarr; joining partner (UDP): batched ship kinematics, shield, flux, system & turret state. */
+        COMBAT_STATE,
+        /** Joining partner &rarr; live combat authority (UDP): real-time piloting input commands & world aim point. */
+        COMBAT_INPUT,
+        /** Live combat authority &rarr; joining partner: sparse delta-compressed ArmorGrid cell updates. */
+        COMBAT_ARMOR_DELTA,
+        /** Live combat authority &rarr; joining partner: batched projectile & missile spawn events. */
+        COMBAT_PROJ_SPAWN,
+        /** Live combat authority &rarr; joining partner: batched projectile & missile impact/removal events. */
+        COMBAT_PROJ_HIT,
+        /** Live combat authority &rarr; joining partner (UDP): batched guided missile & mine kinematics. */
+        COMBAT_MISSILE_STATE,
+        /** Live combat authority &rarr; joining partner (UDP): active beam rays snapshot. */
+        COMBAT_BEAMS,
+        /** Bidirectional live combat control & VFX events (ship death/hulk, EMP arc, explosion, objective, pilot switch, pause, end). */
+        COMBAT_EVENT
     }
 
     /**
@@ -475,6 +495,8 @@ public final class CoopMessages {
                   BATTLE_BEGIN, BATTLE_STATUS, BATTLE_END, BATTLE_RESULT,
                   BATTLE_ORDER, BATTLE_ORDER_ACK, ENGAGE_GUEST, ALLY_JOIN_OFFER, ALLY_JOIN_REPLY,
                   DIALOG_SYNC, DIALOG_VOTE,
+                  COMBAT_INIT, COMBAT_SPAWN, COMBAT_STATE, COMBAT_INPUT, COMBAT_ARMOR_DELTA,
+                  COMBAT_PROJ_SPAWN, COMBAT_PROJ_HIT, COMBAT_MISSILE_STATE, COMBAT_BEAMS, COMBAT_EVENT,
                   SAVE_CHECKPOINT, SAVE_CHECKPOINT_RESULT, RESPAWN_PLAYER, STALL_NOTICE,
                   SESSION_LEAVE,
                   OPTIONS_SNAPSHOT, OPTIONS_APPLIED, SESSION_STATS, LINK_STATUS,
@@ -2963,5 +2985,45 @@ public final class CoopMessages {
 
     public static Message dialogVote(String sessionId, long seq, long sentAtMillis, String body) {
         return bodyMessage(Type.DIALOG_VOTE, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message combatInit(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.COMBAT_INIT, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message combatSpawn(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.COMBAT_SPAWN, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message combatState(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.COMBAT_STATE, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message combatInput(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.COMBAT_INPUT, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message combatArmorDelta(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.COMBAT_ARMOR_DELTA, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message combatProjSpawn(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.COMBAT_PROJ_SPAWN, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message combatProjHit(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.COMBAT_PROJ_HIT, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message combatMissileState(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.COMBAT_MISSILE_STATE, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message combatBeams(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.COMBAT_BEAMS, sessionId, seq, sentAtMillis, body);
+    }
+
+    public static Message combatEvent(String sessionId, long seq, long sentAtMillis, String body) {
+        return bodyMessage(Type.COMBAT_EVENT, sessionId, seq, sentAtMillis, body);
     }
 }

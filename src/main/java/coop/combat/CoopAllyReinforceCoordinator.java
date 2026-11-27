@@ -39,8 +39,8 @@ public final class CoopAllyReinforceCoordinator {
     public static final long OFFER_TIMEOUT_MILLIS = 30_000L;
 
     public enum JoinChoice {
+        JOIN_LIVE_COMBAT,
         JOIN_TACTICAL,
-        JOIN_WINGMAN,
         JOIN_AI,
         DECLINE;
 
@@ -71,7 +71,7 @@ public final class CoopAllyReinforceCoordinator {
 
     private final Map<String, JoinOffer> outgoingOffers = new LinkedHashMap<>();
     private boolean autoOpenTacticalMapPending;
-    private boolean wingmanDirectControlRequested;
+    private boolean liveCombatRequested;
     private long nextOfferCounter;
 
     /** Reads the active host policy value for {@code coop.allyJoinRange}, clamped to 700..10000. */
@@ -122,7 +122,7 @@ public final class CoopAllyReinforceCoordinator {
     /** Records the local partner's choice when replying to an inbound {@link JoinOffer}. */
     public synchronized void noteLocalChoice(JoinChoice choice) {
         autoOpenTacticalMapPending = (choice == JoinChoice.JOIN_TACTICAL);
-        wingmanDirectControlRequested = (choice == JoinChoice.JOIN_WINGMAN);
+        liveCombatRequested = (choice == JoinChoice.JOIN_LIVE_COMBAT);
     }
 
     /** Consumes the one-shot auto-open latch when remote combat begins. */
@@ -132,19 +132,19 @@ public final class CoopAllyReinforceCoordinator {
         return v;
     }
 
-    public synchronized boolean isWingmanDirectControlRequested() {
-        return wingmanDirectControlRequested;
+    public synchronized boolean isLiveCombatRequested() {
+        return liveCombatRequested;
     }
 
     public synchronized void clearBattleEnd() {
         autoOpenTacticalMapPending = false;
-        wingmanDirectControlRequested = false;
+        liveCombatRequested = false;
     }
 
     public synchronized void reset() {
         outgoingOffers.clear();
         autoOpenTacticalMapPending = false;
-        wingmanDirectControlRequested = false;
+        liveCombatRequested = false;
     }
 
     /**
@@ -231,7 +231,11 @@ public final class CoopAllyReinforceCoordinator {
             return null;
         }
         try {
-            return new JoinReply(f.get(0), f.get(1), JoinChoice.valueOf(f.get(2).trim()));
+            String rawChoice = f.get(2).trim();
+            JoinChoice choice = "JOIN_WINGMAN".equals(rawChoice)
+                    ? JoinChoice.JOIN_LIVE_COMBAT
+                    : JoinChoice.valueOf(rawChoice);
+            return new JoinReply(f.get(0), f.get(1), choice);
         } catch (IllegalArgumentException ex) {
             return null;
         }

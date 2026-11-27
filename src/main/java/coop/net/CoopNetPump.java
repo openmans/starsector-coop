@@ -596,6 +596,12 @@ public class CoopNetPump implements EveryFrameScript {
     private long nextDialogHeartbeatAtMillis;
     private final coop.combat.CoopAllyReinforceCoordinator allyReinforce =
             new coop.combat.CoopAllyReinforceCoordinator();
+    private final coop.combat.live.CoopLiveCombatSession liveCombatSession =
+            new coop.combat.live.CoopLiveCombatSession();
+    private coop.combat.live.CoopLiveCombatAuthority liveCombatAuthority;
+    private coop.combat.live.CoopLiveCombatClient liveCombatClient;
+    private long liveCombatUdpEpoch;
+    private boolean liveCombatClientSawCombatFrame;
     private com.fs.starfarer.api.campaign.BattleAPI lastOfferedBattle;
     private coop.trade.CoopTradeSession activeTradeSession;
     /**
@@ -1004,6 +1010,46 @@ public class CoopNetPump implements EveryFrameScript {
         this.campaignReplicator = new CoopCampaignReplicator(service, sessionState, clockMillis);
         this.battleBridge = new CoopBattleBridge(service, sessionState, clockMillis, pauseCoordinator);
         this.battleBridge.setCombatInboundDrainer(this::drainCombatInbound);
+        this.battleBridge.setLiveCombatHook(new CoopBattleBridge.LiveCombatHook() {
+            @Override
+            public boolean isClientArenaActive() {
+                return liveCombatSession.isClientArenaActive();
+            }
+
+            @Override
+            public void onClientCombatFrame(com.fs.starfarer.api.combat.CombatEngineAPI engine,
+                                            float dt,
+                                            java.util.List<com.fs.starfarer.api.input.InputEventAPI> events,
+                                            long nowMillis) {
+                liveCombatClientSawCombatFrame = true;
+                ensureLiveCombatClient().onFrame(engine, dt, events, nowMillis);
+            }
+
+            @Override
+            public void onAuthorityCombatFrame(com.fs.starfarer.api.combat.CombatEngineAPI engine,
+                                               String battleId,
+                                               java.util.Set<String> partnerMemberIds,
+                                               long nowMillis) {
+                if (liveCombatSession.role() != coop.combat.live.CoopLiveCombatSession.Role.AUTHORITY) {
+                    if (!liveCombatSession.isAuthorityArmed()) {
+                        return;
+                    }
+                    liveCombatSession.beginAuthorityBattle(battleId);
+                    ensureLiveCombatAuthority().resetState();
+                }
+                ensureLiveCombatAuthority().onFrame(engine, partnerMemberIds, nowMillis);
+            }
+
+            @Override
+            public void onAuthorityBattleEnded() {
+                if (liveCombatSession.role() == coop.combat.live.CoopLiveCombatSession.Role.AUTHORITY) {
+                    if (liveCombatAuthority != null) {
+                        liveCombatAuthority.finishBattle();
+                    }
+                    liveCombatSession.endBattle();
+                }
+            }
+        });
         // S5-A: a PING answered across a battle times a stopped pump, not the link. The bridge is the
         // only thing that knows a battle is open on either side, so it supplies that state here rather
         // than the measurement reaching into it.
@@ -5041,6 +5087,8 @@ public class CoopNetPump implements EveryFrameScript {
             // Scoped to the connection the drop edge just tore down, or to state it just reset.
             case STORM_CONTROL, AMBIENT_CALL, COLONY_CONSENT_REQ, COLONY_CONSENT_RES, TRADE_SYNC,
                  ALLY_JOIN_OFFER, ALLY_JOIN_REPLY, DIALOG_SYNC, DIALOG_VOTE,
+                 COMBAT_INIT, COMBAT_SPAWN, COMBAT_STATE, COMBAT_INPUT, COMBAT_ARMOR_DELTA,
+                 COMBAT_PROJ_SPAWN, COMBAT_PROJ_HIT, COMBAT_MISSILE_STATE, COMBAT_BEAMS, COMBAT_EVENT,
                  INTERACTION_CLAIM, INTERACTION_ACCEPT, INTERACTION_REJECT, INTERACTION_RELEASE,
                  DIALOG_BEGIN, BATTLE_ORDER, BATTLE_ORDER_ACK,
                  LOBBY_HELLO, LOBBY_CHALLENGE, LOBBY_ACCEPT, LOBBY_REJECT, LOBBY_STATUS,
@@ -5377,12 +5425,36 @@ public class CoopNetPump implements EveryFrameScript {
      * long battle cannot accumulate an unbounded backlog).
      */
     private void drainCombatInbound(com.fs.starfarer.api.combat.CombatEngineAPI engine) {
+        // Drain UDP datagrams first so high-frequency live combat input/state/missiles/beams land immediately
+        String rawDatagram;
+        while ((rawDatagram = service.pollDatagram()) != null) {
+            ingestStateDatagram(rawDatagram);
+        }
         CoopNetService.Inbound entry;
         while ((entry = service.pollInboundEntry()) != null) {
             CoopMessages.Message msg = entry.message();
             CoopMessages.Type type = msg.type();
             if (type == CoopMessages.Type.BATTLE_ORDER) {
                 battleBridge.handleCombatOrder(engine, msg);
+            } else if (type == CoopMessages.Type.STATE_DATAGRAM) {
+                String wrapped = CoopMessages.parseStateDatagram(msg);
+                if (wrapped != null && !wrapped.isEmpty()) {
+                    ingestStateDatagram(wrapped);
+                }
+            } else if (isLiveCombatMessageType(type)) {
+                handleLiveCombatMessage(msg);
+            } else if (type == CoopMessages.Type.BATTLE_END) {
+                // If partner is in our live combat puppet arena, exit cleanly on BATTLE_END too
+                if (liveCombatSession.role() == coop.combat.live.CoopLiveCombatSession.Role.CLIENT) {
+                    if (liveCombatClient != null) {
+                        liveCombatClient.forceExit(engine);
+                    }
+                    liveCombatSession.endBattle();
+                }
+                if (deferredInbound.size() >= MAX_COMBAT_DEFERRED_INBOUND) {
+                    deferredInbound.pollFirst();
+                }
+                deferredInbound.addLast(new DeferredInbound(msg, entry.connectionGeneration()));
             } else if (type == CoopMessages.Type.PING) {
                 if (mayAnswerUnprovenPeer(type)) {
                     sendPong(msg);
@@ -5819,6 +5891,9 @@ public class CoopNetPump implements EveryFrameScript {
             case ALLY_JOIN_REPLY -> handleAllyJoinReply(message);
             case DIALOG_SYNC -> handleDialogSync(message);
             case DIALOG_VOTE -> handleDialogVote(message);
+            case COMBAT_INIT, COMBAT_SPAWN, COMBAT_STATE, COMBAT_INPUT, COMBAT_ARMOR_DELTA,
+                 COMBAT_PROJ_SPAWN, COMBAT_PROJ_HIT, COMBAT_MISSILE_STATE, COMBAT_BEAMS,
+                 COMBAT_EVENT -> handleLiveCombatMessage(message);
             case GUEST_SNAPSHOT -> handleGuestSnapshot(message);
             case SAVE_CHECKPOINT -> handleSaveCheckpoint(message);
             case SAVE_CHECKPOINT_RESULT -> handleSaveCheckpointResult(message);
@@ -8210,6 +8285,8 @@ public class CoopNetPump implements EveryFrameScript {
                 switch (datagram.type()) {
                     case FLEET_SNAPSHOT -> applyFleetSnapshotSection(datagram.senderId(), section);
                     case NPC_FLEET_MOTION -> handleNpcFleetMotion(section, motionSections.get(i));
+                    case COMBAT_INPUT, COMBAT_STATE, COMBAT_MISSILE_STATE, COMBAT_BEAMS ->
+                            handleLiveCombatDatagram(datagram.type(), section.body());
                     default -> { /* ignore unknown datagram types */ }
                 }
             }
@@ -10196,11 +10273,13 @@ public class CoopNetPump implements EveryFrameScript {
             service.send(msg);
         }
         switch (choice) {
+            case JOIN_LIVE_COMBAT -> coop.ui.CoopFeed.post(coop.ui.CoopUiLang.tr(
+                    "Co-op: joining " + offer.fighterName() + "'s battle — live real-time ship piloting will start!",
+                    "Кооп: входим в бой с " + offer.fighterName() + " — скоро откроется живое управление кораблём!"),
+                    com.fs.starfarer.api.util.Misc.getPositiveHighlightColor(),
+                    coop.ui.CoopFeed.Severity.IMPORTANT);
             case JOIN_TACTICAL -> coop.ui.CoopFeed.post(
                     "Co-op: joining " + offer.fighterName() + "'s battle — Tactical Map will open when combat starts.",
-                    null, coop.ui.CoopFeed.Severity.IMPORTANT);
-            case JOIN_WINGMAN -> coop.ui.CoopFeed.post(
-                    "Co-op: joining " + offer.fighterName() + "'s battle with Wingman direct piloting.",
                     null, coop.ui.CoopFeed.Severity.IMPORTANT);
             case JOIN_AI -> coop.ui.CoopFeed.post(
                     "Co-op: joining " + offer.fighterName() + "'s battle with AI officers.",
@@ -10244,6 +10323,12 @@ public class CoopNetPump implements EveryFrameScript {
                     continue;
                 }
                 if (coop.combat.CoopAllyReinforceCoordinator.joinMirrorIntoBattle(battle, fleet)) {
+                    if (reply.choice() == coop.combat.CoopAllyReinforceCoordinator.JoinChoice.JOIN_LIVE_COMBAT) {
+                        String pid = reply.partnerPlayerId().isEmpty()
+                                ? (message.senderId() == null ? sessionState.remotePlayerId() : message.senderId())
+                                : reply.partnerPlayerId();
+                        liveCombatSession.armAuthorityForPartner(pid, sessionState.guestDisplayName(pid));
+                    }
                     coop.ui.CoopFeed.post("Co-op: " + fleet.getName() + " joined your battle ("
                                     + reply.choice().name() + ")!",
                             null, coop.ui.CoopFeed.Severity.IMPORTANT);
@@ -11128,6 +11213,228 @@ public class CoopNetPump implements EveryFrameScript {
     private void tickCommsDialogs() {
         chatDialogs.tick();
         tradeDialogs.tick();
+        tickLiveCombatCampaign();
+    }
+
+    // ---- Native real-time co-op physical combat wiring ------------------------------------------
+
+    private static boolean isLiveCombatMessageType(CoopMessages.Type type) {
+        return switch (type) {
+            case COMBAT_INIT, COMBAT_SPAWN, COMBAT_STATE, COMBAT_INPUT, COMBAT_ARMOR_DELTA,
+                 COMBAT_PROJ_SPAWN, COMBAT_PROJ_HIT, COMBAT_MISSILE_STATE, COMBAT_BEAMS,
+                 COMBAT_EVENT -> true;
+            default -> false;
+        };
+    }
+
+    private coop.combat.live.CoopLiveCombatAuthority ensureLiveCombatAuthority() {
+        if (liveCombatAuthority == null) {
+            liveCombatAuthority = new coop.combat.live.CoopLiveCombatAuthority(
+                    liveCombatSession, liveCombatTransport(), clockMillis, sessionState.localName());
+        }
+        return liveCombatAuthority;
+    }
+
+    private coop.combat.live.CoopLiveCombatClient ensureLiveCombatClient() {
+        if (liveCombatClient == null) {
+            liveCombatClient = new coop.combat.live.CoopLiveCombatClient(
+                    liveCombatSession, liveCombatTransport(), sessionState.localName());
+        }
+        return liveCombatClient;
+    }
+
+    private coop.combat.live.CoopLiveCombatAuthority.Transport liveCombatTransport() {
+        return new coop.combat.live.CoopLiveCombatAuthority.Transport() {
+            @Override
+            public void sendTcp(CoopMessages.Type type, String body) {
+                if (!service.isConnected() || body == null) {
+                    return;
+                }
+                CoopMessages.Message msg = buildLiveCombatMessage(type, body);
+                if (msg == null) {
+                    return;
+                }
+                String targetPeer = liveCombatSession.partnerPlayerId();
+                if (service.role() == CoopConnectionRole.HOST
+                        && targetPeer != null && !targetPeer.isBlank()) {
+                    service.sendTo(targetPeer, msg);
+                } else {
+                    service.send(msg);
+                }
+            }
+
+            @Override
+            public void sendUdp(CoopMessages.Type type, String body, long nowMillis) {
+                if (!service.isConnected() || body == null) {
+                    return;
+                }
+                long epoch = ++liveCombatUdpEpoch;
+                String token = sessionToken();
+                String sender = localSenderToken();
+                CoopMessages.DatagramSection section =
+                        new CoopMessages.DatagramSection(epoch, nowMillis, 0, body);
+                String wire = CoopMessages.datagram(token, sender, type, java.util.List.of(section));
+                sendStateDatagram(wire);
+            }
+        };
+    }
+
+    private CoopMessages.Message buildLiveCombatMessage(CoopMessages.Type type, String body) {
+        String sid = sessionState.sessionId();
+        long seq = service.nextSeq();
+        long now = clockMillis.getAsLong();
+        return switch (type) {
+            case COMBAT_INIT -> CoopMessages.combatInit(sid, seq, now, body);
+            case COMBAT_SPAWN -> CoopMessages.combatSpawn(sid, seq, now, body);
+            case COMBAT_STATE -> CoopMessages.combatState(sid, seq, now, body);
+            case COMBAT_INPUT -> CoopMessages.combatInput(sid, seq, now, body);
+            case COMBAT_ARMOR_DELTA -> CoopMessages.combatArmorDelta(sid, seq, now, body);
+            case COMBAT_PROJ_SPAWN -> CoopMessages.combatProjSpawn(sid, seq, now, body);
+            case COMBAT_PROJ_HIT -> CoopMessages.combatProjHit(sid, seq, now, body);
+            case COMBAT_MISSILE_STATE -> CoopMessages.combatMissileState(sid, seq, now, body);
+            case COMBAT_BEAMS -> CoopMessages.combatBeams(sid, seq, now, body);
+            case COMBAT_EVENT -> CoopMessages.combatEvent(sid, seq, now, body);
+            default -> null;
+        };
+    }
+
+    private void handleLiveCombatMessage(CoopMessages.Message message) {
+        if (droppedBeforeTheSession(message.type())) {
+            return;
+        }
+        String body = CoopMessages.parseBody(message);
+        if (body == null || body.isBlank()) {
+            return;
+        }
+        try {
+            switch (message.type()) {
+                case COMBAT_INIT -> {
+                    coop.combat.live.CoopCombatNetCodec.CombatInit init =
+                            coop.combat.live.CoopCombatNetCodec.decodeInit(body);
+                    if (init != null) {
+                        liveCombatClientSawCombatFrame = false;
+                        if (liveCombatClient != null) {
+                            liveCombatClient.resetState();
+                        }
+                        liveCombatSession.acceptClientInit(init, message.senderId());
+                        coop.ui.CoopFeed.post(coop.ui.CoopUiLang.tr(
+                                        "Entering live real-time co-op battle with " + init.authorityName() + "!",
+                                        "Входим в живой кооп-бой с " + init.authorityName() + "!"),
+                                com.fs.starfarer.api.util.Misc.getPositiveHighlightColor(),
+                                coop.ui.CoopFeed.Severity.IMPORTANT);
+                    }
+                }
+                case COMBAT_SPAWN -> liveCombatSession.enqueueSpawn(
+                        coop.combat.live.CoopCombatNetCodec.decodeSpawn(body));
+                case COMBAT_ARMOR_DELTA -> liveCombatSession.enqueueArmorDelta(
+                        coop.combat.live.CoopCombatNetCodec.decodeArmorDelta(body));
+                case COMBAT_PROJ_SPAWN -> liveCombatSession.enqueueProjSpawns(
+                        coop.combat.live.CoopCombatNetCodec.decodeProjSpawns(body));
+                case COMBAT_PROJ_HIT -> liveCombatSession.enqueueProjHits(
+                        coop.combat.live.CoopCombatNetCodec.decodeProjHits(body));
+                case COMBAT_EVENT -> liveCombatSession.enqueueEvent(
+                        coop.combat.live.CoopCombatNetCodec.decodeEvent(body));
+                case COMBAT_INPUT, COMBAT_STATE, COMBAT_MISSILE_STATE, COMBAT_BEAMS ->
+                        handleLiveCombatDatagram(message.type(), body);
+                default -> {
+                }
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to handle live combat message " + message.type(), ex);
+        }
+    }
+
+    private void handleLiveCombatDatagram(CoopMessages.Type type, String body) {
+        if (body == null || body.isBlank()) {
+            return;
+        }
+        try {
+            switch (type) {
+                case COMBAT_INPUT -> liveCombatSession.acceptPilotInput(
+                        coop.combat.live.CoopCombatNetCodec.decodeInput(body), clockMillis.getAsLong());
+                case COMBAT_STATE -> liveCombatSession.enqueueState(
+                        coop.combat.live.CoopCombatNetCodec.decodeShipState(body));
+                case COMBAT_MISSILE_STATE -> liveCombatSession.enqueueMissiles(
+                        coop.combat.live.CoopCombatNetCodec.decodeMissileState(body));
+                case COMBAT_BEAMS -> liveCombatSession.enqueueBeams(
+                        coop.combat.live.CoopCombatNetCodec.decodeBeams(body));
+                default -> {
+                }
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to decode live combat datagram " + type, ex);
+        }
+    }
+
+    private void tickLiveCombatCampaign() {
+        if (!isGameplaySessionActive() || !service.isConnected()) {
+            if (liveCombatSession.role() != coop.combat.live.CoopLiveCombatSession.Role.NONE) {
+                if (liveCombatAuthority != null) liveCombatAuthority.resetState();
+                if (liveCombatClient != null) liveCombatClient.resetState();
+                liveCombatSession.reset();
+                liveCombatClientSawCombatFrame = false;
+            }
+            return;
+        }
+        // If we are back on the campaign screen AFTER the puppet combat arena ran, clean up the client session
+        if (liveCombatSession.role() == coop.combat.live.CoopLiveCombatSession.Role.CLIENT
+                && liveCombatClientSawCombatFrame) {
+            liveCombatClientSawCombatFrame = false;
+            if (liveCombatClient != null) {
+                liveCombatClient.resetState();
+            }
+            liveCombatSession.endBattle();
+            return;
+        }
+        // Pending client arena launch triggered by COMBAT_INIT
+        coop.combat.live.CoopCombatNetCodec.CombatInit init = liveCombatSession.consumePendingClientLaunch();
+        if (init != null) {
+            launchLiveCombatClientArena(init);
+        }
+    }
+
+    /**
+     * Launches an isolated native {@code CombatEngineAPI} puppet arena on the joining partner using
+     * temporary in-memory fleets (never placed in any star system so campaign state stays untouched).
+     */
+    private void launchLiveCombatClientArena(coop.combat.live.CoopCombatNetCodec.CombatInit init) {
+        try {
+            SectorAPI sector = Global.getSector();
+            CampaignUIAPI ui = sector == null ? null : sector.getCampaignUI();
+            if (ui == null) {
+                return;
+            }
+            if (dialogSpectatorDialogs.isRequested()) {
+                dialogSpectatorDialogs.close();
+            }
+            if (tacticalMapDialogs.isRequested()) {
+                tacticalMapDialogs.close();
+            }
+            CampaignFleetAPI dummyAllies = Global.getFactory().createEmptyFleet("player", "Co-op Live", true);
+            CampaignFleetAPI dummyEnemies = Global.getFactory().createEmptyFleet("pirates", "Opposing", true);
+            // Minimal starter marker ship on each side (immediately removed on frame 1 of initPuppetArena)
+            String markerVariant = Global.getSettings().doesVariantExist("hound_Standard")
+                    ? "hound_Standard" : "shuttle_Standard";
+            try {
+                dummyAllies.getFleetData().addFleetMember(markerVariant);
+                dummyEnemies.getFleetData().addFleetMember(markerVariant);
+            } catch (RuntimeException ignored) {
+            }
+            com.fs.starfarer.api.combat.BattleCreationContext ctx =
+                    new com.fs.starfarer.api.combat.BattleCreationContext(
+                            dummyAllies, com.fs.starfarer.api.fleet.FleetGoal.ATTACK,
+                            dummyEnemies, com.fs.starfarer.api.fleet.FleetGoal.ATTACK);
+            ctx.objectivesAllowed = false;
+            ctx.aiRetreatAllowed = false;
+            ctx.enemyDeployAll = false;
+            ctx.fightToTheLast = true;
+            ui.startBattle(ctx);
+            CoopLog.info(CoopNetPump.class, "Coop launched native live combat puppet arena for battleId="
+                    + init.battleId());
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Coop could not launch live combat puppet arena", ex);
+            liveCombatSession.endBattle();
+        }
     }
 
     /** Speaker-side BG3 option vote banner for {@link coop.ui.CoopLinkHud}. */

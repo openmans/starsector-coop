@@ -50,7 +50,7 @@ public class CoopBattleStatusCombatPlugin extends BaseEveryFrameCombatPlugin {
             if (target == null) {
                 return;
             }
-            bridge.onCombatFrame(target, System.currentTimeMillis());
+            bridge.onCombatFrame(target, amount, events, System.currentTimeMillis());
         } catch (RuntimeException | LinkageError ex) {
             CoopLog.warn(CoopBattleStatusCombatPlugin.class, "Coop combat status frame failed", ex);
         }
