@@ -373,6 +373,17 @@ public class CoopNetPump implements EveryFrameScript {
     private CoopTimeLock.TimeSnapshot latestTimeSnapshot;
     private final CoopSaveCheckpoint saveCheckpoint = new CoopSaveCheckpoint();
     private final boolean dedicatedHostMode;
+    /**
+     * The pump the headless console talks to. The console's per-frame hook also runs from the global
+     * combat status plugin (title screen, battles) where no pump is on the call stack, and `save` /
+     * `kick` still need the live one.
+     */
+    private static volatile CoopNetPump active;
+
+    /** @return the most recently constructed pump, or null before the campaign installs one */
+    public static CoopNetPump active() {
+        return active;
+    }
     private static final long DEDICATED_PARK_INTERVAL_MILLIS = 500L;
     private static final long DEDICATED_AUTOSAVE_INTERVAL_MILLIS = 600_000L;
     private long nextDedicatedParkAtMillis;
@@ -1190,6 +1201,7 @@ public class CoopNetPump implements EveryFrameScript {
         this.nextTimeSnapshotAtMillis = now + CoopTimeLock.SNAPSHOT_INTERVAL_MILLIS;
         this.nextGuestSnapshotAtMillis = now;
         this.dedicatedHostMode = CoopNetStartupConfig.dedicatedHostFromSystemProperties();
+        active = this;
         this.nextDedicatedAutosaveAtMillis = now + DEDICATED_AUTOSAVE_INTERVAL_MILLIS;
         // A full interval out, not zero: the one send that belongs at the start of a session is the
         // forced one behind the lobby release (releaseLobbyNow), and letting the periodic timer also
@@ -1454,6 +1466,59 @@ public class CoopNetPump implements EveryFrameScript {
     /** Bridge-only: the lever's current level, for {@code status} and for tests. */
     public boolean bridgePauseIntent() {
         return bridgePauseIntent;
+    }
+
+    /**
+     * Headless console: force the dedicated-host periodic autosave right now.
+     *
+     * <p>Runs on the campaign thread (the console drains commands from the pump's own frame), which
+     * is the thread {@code CampaignUIAPI.autosave()} belongs to. A screen that is open blocks the
+     * engine's autosave, so that case is reported as deferred and retried instead of being lost.
+     *
+     * @return a short human-readable result for the console
+     */
+    public String headlessSaveNow() {
+        SectorAPI sector = sectorOrNull();
+        if (sector == null) {
+            return "not in campaign yet";
+        }
+        CampaignUIAPI ui = sector.getCampaignUI();
+        if (ui == null) {
+            return "no campaign UI";
+        }
+        if (ui.isShowingDialog() || ui.isShowingMenu()) {
+            return "deferred: a screen is open";
+        }
+        ui.autosave();
+        nextDedicatedAutosaveAtMillis = clockMillis.getAsLong() + DEDICATED_AUTOSAVE_INTERVAL_MILLIS;
+        CoopLog.info(CoopNetPump.class, "Coop Dedicated Host saved on console request");
+        return "ok";
+    }
+
+    /**
+     * Headless console: drops one guest by lobby name or player id, leaving other guests connected.
+     * Only meaningful on the host; a guest-side call reports the role instead of pretending.
+     */
+    public String kickGuestByName(String nameOrId) {
+        if (service.role() != CoopConnectionRole.HOST) {
+            return "not hosting (role=" + service.role() + ")";
+        }
+        CoopSessionState state = sessionStateForBridge();
+        if (state == null || state.guestCount() == 0) {
+            return "no guests connected";
+        }
+        for (CoopSessionState.PeerSession guest : state.guests()) {
+            if (!guest.playerId().equals(nameOrId) && !guest.name().equalsIgnoreCase(nameOrId)) {
+                continue;
+            }
+            boolean dropped = service.dropGuest(guest.playerId(), "kicked from the headless console");
+            CoopLog.info(CoopNetPump.class, "Coop Dedicated Host kick " + guest.name()
+                    + " playerId=" + guest.playerId() + " dropped=" + dropped);
+            return dropped
+                    ? "kicked " + guest.name()
+                    : guest.name() + " has no live socket (already leaving?)";
+        }
+        return "no guest named " + nameOrId;
     }
 
     /**
@@ -3644,6 +3709,10 @@ public class CoopNetPump implements EveryFrameScript {
     @Override
     public void advance(float amount) {
         coop.CoopModPlugin.markCampaignFrameEntered();
+        // Headless console: drains queued stdin/signal commands on this thread, which is the one
+        // allowed to touch the campaign (autosave, kick, save-then-exit). No-op unless
+        // -Dcoop.headless=true.
+        coop.headless.CoopHeadlessConsole.tick(this);
         // Red-team A14: nothing below may take the pump down. An EveryFrameScript that throws is
         // removed by the engine, so one unhandled RuntimeException anywhere in the frame body -- or
         // one LinkageError from a mod-load skew that only shows up on a rarely-taken branch -- ends

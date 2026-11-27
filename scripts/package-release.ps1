@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Packages a release archive: coop-<version>.zip, unpacking to a folder named exactly "coop".
 
@@ -287,6 +287,14 @@ foreach ($required in @($coopJar, $forksJar)) {
 $jarsToShip = New-Object System.Collections.Generic.List[string]
 $jarsToShip.Add($coopJar)
 $jarsToShip.Add($forksJar)
+$headlessJar = Join-Path $jarsDir 'coop-headless-lwjgl.jar'
+if (Test-Path -LiteralPath $headlessJar) {
+    $jarsToShip.Add($headlessJar)
+}
+else {
+    Write-Warning ("jars\coop-headless-lwjgl.jar is missing, so the archive ships without the" +
+        " windowless dedicated server. Build with a current build.gradle (headlessJar) to include it.")
+}
 if (Test-Path -LiteralPath $launcherJar) {
     $jarsToShip.Add($launcherJar)
 }
@@ -371,18 +379,33 @@ try {
 
     # Files at the mod root.
     $rootFiles = @('mod_info.json', 'coop.version', 'LICENSE', 'CHANGELOG.md', 'README.md',
-        'Coop Launcher.cmd', 'Start Dedicated Server.cmd', 'Starsector Coop Launcher.exe', 'Install Starsector Coop.cmd')
+        'Coop Launcher.cmd', 'Start Dedicated Server.cmd', 'Start Headless Dedicated Server.cmd',
+        'Starsector Coop Launcher.exe', 'Install Starsector Coop.cmd')
     foreach ($name in $rootFiles) {
         $source = Join-Path $modRoot $name
         if (Test-Path -LiteralPath $source -PathType Leaf) {
             Copy-Item -LiteralPath $source -Destination (Join-Path $stagedMod $name) -Force
         }
-        elseif ($name -in @('Coop Launcher.cmd', 'Start Dedicated Server.cmd', 'Starsector Coop Launcher.exe', 'Install Starsector Coop.cmd')) {
+        elseif ($name -in @('Coop Launcher.cmd', 'Start Dedicated Server.cmd', 'Start Headless Dedicated Server.cmd', 'Starsector Coop Launcher.exe', 'Install Starsector Coop.cmd')) {
             Write-Warning ("`"$name`" is missing from the mod root, so the archive" +
                 " ships without it.")
         }
         else {
             throw "Missing $source - the release archive has to carry it."
+        }
+    }
+
+    # scripts\: only the launcher helpers the shipped .cmd/.sh files reference. The rest of the
+    # folder is release/build tooling and stays in the repo.
+    $stagedScripts = Join-Path $stagedMod 'scripts'
+    New-Item -ItemType Directory -Path $stagedScripts -Force | Out-Null
+    foreach ($name in @('start-headless.ps1', 'start-headless-dedicated.sh')) {
+        $source = Join-Path $modRoot "scripts\$name"
+        if (Test-Path -LiteralPath $source -PathType Leaf) {
+            Copy-Item -LiteralPath $source -Destination (Join-Path $stagedScripts $name) -Force
+        }
+        else {
+            throw "Missing $source - the headless launcher depends on it."
         }
     }
 

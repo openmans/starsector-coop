@@ -1370,6 +1370,31 @@ public class CoopNetService {
     }
 
     /**
+     * Host side: drops the one peer whose handshake sender id matches, leaving every other guest
+     * connected. Used by the headless console's {@code kick <name>} command.
+     *
+     * @return true when a peer was actually detached
+     */
+    public boolean dropGuest(String senderId, String reason) {
+        if (senderId == null || senderId.isEmpty()) {
+            return false;
+        }
+        synchronized (lifecycleLock) {
+            boolean dropped = false;
+            for (CoopPeerLink peer : peers) {
+                if (!peer.occupied() || !senderId.equals(peer.senderId())) {
+                    continue;
+                }
+                CoopLog.info(CoopNetService.class, "Coop TCP dropping guest " + senderId + " as "
+                        + role + ": " + (reason == null || reason.isEmpty() ? "no reason given" : reason));
+                closeLinkLocked(peer);
+                dropped = true;
+            }
+            return dropped;
+        }
+    }
+
+    /**
      * The host rejected this guest's lobby round (F4). Backs the retry loop off to
      * {@link #REJECTED_RETRY_DELAY_MILLIS} for the next attempt.
      *

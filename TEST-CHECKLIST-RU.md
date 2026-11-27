@@ -144,3 +144,25 @@
 2. **Не перезапускайте игру** до сбора логов (новый запуск перезапишет `starsector.log`).
 3. В **Coop Launcher** на обоих ПК откройте **Logs → Save a bug report** — соберётся ZIP с `starsector.log`, `coop-launcher.log` и диагностикой `[COOP-DOCTOR]`.
 4. Запишите: номер пункта из этого чек-листа, кто был хостом/гостем, и что именно произошло.
+
+---
+
+## 11. Headless dedicated server (0.2.20)
+
+Сервер без окна и без GPU: `Start Headless Dedicated Server.cmd [port] [maxGuests] [tps]` (Windows)
+или `scripts/start-headless-dedicated.sh --root /path/to/Starsector` (Linux, без Xvfb).
+
+- [ ] **Старт без окна:** запустить сервер, убедиться, что окно не появилось, а в консоли есть
+      `Null-LWJGL: no window, no GPU...`, `Display created`, `Coop connection doctor` с портом.
+- [ ] **Никаких нативных библиотек:** в диспетчере задач у процесса `java.exe` не загружены
+      `lwjgl64.dll`, `OpenAL64.dll`, `opengl32.dll`, `GLU32.dll`; загрузка GPU — 0 %.
+- [ ] **Автозагрузка сейва:** последний сейв кампании загружается сам (`Coop Dedicated Host
+      auto-loading latest save`), в логе есть `HOST holding the campaign paused: no gameplay session`.
+- [ ] **Консоль `status`:** печатает `role=HOST players=<N> pause=EMPTY_HOLD day=<...> tps=~30`.
+- [ ] **`save`:** пишет новый `save_<ник>_<id>` в `saves/`, в логе `Finished saving`.
+- [ ] **`stop`:** сохраняет и выходит; порт освобождается, `starsector.log` заканчивается
+      `[coop] stopping; save=ok` и `[coop] exit`.
+- [ ] **Ctrl+C:** ведёт себя как `stop` (сохранение + выход), повторный Ctrl+C — мгновенный halt.
+- [ ] **Подключение клиента:** обычный графический клиент (та же версия мода и игры) заходит на
+      `host:port` — пауза снимается при входе, возвращается при выходе всех гостей.
+- [ ] **`kick <ник>`:** гость отключается, хост продолжает работать, в логе `kick ... dropped=true`.

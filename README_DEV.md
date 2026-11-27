@@ -255,6 +255,28 @@ After a successful build, launch the game from the install root:
 powershell -NoProfile -Command "Set-Location 'K:\Starsector'; .\starsector.exe"
 ```
 
+## Headless Dedicated Server
+
+`gradlew build` also produces `jars/coop-headless-lwjgl.jar`: a Null-LWJGL shim that lets the real
+engine run with no window, no GPU and no OpenGL/OpenAL driver. It is never on a graphical client's
+classpath.
+
+```powershell
+# Windows: port, guest slots, frame pacing (all optional)
+.\Start Headless Dedicated Server.cmd 7777 3 30
+```
+
+```bash
+# Linux: no X server / Xvfb needed
+scripts/start-headless-dedicated.sh --root /path/to/Starsector --port 7777
+```
+
+Console commands on stdin: `status`, `save`, `kick <name>`, `stop` (Ctrl+C behaves like `stop`).
+Architecture, the two engine shims and the verification log: `docs/dev/HEADLESS_DEDICATED_SERVER.md`;
+the LWJGL surface the shim must cover: `docs/dev/HEADLESS_LWJGL_AUDIT.md`. The stub sources are
+generated and committed — rerun `tools/headless/gen_null_lwjgl.py` and
+`tools/headless/make_engine_shims.py` after a game-version bump.
+
 ## Inspect Logs
 
 Tail the active Starsector log:

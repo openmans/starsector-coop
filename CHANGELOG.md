@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.20 (Headless dedicated server: no window, no GPU, no OpenGL/OpenAL)
+
+- **Headless Dedicated Server (`Start Headless Dedicated Server.cmd`, `scripts/start-headless-dedicated.sh`):**
+  runs the real engine and the real mod with `jars/coop-headless-lwjgl.jar` first on the classpath, so
+  every `org.lwjgl.*` class is a stub: no window is created, no native LWJGL/OpenGL/OpenAL library is
+  loaded and no GPU context is opened. No X server or Xvfb is needed on Linux.
+- **Console control (`-Dcoop.headless=true`):** `status`, `save`, `kick <name>`, `stop` on stdin, a
+  status line every 30 s, and `SIGINT`/`SIGTERM` handled as save-then-exit instead of a hard kill.
+  Commands run on the campaign thread; a second signal halts immediately.
+- **`jars/coop-headless-lwjgl.jar`:** generated Null-LWJGL stubs over the game's own `lwjgl.jar`
+  classes (one complete jar, because `lwjgl.jar` is sealed), plus two engine shims — the real
+  `CombatMain` renamed so the launcher's three-argument screen probe never runs, and the launcher
+  settings class with its `Toolkit.getScreenSize()` probe rewritten to a fixed 1920x1080 screen.
+- **`coop.jar` additions:** `coop.headless.CoopHeadlessConsole` (inert without the property) and
+  `CoopNetService.dropGuest(senderId, reason)` for per-guest kicks; the graphical client and the
+  ordinary `-Dcoop.dedicatedHost` launch are unchanged.
+
+
 ## 0.2.19 (Fix Dedicated Server launcher script & -D auto-start config isolation)
 
 - **Fixed `Start Dedicated Server.cmd` not launching Starsector (`Start Dedicated Server.cmd`):**
