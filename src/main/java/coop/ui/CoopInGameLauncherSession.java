@@ -7,6 +7,7 @@ import coop.config.CoopOptionsStore;
 import coop.net.CoopConnectionRole;
 import coop.net.CoopInGameInvite;
 import coop.net.CoopNetStartupConfig;
+import coop.net.CoopPreGameLobby;
 import coop.storm.CoopStormBridge;
 import coop.util.CoopLog;
 
@@ -37,6 +38,9 @@ public final class CoopInGameLauncherSession {
     }
 
     private Tab activeTab = Tab.HOST;
+    private String playerName = "";
+    private final CoopPreGameLobby preGameLobby = new CoopPreGameLobby();
+    private String lastSyncedGuestLobbySeed = "";
 
     // Host fields
     private String hostAddress = "";
@@ -83,6 +87,9 @@ public final class CoopInGameLauncherSession {
         }
         if (hostAddress.isEmpty()) {
             hostAddress = CoopTitleScreenBridge.detectLocalLanAddress();
+        }
+        if (playerName.isEmpty()) {
+            playerName = CoopTitleScreenBridge.loadPlayerName();
         }
     }
 
@@ -148,6 +155,20 @@ public final class CoopInGameLauncherSession {
 
     public Tab activeTab() { return activeTab; }
     public void setActiveTab(Tab tab) { if (tab != null) this.activeTab = tab; }
+
+    public String playerName() { return playerName; }
+    public void setPlayerName(String v) {
+        String clean = trim(v);
+        if (!clean.isEmpty() && !clean.equals(playerName)) {
+            playerName = clean.length() > 28 ? clean.substring(0, 28) : clean;
+            CoopTitleScreenBridge.savePlayerName(playerName);
+        } else if (clean.isEmpty()) {
+            playerName = "";
+        }
+    }
+
+    public CoopPreGameLobby preGameLobby() { return preGameLobby; }
+    public boolean isPreGameLobbyActive() { return preGameLobby.isActive(); }
 
     public String hostAddress() { return hostAddress; }
     public void setHostAddress(String v) { hostAddress = trim(v); }
@@ -388,8 +409,156 @@ public final class CoopInGameLauncherSession {
         return true;
     }
 
+    /** Arms HOST mode and opens the live Title Screen pre-game lobby on the configured port. */
+    public boolean openHostLobby(CoopOptionsStore store) {
+        if (!applyHostConfig(store)) {
+            return false;
+        }
+        int port = parsePort(hostPort);
+        String name = playerName.isEmpty() ? tr("Host", "Хост") : playerName;
+        boolean started = preGameLobby.startHost(port, hostPassword, name,
+                hostSeed, sectorSize, sectorAge, System.currentTimeMillis());
+        if (!started) {
+            setStatus(tr("Could not open lobby on port " + port + ": " + preGameLobby.lastError(),
+                    "Не удалось открыть лобби на порту " + port + ": " + preGameLobby.lastError()),
+                    new Color(255, 120, 110));
+            return false;
+        }
+        String invite = buildHostInvite();
+        boolean copied = !invite.isEmpty() && CoopTitleScreenBridge.writeClipboard(invite);
+        setStatus(copied
+                        ? tr("Lobby open (port " + port + ") & invite copied! Waiting for players...",
+                                "Лобби открыто (порт " + port + "), инвайт скопирован! Ожидание игроков...")
+                        : tr("Lobby open (port " + port + ")! Share your invite and wait for players.",
+                                "Лобби открыто (порт " + port + ")! Отправьте инвайт друзьям."),
+                new Color(110, 255, 165));
+        return true;
+    }
+
+    /** Arms GUEST mode and connects to the host's live Title Screen pre-game lobby. */
+    public boolean joinHostLobby(CoopOptionsStore store) {
+        if (!applyGuestConfig(store)) {
+            return false;
+        }
+        String host = trim(guestHost);
+        int port = parsePort(guestPort);
+        String name = playerName.isEmpty() ? tr("Guest", "Гость") : playerName;
+        lastSyncedGuestLobbySeed = guestSeed;
+        boolean started = preGameLobby.startGuest(host, port, guestPassword, name, System.currentTimeMillis());
+        if (!started) {
+            setStatus(tr("Could not connect to lobby " + host + ":" + port + ": " + preGameLobby.lastError(),
+                    "Не удалось подключиться к лобби " + host + ":" + port + ": " + preGameLobby.lastError()),
+                    new Color(255, 120, 110));
+            return false;
+        }
+        setStatus(tr("Connecting to lobby " + host + ":" + port + "...",
+                "Подключение к лобби " + host + ":" + port + "..."),
+                new Color(150, 225, 255));
+        return true;
+    }
+
+    /** Ticks the live Title Screen pre-game lobby. Returns {@code true} when UI should rebuild. */
+    public boolean tickPreGameLobby(CoopOptionsStore store) {
+        if (!preGameLobby.isActive()) {
+            return false;
+        }
+        boolean changed = preGameLobby.tick(System.currentTimeMillis());
+        if (!changed) {
+            return false;
+        }
+        CoopPreGameLobby.State st = preGameLobby.state();
+        if (st == CoopPreGameLobby.State.ERROR) {
+            String err = preGameLobby.lastError();
+            if ("WRONG_PASSWORD".equals(err)) {
+                setStatus(tr("Wrong lobby password!", "Неверный пароль лобби!"), new Color(255, 120, 110));
+            } else {
+                setStatus(tr("Lobby disconnected: " + err, "Отключено от лобби: " + err),
+                        new Color(255, 165, 90));
+            }
+            return true;
+        }
+        if (!preGameLobby.isHost() && st == CoopPreGameLobby.State.IN_LOBBY) {
+            syncGuestSettingsFromLobby(store);
+            setStatus(tr("Connected to host lobby! Press READY when ready to launch.",
+                    "Вы в лобби хоста! Нажмите «ГОТОВ», когда будете готовы начать."),
+                    new Color(110, 255, 165));
+            return true;
+        }
+        if (preGameLobby.isLaunchTriggered()) {
+            if (!preGameLobby.isHost()) {
+                syncGuestSettingsFromLobby(store);
+                setStatus(tr("HOST IS STARTING THE WORLD! Close this window and click New Game or Load Game.",
+                        "ХОСТ ЗАПУСКАЕТ МИР! Закройте окно и нажмите «Новая игра» или «Загрузить»."),
+                        new Color(110, 255, 165));
+            } else {
+                setStatus(tr("LOBBY LAUNCHED! Close this window and click New Game or Load Game.",
+                        "ЛОББИ ЗАПУЩЕНО! Закройте окно и нажмите «Новая игра» или «Загрузить»."),
+                        new Color(110, 255, 165));
+            }
+            return true;
+        }
+        return true;
+    }
+
+    private void syncGuestSettingsFromLobby(CoopOptionsStore store) {
+        String remoteSeed = trim(preGameLobby.worldSeed());
+        String remoteSize = trim(preGameLobby.worldSize());
+        String remoteAge = trim(preGameLobby.worldAge());
+        boolean differs = (!remoteSeed.isEmpty() && !remoteSeed.equals(lastSyncedGuestLobbySeed))
+                || (!remoteSize.isEmpty() && !remoteSize.equals(guestSectorSize))
+                || (!remoteAge.isEmpty() && !remoteAge.equals(guestSectorAge));
+        if (!differs) {
+            return;
+        }
+        if (!remoteSeed.isEmpty()) {
+            guestSeed = remoteSeed;
+            lastSyncedGuestLobbySeed = remoteSeed;
+        }
+        if (!remoteSize.isEmpty()) {
+            guestSectorSize = remoteSize;
+        }
+        if (!remoteAge.isEmpty()) {
+            guestSectorAge = remoteAge;
+        }
+        // Persist synced host world parameters quietly so Guest's New Game matches Host automatically.
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put(CoopOptionsRegistry.NEW_GAME_SEED, guestSeed.isEmpty() ? null : guestSeed);
+        values.put(CoopOptionsRegistry.SECTOR_SIZE, guestSectorSize.isEmpty() ? null : guestSectorSize);
+        values.put(CoopOptionsRegistry.SECTOR_AGE, guestSectorAge.isEmpty() ? null : guestSectorAge);
+        if (store != null) {
+            store.writeSessionLaunchSettings(values);
+            store.reload();
+        }
+        CoopModPlugin.applyRuntimeSeed(guestSeed);
+    }
+
+    public void toggleLobbyReady() {
+        preGameLobby.toggleLocalReady();
+    }
+
+    public void startGameFromLobby() {
+        if (!preGameLobby.isHost() || preGameLobby.state() != CoopPreGameLobby.State.HOSTING) {
+            return;
+        }
+        preGameLobby.triggerHostStart();
+        setStatus(tr("LOBBY LAUNCHED! Close this window and click New Game or Load Game.",
+                "ЛОББИ ЗАПУЩЕНО! Закройте окно и нажмите «Новая игра» или «Загрузить»."),
+                new Color(110, 255, 165));
+    }
+
+    public void leavePreGameLobby() {
+        preGameLobby.stop();
+        setStatus(tr("Left the pre-game lobby.", "Вы вышли из лобби."), new Color(180, 200, 210));
+    }
+
+    /** Releases the pre-game lobby port cleanly when leaving the Title Screen into the campaign. */
+    public void stopPreGameLobbyOnStateExit() {
+        preGameLobby.closeChannelsKeepSummary();
+    }
+
     /** Turns off CO-OP auto-start and restores pure singleplayer mode. */
     public void disableCoop(CoopOptionsStore store) {
+        preGameLobby.stop();
         Map<String, String> values = new LinkedHashMap<>();
         values.put(CoopOptionsRegistry.HOST_PORT, null);
         values.put(CoopOptionsRegistry.CONNECT_HOST, null);
@@ -411,6 +580,16 @@ public final class CoopInGameLauncherSession {
 
     /** Short dynamic label for the green CO-OP button on the Title Screen. */
     public String titleButtonLabel() {
+        if (preGameLobby.isActive()) {
+            if (preGameLobby.state() == CoopPreGameLobby.State.CONNECTING) {
+                return tr("CO-OP · CONNECTING...", "CO-OP · ПОДКЛЮЧЕНИЕ...");
+            }
+            return tr("CO-OP · LOBBY (" + preGameLobby.readyCount() + "/" + preGameLobby.totalCount() + ")",
+                    "CO-OP · ЛОББИ (" + preGameLobby.readyCount() + "/" + preGameLobby.totalCount() + ")");
+        }
+        if (preGameLobby.isLaunchTriggered()) {
+            return tr("CO-OP · ENTER WORLD!", "CO-OP · ВХОД В МИР!");
+        }
         if (armedRole == CoopConnectionRole.HOST) {
             return tr("CO-OP · HOST :" + hostPort, "CO-OP · ХОСТ :" + hostPort);
         }

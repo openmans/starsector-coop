@@ -41,6 +41,7 @@ public final class CoopTitleScreenBridge {
     private static final String TITLE_STATE_CLASS = "com.fs.starfarer.title.TitleScreenState";
     private static final String PREF_NODE = "/coop/launcher";
     private static final String PREF_LANG_KEY = "launcher.lang";
+    private static final String PREF_NAME_KEY = "launcher.playerName";
 
     private static volatile boolean handlesResolved;
     private static volatile MethodHandle appDriverGetInstance;
@@ -305,6 +306,37 @@ public final class CoopTitleScreenBridge {
     public static void savePreferRussian(boolean russian) {
         try {
             Preferences.userRoot().node(PREF_NODE).put(PREF_LANG_KEY, russian ? "RU" : "EN");
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Loads the player's preferred lobby nickname (falls back to OS username). */
+    public static String loadPlayerName() {
+        try {
+            Preferences prefs = Preferences.userRoot().node(PREF_NODE);
+            String saved = prefs.get(PREF_NAME_KEY, "").trim();
+            if (!saved.isEmpty()) {
+                return saved;
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            String osUser = System.getProperty("user.name", "").trim();
+            if (!osUser.isEmpty()) {
+                return osUser;
+            }
+        } catch (Throwable ignored) {
+        }
+        return "Player";
+    }
+
+    /** Saves the player's lobby nickname across sessions. */
+    public static void savePlayerName(String name) {
+        if (name == null || name.trim().isEmpty()) {
+            return;
+        }
+        try {
+            Preferences.userRoot().node(PREF_NODE).put(PREF_NAME_KEY, name.trim());
         } catch (Throwable ignored) {
         }
     }

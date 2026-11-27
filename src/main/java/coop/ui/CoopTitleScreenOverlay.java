@@ -49,8 +49,8 @@ public final class CoopTitleScreenOverlay {
 
     private static final float BUTTON_W = 250f;
     private static final float BUTTON_H = 36f;
-    private static final float MODAL_W = 580f;
-    private static final float MODAL_H = 470f;
+    private static final float MODAL_W = 600f;
+    private static final float MODAL_H = 524f;
 
     // Button IDs
     private static final String ID_OPEN = "coop.open";
@@ -69,6 +69,9 @@ public final class CoopTitleScreenOverlay {
     private static final String ID_PASTE_INVITE = "coop.join.paste";
     private static final String ID_APPLY_JOIN = "coop.join.apply";
     private static final String ID_DISABLE = "coop.disable";
+    private static final String ID_LOBBY_READY = "coop.lobby.ready";
+    private static final String ID_LOBBY_START = "coop.lobby.start";
+    private static final String ID_LOBBY_LEAVE = "coop.lobby.leave";
 
     private static UIPanelAPI attachedScreen;
     private static CustomPanelAPI buttonPanel;
@@ -81,6 +84,7 @@ public final class CoopTitleScreenOverlay {
     private static boolean loggedError;
 
     // Active form text fields (read before rebuild / apply)
+    private static TextFieldAPI playerNameField;
     private static TextFieldAPI hostAddrField;
     private static TextFieldAPI hostPortField;
     private static TextFieldAPI hostPwField;
@@ -97,6 +101,7 @@ public final class CoopTitleScreenOverlay {
     public static void onTitleFrame() {
         try {
             if (Global.getCurrentState() != GameState.TITLE) {
+                CoopInGameLauncherSession.shared().stopPreGameLobbyOnStateExit();
                 detachAll();
                 return;
             }
@@ -106,6 +111,11 @@ public final class CoopTitleScreenOverlay {
             }
             CoopInGameLauncherSession session = CoopInGameLauncherSession.shared();
             session.ensureInitialized();
+
+            // Advance live pre-game lobby networking on the main frame thread
+            if (session.tickPreGameLobby(CoopOptionsStore.system()) && modalOpen) {
+                rebuildPending = true;
+            }
 
             // Apply async IP lookup result safely on the LWJGL main thread
             String foundIp = pendingPublicIp;
@@ -194,6 +204,7 @@ public final class CoopTitleScreenOverlay {
     }
 
     private static void clearFieldRefs() {
+        playerNameField = null;
         hostAddrField = null;
         hostPortField = null;
         hostPwField = null;
@@ -274,6 +285,18 @@ public final class CoopTitleScreenOverlay {
                 GREEN_BRIGHT, GREEN_BG, Alignment.MID, CutStyle.ALL, langW, 24f, 0f);
         langBtn.getPosition().inTR(pad + closeW + 8f, 11f);
 
+        // ---- Pre-game Lobby view (Title Screen only, while hosting or connected to a lobby) ----
+        if (!inCampaign && s.isPreGameLobbyActive()) {
+            float y = 52f;
+            y = buildPreGameLobbyBody(ui, s, pad, innerW, y);
+            if (!s.statusText().isEmpty()) {
+                LabelAPI st = ui.addPara(s.statusText(), s.statusColor(), 0f);
+                st.getPosition().setSize(innerW, 44f);
+                st.getPosition().inTL(pad, y + 6f);
+            }
+            return;
+        }
+
         // ---- Mode Tabs: HOST | JOIN ----
         float tabY = 46f;
         float tabW = (innerW - 8f) * 0.5f;
@@ -291,7 +314,16 @@ public final class CoopTitleScreenOverlay {
                 Alignment.MID, CutStyle.ALL, tabW, 30f, 0f);
         joinTab.getPosition().inTL(pad + tabW + 8f, tabY);
 
-        float y = tabY + 42f;
+        float y = tabY + 40f;
+
+        if (!inCampaign) {
+            float nickLblW = 148f;
+            LabelAPI nickLbl = ui.addPara(s.tr("Your lobby nickname:", "Ваш ник в лобби:"), LABEL_MUTED, 0f);
+            nickLbl.getPosition().inTL(pad, y + 5f);
+            playerNameField = createField(ui, innerW - nickLblW - 8f, s.playerName(), 28);
+            playerNameField.getPosition().inTL(pad + nickLblW + 8f, y);
+            y += 38f;
+        }
 
         if (liveSessionBanner != null && !liveSessionBanner.isEmpty()) {
             LabelAPI banner = ui.addPara(liveSessionBanner, GREEN_BRIGHT, 0f);
@@ -310,6 +342,147 @@ public final class CoopTitleScreenOverlay {
             LabelAPI st = ui.addPara(s.statusText(), s.statusColor(), 0f);
             st.getPosition().setSize(innerW, 42f);
             st.getPosition().inTL(pad, y + 6f);
+        }
+    }
+
+    private static float buildPreGameLobbyBody(TooltipMakerAPI ui, CoopInGameLauncherSession s,
+                                               float pad, float innerW, float y) {
+        coop.net.CoopPreGameLobby lobby = s.preGameLobby();
+        boolean isHost = lobby.isHost();
+        boolean connecting = lobby.state() == coop.net.CoopPreGameLobby.State.CONNECTING;
+
+        // 1. Lobby title & readiness counter
+        String heading = connecting
+                ? s.tr("CONNECTING TO HOST LOBBY...", "ПОДКЛЮЧЕНИЕ К ЛОББИ ХОСТА...")
+                : s.tr("PRE-GAME LOBBY  ·  READY: " + lobby.readyCount() + " / " + lobby.totalCount(),
+                        "ЛОББИ ОЖИДАНИЯ  ·  ГОТОВЫ: " + lobby.readyCount() + " / " + lobby.totalCount());
+        LabelAPI headerLbl = ui.addPara(heading, GREEN_BRIGHT, 0f);
+        headerLbl.getPosition().inTL(pad, y);
+        y += 24f;
+
+        // 2. World parameters summary
+        String seedText = lobby.worldSeed().isEmpty() ? "—" : lobby.worldSeed();
+        String worldLine = s.tr(
+                "Port: " + lobby.boundPort() + "  ·  Seed: " + seedText
+                        + "  ·  Size: " + lobby.worldSize() + "  ·  Age: " + lobby.worldAge(),
+                "Порт: " + lobby.boundPort() + "  ·  Сид: " + seedText
+                        + "  ·  Сектор: " + lobby.worldSize() + "  ·  Звёзды: " + lobby.worldAge());
+        LabelAPI worldLbl = ui.addPara(worldLine, LABEL_MUTED, 0f);
+        worldLbl.getPosition().setSize(innerW, 20f);
+        worldLbl.getPosition().inTL(pad, y);
+        y += 26f;
+
+        // 3. Connected players roster
+        LabelAPI rosterTitle = ui.addPara(
+                s.tr("Players in lobby (" + lobby.totalCount() + "):",
+                        "Игроки в лобби (" + lobby.totalCount() + "):"),
+                ACTION_TEXT, 0f);
+        rosterTitle.getPosition().inTL(pad, y);
+        y += 24f;
+
+        List<coop.net.CoopPreGameLobby.Member> members = lobby.members();
+        Color amberText = new Color(255, 215, 110);
+        Color amberBg = new Color(64, 48, 18);
+        int shown = 0;
+        for (coop.net.CoopPreGameLobby.Member m : members) {
+            if (shown >= 6) {
+                break;
+            }
+            boolean isSelf = (isHost && m.host()) || (!isHost && !m.host() && m.name().equals(s.playerName()));
+            String roleTag = m.host() ? s.tr("[HOST] ", "[ХОСТ] ") : s.tr("[GUEST] ", "[ГОСТЬ] ");
+            String youTag = isSelf ? s.tr(" (you)", " (вы)") : "";
+            String badge = m.ready() ? s.tr("READY", "ГОТОВ") : s.tr("NOT READY", "НЕ ГОТОВ");
+
+            float badgeW = 128f;
+            float nameW = innerW - badgeW - 8f;
+            ButtonAPI namePill = ui.addButton(roleTag + m.name() + youTag, "coop.lobby.member." + shown,
+                    m.ready() ? GREEN_BRIGHT : ACTION_TEXT,
+                    m.ready() ? new Color(16, 54, 34) : TAB_INACTIVE_BG,
+                    Alignment.LMID, CutStyle.ALL, nameW, 28f, 0f);
+            namePill.setEnabled(false);
+            namePill.getPosition().inTL(pad, y);
+
+            ButtonAPI statePill = ui.addButton(badge, "coop.lobby.state." + shown,
+                    m.ready() ? GREEN_BRIGHT : amberText,
+                    m.ready() ? GREEN_BG : amberBg,
+                    Alignment.MID, CutStyle.ALL, badgeW, 28f, 0f);
+            statePill.setEnabled(false);
+            statePill.getPosition().inTL(pad + nameW + 8f, y);
+
+            y += 34f;
+            shown++;
+        }
+
+        if (isHost && members.size() <= 1) {
+            LabelAPI waitTip = ui.addPara(
+                    s.tr("Waiting for partner(s)... Copy the invite and send it to your friend.",
+                            "Ожидание напарника... Скопируйте инвайт и отправьте другу."),
+                    LABEL_MUTED, 0f);
+            waitTip.getPosition().setSize(innerW, 24f);
+            waitTip.getPosition().inTL(pad, y + 4f);
+        } else if (!isHost && !connecting) {
+            LabelAPI guestTip = ui.addPara(
+                    s.tr("Host's sector seed & settings synced automatically. Waiting for host to start...",
+                            "Сид и настройки мира синхронизированы с хостом. Ожидание старта от хоста..."),
+                    LABEL_MUTED, 0f);
+            guestTip.getPosition().setSize(innerW, 24f);
+            guestTip.getPosition().inTL(pad, y + 4f);
+        }
+
+        // Fixed bottom action bar inside the lobby card
+        float barY = 382f;
+        boolean localReady = lobby.isLocalReady();
+        if (isHost) {
+            float readyW = 176f;
+            float copyW = 184f;
+            float leaveW = innerW - readyW - copyW - 16f;
+
+            ButtonAPI readyBtn = ui.addButton(
+                    localReady ? s.tr("READY (click to unset)", "ГОТОВ (снять)")
+                            : s.tr("MARK READY", "ГОТОВ"),
+                    ID_LOBBY_READY,
+                    localReady ? GREEN_BRIGHT : amberText,
+                    localReady ? GREEN_TAB_ACTIVE_BG : amberBg,
+                    Alignment.MID, CutStyle.ALL, readyW, 32f, 0f);
+            readyBtn.getPosition().inTL(pad, barY);
+
+            ButtonAPI copyBtn = ui.addButton(s.tr("Copy Invite", "Копировать инвайт"), ID_COPY_INVITE,
+                    ACTION_TEXT, ACTION_BG, Alignment.MID, CutStyle.ALL, copyW, 32f, 0f);
+            copyBtn.getPosition().inTL(pad + readyW + 8f, barY);
+
+            ButtonAPI leaveBtn = ui.addButton(s.tr("Close Lobby", "Закрыть лобби"), ID_LOBBY_LEAVE,
+                    DANGER_TEXT, DANGER_BG, Alignment.MID, CutStyle.ALL, leaveW, 32f, 0f);
+            leaveBtn.getPosition().inTL(pad + readyW + copyW + 16f, barY);
+
+            String startLabel = lobby.totalCount() <= 1
+                    ? s.tr("START GAME (SOLO)", "НАЧАТЬ ИГРУ (СОЛО)")
+                    : (lobby.allReady()
+                    ? s.tr("ALL READY — START GAME", "ВСЕ ГОТОВЫ — НАЧАТЬ ИГРУ")
+                    : s.tr("START GAME ANYWAY (" + lobby.readyCount() + "/" + lobby.totalCount() + " READY)",
+                            "НАЧАТЬ ИГРУ (" + lobby.readyCount() + "/" + lobby.totalCount() + " ГОТОВЫ)"));
+            ButtonAPI startBtn = ui.addButton(startLabel, ID_LOBBY_START,
+                    GREEN_BRIGHT,
+                    lobby.allReady() ? new Color(26, 132, 68) : GREEN_BG,
+                    Alignment.MID, CutStyle.ALL, innerW, 36f, 0f);
+            startBtn.getPosition().inTL(pad, barY + 40f);
+            return barY + 82f;
+        } else {
+            float readyW = innerW - 188f;
+            float leaveW = 180f;
+            ButtonAPI readyBtn = ui.addButton(
+                    localReady ? s.tr("[READY] (click to cancel)", "[ГОТОВ] (отменить)")
+                            : s.tr("I AM READY", "Я ГОТОВ"),
+                    ID_LOBBY_READY,
+                    localReady ? GREEN_BRIGHT : amberText,
+                    localReady ? new Color(26, 132, 68) : amberBg,
+                    Alignment.MID, CutStyle.ALL, readyW, 38f, 0f);
+            readyBtn.setEnabled(!connecting);
+            readyBtn.getPosition().inTL(pad, barY + 22f);
+
+            ButtonAPI leaveBtn = ui.addButton(s.tr("Leave Lobby", "Выйти из лобби"), ID_LOBBY_LEAVE,
+                    DANGER_TEXT, DANGER_BG, Alignment.MID, CutStyle.ALL, leaveW, 38f, 0f);
+            leaveBtn.getPosition().inTL(pad + readyW + 8f, barY + 22f);
+            return barY + 72f;
         }
     }
 
@@ -403,7 +576,7 @@ public final class CoopTitleScreenOverlay {
 
         ButtonAPI applyHost = ui.addButton(
                 inCampaign ? s.tr("START HOST SERVER", "ЗАПУСТИТЬ СЕРВЕР")
-                        : s.tr("ENABLE HOST MODE", "ВКЛЮЧИТЬ ХОСТ"),
+                        : s.tr("OPEN HOST LOBBY", "ОТКРЫТЬ ЛОББИ"),
                 ID_APPLY_HOST, GREEN_BRIGHT, GREEN_TAB_ACTIVE_BG,
                 Alignment.MID, CutStyle.ALL, primaryW, 34f, 0f);
         applyHost.getPosition().inTL(pad, y);
@@ -484,7 +657,7 @@ public final class CoopTitleScreenOverlay {
         float offW = innerW - primaryW - 8f;
         ButtonAPI applyJoin = ui.addButton(
                 inCampaign ? s.tr("CONNECT TO HOST", "ПОДКЛЮЧИТЬСЯ К ХОСТУ")
-                        : s.tr("ENABLE JOIN MODE", "ГОТОВ К ПОДКЛЮЧЕНИЮ"),
+                        : s.tr("JOIN LOBBY", "ВОЙТИ В ЛОББИ"),
                 ID_APPLY_JOIN, GREEN_BRIGHT, GREEN_TAB_ACTIVE_BG,
                 Alignment.MID, CutStyle.ALL, primaryW, 34f, 0f);
         applyJoin.getPosition().inTL(pad, y);
@@ -508,6 +681,7 @@ public final class CoopTitleScreenOverlay {
 
     /** Copies current widget values back into {@link CoopInGameLauncherSession}. */
     static void syncFieldsToSession(CoopInGameLauncherSession s) {
+        if (playerNameField != null) s.setPlayerName(playerNameField.getText());
         if (hostAddrField != null) s.setHostAddress(hostAddrField.getText());
         if (hostPortField != null) s.setHostPort(hostPortField.getText());
         if (hostPwField != null) s.setHostPassword(hostPwField.getText());
@@ -590,7 +764,7 @@ public final class CoopTitleScreenOverlay {
                 if (campaignActions != null) {
                     campaignActions.onHost(s);
                 } else {
-                    s.applyHostConfig(CoopOptionsStore.system());
+                    s.openHostLobby(CoopOptionsStore.system());
                 }
                 return true;
             }
@@ -598,8 +772,20 @@ public final class CoopTitleScreenOverlay {
                 if (campaignActions != null) {
                     campaignActions.onJoin(s);
                 } else {
-                    s.applyGuestConfig(CoopOptionsStore.system());
+                    s.joinHostLobby(CoopOptionsStore.system());
                 }
+                return true;
+            }
+            case ID_LOBBY_READY -> {
+                s.toggleLobbyReady();
+                return true;
+            }
+            case ID_LOBBY_START -> {
+                s.startGameFromLobby();
+                return true;
+            }
+            case ID_LOBBY_LEAVE -> {
+                s.leavePreGameLobby();
                 return true;
             }
             case ID_DISABLE -> {

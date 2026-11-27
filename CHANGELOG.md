@@ -11,14 +11,14 @@
   choices with speaker hover highlight, a smoothly interpolated OpenGL pointer with the speaker's
   name tag, and clickable BG3-style option voting that flashes the recommended option button on the
   speaker's live dialog and displays an emerald top-center vote banner on `CoopLinkHud`.
-- **Native in-game green `CO-OP` button on the Title Screen & in-campaign Host/Join (`F7`):**
+- **Native in-game green `CO-OP` button on the Title Screen, live Pre-Game Lobby & in-campaign Host/Join (`F7`):**
   added a native emerald-green `CO-OP` button directly beneath the main menu on Starsector's Title
-  Screen (`CoopTitleScreenBridge`, `CoopTitleScreenOverlay`, `CoopInGameLauncherSession`) opening a
-  bilingual **RU / EN** Host / Join modal with clipboard `coop://` invite copy/paste, async public
-  IP detection, UPnP toggle, seed & world settings, and runtime seed/storm-role rebinding so
-  players can host or join directly before pressing `New Game` or `Load Game` without leaving
-  Starsector; also accessible live inside any loaded campaign via `F7`
-  (`CoopCampaignConnectDialog`, `CoopNetPump.startHostRuntime` / `startGuestRuntime` /
+  Screen (`CoopTitleScreenBridge`, `CoopTitleScreenOverlay`, `CoopInGameLauncherSession`) with a
+  live non-blocking NIO **Pre-Game Lobby** (`CoopPreGameLobby`) right inside the same green modal:
+  Host and Guest(s) set their nickname, see each other live in the roster, toggle Ready status,
+  auto-sync the host's sector seed/size/star age, and launch together into the world (automatically
+  releasing the lobby port on campaign transition); also accessible live inside any loaded campaign
+  via `F7` (`CoopCampaignConnectDialog`, `CoopNetPump.startHostRuntime` / `startGuestRuntime` /
   `stopRuntimeSession`).
 - **Phase 26 completion (guest-proximity encounter triggering + multi-guest despawn + M3 polish):**
   added `CoopGuestEncounterTrigger` on the host so guests travelling away from the host in
