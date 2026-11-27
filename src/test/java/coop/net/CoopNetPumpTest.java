@@ -10401,6 +10401,82 @@ class CoopNetPumpTest {
         assertFalse(pump.fleetMirrorForTest().hasMirrorFleet());
     }
 
+    @Test
+    void hostDropsOnlyRejectingGuestWhenOtherGuestsRemainActive() {
+        List<String> dropped = new ArrayList<>();
+        RecordingNetService service = recordingHostWithDropTracking(dropped);
+        CoopSessionState session = twoGuestHostSession();
+        AtomicLong now = new AtomicLong(1_000L);
+        Global.setSector(new RecordingSector(false).proxy());
+        CoopNetPump pump = new CoopNetPump(service, session, now::get,
+                () -> emptyManifest("0.98.5a-RC9", "commit-a"), () -> false,
+                () -> new CoopSeedSync.SeedData(123456789L, "coop-seed", "fingerprint-host"),
+                () -> "fingerprint-host",
+                () -> "coop-seed");
+        pump.advance(0f);
+
+        service.inbound.add(CoopMessages.seedLockReject("session-a", 10L, now.get(), "COOP-SEED mismatch")
+                .withSenderId("guest-b"));
+        pump.advance(0f);
+
+        assertTrue(pump.gameplaySessionActiveForBridge(), "first guest keeps the host session alive");
+        assertEquals(List.of("guest-b"), dropped);
+        assertEquals(1, session.guests().size());
+        assertEquals("guest-a", session.guests().get(0).playerId());
+    }
+
+    @Test
+    void hostDropsOnlyMismatchingGuestAckWhenOtherGuestsRemainActive() {
+        List<String> dropped = new ArrayList<>();
+        RecordingNetService service = recordingHostWithDropTracking(dropped);
+        CoopSessionState session = twoGuestHostSession();
+        AtomicLong now = new AtomicLong(1_000L);
+        Global.setSector(new RecordingSector(false).proxy());
+        CoopNetPump pump = new CoopNetPump(service, session, now::get,
+                () -> emptyManifest("0.98.5a-RC9", "commit-a"), () -> false,
+                () -> new CoopSeedSync.SeedData(123456789L, "coop-seed", "fingerprint-host"),
+                () -> "fingerprint-host",
+                () -> "coop-seed");
+        pump.advance(0f);
+
+        service.inbound.add(CoopMessages.seedLockAck("session-a", 11L, now.get(), "fingerprint-other")
+                .withSenderId("guest-b"));
+        pump.advance(0f);
+
+        assertTrue(pump.gameplaySessionActiveForBridge(), "first guest keeps the host session alive");
+        assertEquals(List.of("guest-b"), dropped);
+        assertEquals(1, session.guests().size());
+        assertEquals("guest-a", session.guests().get(0).playerId());
+        assertEquals(CoopMessages.Type.SEED_LOCK_REJECT,
+                service.lastOfType(CoopMessages.Type.SEED_LOCK_REJECT).type());
+    }
+
+    private static RecordingNetService recordingHostWithDropTracking(List<String> dropped) {
+        return new RecordingNetService(CoopConnectionRole.HOST) {
+            @Override
+            public boolean dropGuest(String senderId, String reason) {
+                dropped.add(senderId);
+                return true;
+            }
+        };
+    }
+
+    private static CoopSessionState twoGuestHostSession() {
+        CoopSessionState session = new CoopSessionState(
+                new SequencedIds("lobby-a", "host-player", "session-a", "session-b"));
+        session.startHost("Host");
+        session.setMaxGuests(3);
+        session.setAllowMidSessionJoin(true);
+        session.hostAcceptGuest(new CoopPlayerInfo("guest-a", "Guest A"));
+        session.hostAcceptHandshake("guest-a");
+        session.recordSeedLock(123456789L, "coop-seed", "fingerprint-host");
+        session.recordSeedLockForGuest("guest-a", 123456789L, "coop-seed", "fingerprint-host");
+        session.releaseLobby();
+        session.hostAcceptGuest(new CoopPlayerInfo("guest-b", "Guest B"));
+        session.hostAcceptHandshake("guest-b");
+        return session;
+    }
+
     /** A player mirror with no engine fleet behind it, so a test can watch disposal. */
     private static final class FakeFleetMirror extends coop.fleet.CoopFleetMirror {
         private boolean hasMirror = true;

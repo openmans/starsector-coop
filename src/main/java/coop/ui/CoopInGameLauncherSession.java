@@ -606,6 +606,10 @@ public final class CoopInGameLauncherSession {
             byte[] completedZip = preGameLobby.consumeCompletedSaveZip();
             if (completedZip != null && completedZip.length > 0) {
                 boolean isOwn = preGameLobby.consumeCompletedSaveIsOwn();
+                // Saves downloaded directly from the host's live lobby/dedicated server may lack
+                // the host's in-memory campaignId if the host hasn't saved to disk since player 1
+                // joined; arm the one-shot consent so seed lock adopts it on entry.
+                System.setProperty(CoopOptionsRegistry.ADOPT_CAMPAIGN_ID, "true");
                 String extractedDir = isLiveGameRuntime()
                         ? CoopTitleScreenBridge.extractPlayerSaveZip(playerName, completedZip) : "";
                 if (!extractedDir.isEmpty()) {
@@ -858,7 +862,8 @@ public final class CoopInGameLauncherSession {
                 CoopOptionsRegistry.PORT_MAPPING,
                 CoopOptionsRegistry.SECTOR_SIZE,
                 CoopOptionsRegistry.SECTOR_AGE,
-                CoopOptionsRegistry.EXPECTED_CAMPAIGN_ID
+                CoopOptionsRegistry.EXPECTED_CAMPAIGN_ID,
+                CoopOptionsRegistry.ADOPT_CAMPAIGN_ID
         };
         for (String key : keys) {
             try {

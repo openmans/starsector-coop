@@ -5,6 +5,7 @@ import coop.config.CoopOptionsStore;
 import coop.net.CoopConnectionRole;
 import coop.net.CoopInGameInvite;
 import coop.net.CoopNetStartupConfig;
+import coop.net.CoopPreGameLobby;
 import org.json.JSONObject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,7 @@ class CoopInGameLauncherTest {
     @AfterEach
     void clearSeedProp() {
         System.clearProperty(CoopOptionsRegistry.NEW_GAME_SEED);
+        System.clearProperty(CoopOptionsRegistry.ADOPT_CAMPAIGN_ID);
         CoopUiLang.resetForTests();
     }
 
@@ -126,6 +128,62 @@ class CoopInGameLauncherTest {
         assertEquals("CO-OP", guest.titleButtonLabel());
         assertFalse(CoopNetStartupConfig.from(store).isPresent());
         assertNull(System.getProperty(CoopOptionsRegistry.NEW_GAME_SEED));
+    }
+
+    @Test
+    void guestDownloadFromPreGameLobbyArmsOneShotAdoptCampaignId() throws Exception {
+        CoopPreGameLobby host = new CoopPreGameLobby();
+        CoopInGameLauncherSession guest = new CoopInGameLauncherSession();
+        guest.setPlayerName("denis");
+        try {
+            assertTrue(host.startHost(0, "pw", "Host", "MN-11223344", "normal", "mixed", 1_000L));
+            guest.setGuestHost("127.0.0.1");
+            guest.setGuestPort(String.valueOf(host.boundPort()));
+            guest.setGuestPassword("pw");
+            assertTrue(guest.quickConnectLastSettings(null));
+
+            long now = 1_000L;
+            for (int i = 0; i < 40; i++) {
+                now += 25L;
+                host.tick(now);
+                guest.tickPreGameLobby(null);
+                if (guest.preGameLobby().state() == CoopPreGameLobby.State.IN_LOBBY) {
+                    break;
+                }
+                Thread.sleep(10);
+            }
+            guest.toggleLobbyReady();
+            for (int i = 0; i < 40; i++) {
+                now += 25L;
+                host.tick(now);
+                guest.tickPreGameLobby(null);
+                if (host.allReady()) {
+                    break;
+                }
+                Thread.sleep(10);
+            }
+            assertTrue(host.allReady());
+
+            byte[] zipBytes = new byte[1024];
+            for (int i = 0; i < zipBytes.length; i++) {
+                zipBytes[i] = (byte) (i & 0xFF);
+            }
+            assertTrue(host.triggerHostStartWithSave("save_shared", zipBytes, now + 25L));
+            for (int i = 0; i < 60; i++) {
+                now += 25L;
+                host.tick(now);
+                guest.tickPreGameLobby(null);
+                if ("true".equals(System.getProperty(CoopOptionsRegistry.ADOPT_CAMPAIGN_ID))) {
+                    break;
+                }
+                Thread.sleep(10);
+            }
+            assertEquals("true", System.getProperty(CoopOptionsRegistry.ADOPT_CAMPAIGN_ID));
+        } finally {
+            System.clearProperty(CoopOptionsRegistry.ADOPT_CAMPAIGN_ID);
+            host.stop();
+            guest.leavePreGameLobby();
+        }
     }
 
     private static final class InMemoryJsonSource implements CoopOptionsStore.JsonSource {

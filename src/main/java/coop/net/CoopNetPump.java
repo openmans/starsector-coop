@@ -7042,16 +7042,27 @@ public class CoopNetPump implements EveryFrameScript {
         String guestFingerprint = CoopMessages.requiredPayloadString(message, "sectorFingerprint");
         String mismatch = CoopSeedSync.fingerprintMismatch(sessionState.sectorFingerprint(), guestFingerprint);
         if (!mismatch.isEmpty()) {
-            String correlationId = desyncCorrelationId();
-            // Host side, so not terminal: the host rewinds to HOST_WAITING and keeps its lobby open.
-            // The dialog still shows, because otherwise the host learns nothing about why the guest
-            // it was waiting for disappeared.
-            sessionState.rejectHandshake(mismatch);
             CoopMessages.Message reject = CoopMessages.seedLockReject(
                     message.sessionId(),
                     service.nextSeq(),
                     clockMillis.getAsLong(),
                     mismatch);
+            if (hasOtherActiveGuest(message.senderId())) {
+                service.sendTo(message.senderId(), reject);
+                log("outbound", reject);
+                sessionState.hostRemoveGuest(message.senderId());
+                service.dropGuest(message.senderId(), "seed lock fingerprint mismatch");
+                CoopLog.warn(CoopNetPump.class, "Coop guest " + message.senderId()
+                        + " failed seed lock ACK while other guests remain active; dropping only that guest: "
+                        + mismatch);
+                dumpCanonicalFingerprint("host rejecting mismatched guest ack");
+                return;
+            }
+            String correlationId = desyncCorrelationId();
+            // Host side, so not terminal: the host rewinds to HOST_WAITING and keeps its lobby open.
+            // The dialog still shows, because otherwise the host learns nothing about why the guest
+            // it was waiting for disappeared.
+            sessionState.rejectHandshake(mismatch);
             service.sendTo(message.senderId(), reject);
             log("outbound", reject);
             CoopLog.warn(CoopNetPump.class, "Coop seed lock rejected after guest ACK: " + mismatch);
@@ -7109,6 +7120,13 @@ public class CoopNetPump implements EveryFrameScript {
             return;
         }
         String reason = CoopMessages.requiredPayloadString(message, "reason");
+        if (service.role() == CoopConnectionRole.HOST && hasOtherActiveGuest(message.senderId())) {
+            sessionState.hostRemoveGuest(message.senderId());
+            service.dropGuest(message.senderId(), "seed lock rejected: " + reason);
+            CoopLog.warn(CoopNetPump.class, "Coop guest " + message.senderId()
+                    + " rejected seed lock while other guests remain active; dropping only that guest: " + reason);
+            return;
+        }
         String correlationId = desyncCorrelationId();
         // Reached by both roles (the guest rejects the host's request, the host rejects the guest's
         // ack), and terminal only on the guest — same asymmetry as every other seed site.
@@ -7119,6 +7137,14 @@ public class CoopNetPump implements EveryFrameScript {
             dumpCanonicalFingerprint("received seed-lock reject");
         }
         noteDesync(reason, coop.ui.CoopDesyncReason.Source.SEED_LOCK, correlationId);
+    }
+
+    private boolean hasOtherActiveGuest(String excludedPlayerId) {
+        if (excludedPlayerId == null || excludedPlayerId.isEmpty()) {
+            return false;
+        }
+        return sessionState.guests().stream()
+                .anyMatch(g -> !g.playerId().equals(excludedPlayerId));
     }
 
     private void handleTimeSnapshot(CoopMessages.Message message) {
