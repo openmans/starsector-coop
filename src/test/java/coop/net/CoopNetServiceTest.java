@@ -296,6 +296,28 @@ class CoopNetServiceTest {
     }
 
     @Test
+    void dropGuestTargetsOnePeerAndNeverFallsBackToDroppingEveryone() throws Exception {
+        int port = reserveLocalPort();
+        CoopNetService host = new CoopNetService();
+        CoopNetService guest = new CoopNetService();
+        try {
+            assertFalse(host.dropGuest(null, "no id"), "a null id is a no-op");
+            assertFalse(host.dropGuest("", "no id"), "an empty id is a no-op");
+
+            host.startHost(port);
+            guest.connect("127.0.0.1", port);
+            waitUntil(() -> bothConnected(host, guest), "host and guest connected");
+
+            assertFalse(host.dropGuest("no-such-player", "headless console"),
+                    "an unknown id must not behave like dropActiveConnection");
+            assertTrue(host.isConnected(), "the connected peer is untouched by a miss");
+        } finally {
+            guest.shutdown();
+            host.shutdown();
+        }
+    }
+
+    @Test
     void droppingTheActiveConnectionTakesTheOrdinaryDisconnectPathAndTheGuestRetries() throws Exception {
         int port = reserveLocalPort();
         CoopNetService host = new CoopNetService();
