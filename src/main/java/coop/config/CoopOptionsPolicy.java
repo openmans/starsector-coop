@@ -53,9 +53,8 @@ import java.util.function.Supplier;
  *
  * <h2>Inert keys</h2>
  *
- * <p>Five policy keys have no consumer in this build - {@code coop.lootSplit},
- * {@code coop.incomeSplit}, {@code coop.guestColonizationConsent}, {@code coop.allowMidSessionJoin}
- * and {@code coop.allowGuestPause}. They are stored, synced and displayed so the page and the file
+ * <p>Four policy keys have no consumer in this build - {@code coop.lootSplit},
+ * {@code coop.incomeSplit}, {@code coop.allowMidSessionJoin} and {@code coop.allowGuestPause}. They are stored, synced and displayed so the page and the file
  * are a complete reference, and the owning phase (22/24/25/27) wires the consumer when it builds.
  * {@code coop.maxGuests} and {@code coop.reconnectGraceSeconds} are a different kind of inert: they
  * are read at launch by {@code CoopNetStartupConfig}, before any campaign policy exists, and

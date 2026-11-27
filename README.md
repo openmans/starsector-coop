@@ -26,7 +26,7 @@ Your ships, cargo, credits, officers, and skills stay yours.
 | Campaign time | Any player can toggle global pause (when `coop.allowGuestPause` is on) and fast-forward together. Battles and interaction screens pause the campaign automatically. |
 | Battles | Transparent reinforcement within `coop.allyJoinRange` (default `3000 su`): partners get a live join prompt to command their fleet on the **Tactical Map** (no Wingman needed), send **AI officers**, or fly manually via optional **Wingman**. |
 | Markets and storage | Buy from shared open, black, and military markets. Use the same storage locker (with automatic chunking for large ship lockers). Take turns docking at a market. |
-| Colonies, bounties, and reputation | Govern the same colonies under one faction (with synced administrators, configurable `coop.incomeSplit`, and optional `coop.guestColonizationConsent`). Host person/system bounties, commission payouts, contacts, and whitelisted storyline flags replicate to guests. |
+| Colonies, bounties, and reputation | Govern the same colonies under one faction (with synced administrators and configurable `coop.incomeSplit`). Host person/system bounties, commission payouts and whitelisted storyline flags replicate to guests. |
 | Player transfers & comms | Click a partner's fleet for live **Comm Link**, trade credits/cargo/ships atomically via the direct Trade UI (`Intel → Coop Session → Trade with Partner` or Comm Link), chat in-game (`F8` / `coop.chatKey`), or use shared storage and jettisoned pods. |
 | Networking & security | Supports LAN, UPnP/NAT-PMP, optional standalone CGNAT TCP relay (`coop.relayAddress` / `coop-launcher.jar --relay <port>`), and opt-in AES-256-GCM frame encryption (`coop.encryption=aes-gcm` with `coop.password`). |
 

@@ -17,8 +17,8 @@ solo play and the preview features that still need in-game checking.
 - **Sensor ghosts stay local.** The guest runs a restricted cosmetic subset; the host's ghosts are
   not mirrored. Star-corona and pulsar flares also remain local.
 - **The Galatia Academy & Sindrian Diktat chains are host-driven.** Whitelisted `$ga*` / `$sd*`
-  story flags replicate host-authoritatively (`STORY_STATE`), and contacts/missions replicate via
-  `CONTACT_SET` with first-come claim arbitration; complex scripted quest dialogs still run on the
+  story flags replicate host-authoritatively (`STORY_STATE`); contacts and their missions are not
+  synchronized (only the flag keys the vanilla chains key off), and scripted quest dialogs run on the
   host.
 - **Direct player trade & in-game chat are included.** Open **Intel → Coop Session** for direct
   two-phase atomic Trade (credits, cargo, ships) and in-game Comms Chat (`F8` / `coop.chatKey`),

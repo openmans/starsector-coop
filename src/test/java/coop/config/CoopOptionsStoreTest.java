@@ -503,11 +503,11 @@ class CoopOptionsStoreTest {
         FakeSource source = new FakeSource();
         source.common = json(Map.of(
                 "coop.maxGuests", 1,
-                "coop.guestColonizationConsent", true));
+                "coop.liveWorldInCombat", true));
         CoopOptionsStore store = new CoopOptionsStore(source, props());
 
         assertEquals(1, store.integer("coop.maxGuests"));
-        assertTrue(store.bool("coop.guestColonizationConsent"));
+        assertTrue(store.bool("coop.liveWorldInCombat"));
     }
 
     @Test

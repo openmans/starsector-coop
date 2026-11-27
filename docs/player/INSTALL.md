@@ -568,7 +568,6 @@ campaign already in progress; use the options page for that.
 | `coop.allowMidSessionJoin` | `true` | Whether a guest may join a campaign already in progress. No effect in this build. |
 | `coop.lootSplit` | `equal` | How salvage from a jointly fought battle is divided. No effect in this build. |
 | `coop.incomeSplit` | `equal` | `equal` splits colony income 50/50; `host-banks` pays it all to the host. No effect in this build. |
-| `coop.guestColonizationConsent` | `false` | `true` makes a guest founding a colony ask the host first. No effect in this build. |
 
 **Your preferences.** Local, never sent to your partner.
 

@@ -78,11 +78,9 @@ class CoopMessageTypePolicyTest {
             CoopMessages.Type.SESSION_LEAVE, CoopMessages.Type.MARK,
             CoopMessages.Type.ALLY_BATTLE_JOIN, CoopMessages.Type.ALLY_BATTLE_RESULT,
             CoopMessages.Type.WINGMAN_HELLO,
-            CoopMessages.Type.AMBIENT_CALL, CoopMessages.Type.GUEST_SNAPSHOT_RESTORE,
-            CoopMessages.Type.COLONY_CONSENT_REQ, CoopMessages.Type.COLONY_CONSENT_RES,
-            CoopMessages.Type.CONTACT_SET, CoopMessages.Type.STORY_STATE,
+            CoopMessages.Type.GUEST_SNAPSHOT_RESTORE,
+            CoopMessages.Type.STORY_STATE,
             CoopMessages.Type.TRADE_SYNC, CoopMessages.Type.CHAT_MSG,
-            CoopMessages.Type.NEX_EVENT,
             CoopMessages.Type.ALLY_JOIN_OFFER, CoopMessages.Type.ALLY_JOIN_REPLY,
             CoopMessages.Type.DIALOG_SYNC, CoopMessages.Type.DIALOG_VOTE,
             CoopMessages.Type.COMBAT_INIT, CoopMessages.Type.COMBAT_SPAWN,
@@ -164,10 +162,9 @@ class CoopMessageTypePolicyTest {
             CoopMessages.Type.ALLY_BATTLE_RESULT,
             // Phase 34: the guest's Wingman name; losing it only costs the flagship reservation.
             CoopMessages.Type.WINGMAN_HELLO,
-            // Extended sync: guest restore, chat messages, optional Nexerelin state events.
+            // Extended sync: guest restore and chat messages.
             CoopMessages.Type.GUEST_SNAPSHOT_RESTORE,
-            CoopMessages.Type.CHAT_MSG,
-            CoopMessages.Type.NEX_EVENT);
+            CoopMessages.Type.CHAT_MSG);
 
     // ---- table: CoopNetPump.allowedDuringReconnectGrace(Type) --------------------------------
     // The only vocabulary an unproven peer may speak while a reconnect grace window is open: the
@@ -239,10 +236,8 @@ class CoopMessageTypePolicyTest {
             // rule anyway.
             CoopMessages.Type.WINGMAN_HELLO,
             CoopMessages.Type.GUEST_SNAPSHOT_RESTORE,
-            CoopMessages.Type.CONTACT_SET,
             CoopMessages.Type.STORY_STATE,
-            CoopMessages.Type.CHAT_MSG,
-            CoopMessages.Type.NEX_EVENT);
+            CoopMessages.Type.CHAT_MSG);
 
     // ---- table: CoopNetPump.isTerminalRejectType(Type) ---------------------------------------
     // The peer's verdicts on a join, dispatched a few lines early out of the pre-drop drain so

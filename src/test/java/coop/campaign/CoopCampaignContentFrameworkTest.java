@@ -16,7 +16,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <ul>
  *   <li>Faction commission monthly salary sharing and hostile-kill combat bounties for guests.</li>
- *   <li>Contact &amp; contact-mission replication and first-come claim arbitration.</li>
  *   <li>Galatia Academy ({@code $ga*}) and Sindrian Diktat ({@code $sd*}) storyline flag sync and
  *       divergence detection.</li>
  * </ul>
@@ -27,7 +26,6 @@ class CoopCampaignContentFrameworkTest {
     static final class CampaignFixture {
         final Map<String, Object> hostMemoryMap = new LinkedHashMap<>();
         final Map<String, Map<String, Object>> guestMemoryMaps = new LinkedHashMap<>();
-        final CoopContactAuthority hostContacts = new CoopContactAuthority();
         final CoopCommissionRewardSync commissionSync = new CoopCommissionRewardSync();
         final List<String> grants = new ArrayList<>();
 
@@ -115,29 +113,6 @@ class CoopCampaignContentFrameworkTest {
         assertEquals(0L, fixture.commissionSync.onGuestBattleVictory(
                 "battle-2", "guest-1", "tritachyon", 18_500L, world, sink), "battle deduped");
         assertTrue(fixture.grants.contains("guest-1:18500:commission:bounty:hegemony:battle-2"));
-    }
-
-    @Test
-    void contactsRoundTripAndFirstComeMissionClaimsPreventDoubleAccept() {
-        CampaignFixture fixture = new CampaignFixture("guest-1", "guest-2");
-        fixture.hostContacts.replaceAll(List.of(
-                new CoopContactAuthority.ContactRecord(
-                        "c_kanta", "Warlord Kanta", "pirates", "HIGH", "kantas_den",
-                        List.of(new CoopContactAuthority.ContactMission(
-                                "m_raid_1", "Raid Convoy", 45_000L, "")))));
-
-        assertEquals(CoopContactAuthority.ClaimResult.ACCEPTED,
-                fixture.hostContacts.claimMission("c_kanta", "m_raid_1", "guest-1"));
-        assertEquals(CoopContactAuthority.ClaimResult.ALREADY_CLAIMED,
-                fixture.hostContacts.claimMission("c_kanta", "m_raid_1", "guest-2"));
-        assertEquals(CoopContactAuthority.ClaimResult.ACCEPTED,
-                fixture.hostContacts.claimMission("c_kanta", "m_raid_1", "guest-1"),
-                "idempotent re-claim by same owner");
-
-        String wire = CoopContactAuthority.encode(fixture.hostContacts.snapshot());
-        List<CoopContactAuthority.ContactRecord> decoded = CoopContactAuthority.decode(wire);
-        assertEquals(1, decoded.size());
-        assertEquals("guest-1", decoded.get(0).missions().get(0).claimedByPlayerId());
     }
 
     @Test

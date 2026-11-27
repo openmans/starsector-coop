@@ -1,7 +1,6 @@
 package coop.net;
 
 import coop.chat.CoopChatService;
-import coop.compat.CoopNexerelinAdapter;
 import coop.trade.CoopTradeSession;
 import org.junit.jupiter.api.Test;
 
@@ -206,37 +205,4 @@ class CoopExtendedFeaturesTest {
         assertEquals(new CoopRelayProtocol.Command("RELAY_JOIN", "ROOM-42", "tok123"), join);
     }
 
-    @Test
-    void nexerelinAdapterDormantWhenAbsentAndAppliesEventsWhenPresent() {
-        CoopNexerelinAdapter.NexEvent war = new CoopNexerelinAdapter.NexEvent(
-                CoopNexerelinAdapter.EventKind.WAR_DECLARED, "hegemony", "persean", "", -1.0f, "War!");
-        CoopNexerelinAdapter.NexEvent capture = new CoopNexerelinAdapter.NexEvent(
-                CoopNexerelinAdapter.EventKind.MARKET_CAPTURED, "tritachyon", "", "jangala", 0f, "Captured");
-
-        assertEquals(war, CoopNexerelinAdapter.decode(CoopNexerelinAdapter.encode(war)));
-        assertEquals(capture, CoopNexerelinAdapter.decode(CoopNexerelinAdapter.encode(capture)));
-
-        List<String> applied = new ArrayList<>();
-        CoopNexerelinAdapter.NexWorld disabledWorld = new CoopNexerelinAdapter.NexWorld() {
-            @Override public boolean isNexerelinEnabled() { return false; }
-            @Override public boolean setFactionRelationship(String a, String b, float r) { return true; }
-            @Override public boolean setMarketOwner(String m, String f) { return true; }
-        };
-        assertFalse(CoopNexerelinAdapter.apply(war, disabledWorld), "dormant without Nexerelin");
-
-        CoopNexerelinAdapter.NexWorld enabledWorld = new CoopNexerelinAdapter.NexWorld() {
-            @Override public boolean isNexerelinEnabled() { return true; }
-            @Override public boolean setFactionRelationship(String a, String b, float r) {
-                applied.add("rel:" + a + ":" + b + ":" + r);
-                return true;
-            }
-            @Override public boolean setMarketOwner(String m, String f) {
-                applied.add("own:" + m + ":" + f);
-                return true;
-            }
-        };
-        assertTrue(CoopNexerelinAdapter.apply(war, enabledWorld));
-        assertTrue(CoopNexerelinAdapter.apply(capture, enabledWorld));
-        assertEquals(List.of("rel:hegemony:persean:-1.0", "own:jangala:tritachyon"), applied);
-    }
 }

@@ -152,10 +152,6 @@
 	# equal|host-banks | applies: next month tick | Phase 24
 	"coop.incomeSplit":"equal",
 
-	# true makes a guest founding a colony ask the host first. false is the shipped trusted model.
-	# true|false | applies: next colonization | Phase 24
-	"coop.guestColonizationConsent":false,
-
 
 	##############################################################
 	# Tier: client preferences (local only, never synced)

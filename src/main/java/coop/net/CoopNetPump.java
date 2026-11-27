@@ -5179,13 +5179,13 @@ public class CoopNetPump implements EveryFrameScript {
                  // and it is reliable, so the cross-table rule requires it to survive anyway.
                  WINGMAN_HELLO,
                  // Extended sync: guest restore, contacts, story flags, chat, Nexerelin events.
-                 GUEST_SNAPSHOT_RESTORE, CONTACT_SET, STORY_STATE, CHAT_MSG, NEX_EVENT,
+                 GUEST_SNAPSHOT_RESTORE, STORY_STATE, CHAT_MSG,
                  // 0.1.1, and the one member of isConnectionScopedControl that survives: a pre-drop
                  // ack is the partner saying it applied those seqs, which stays true after the drop.
                  // Honouring it is what stops the resume replaying messages that already landed.
                  RELIABLE_ACK -> true;
             // Scoped to the connection the drop edge just tore down, or to state it just reset.
-            case STORM_CONTROL, AMBIENT_CALL, COLONY_CONSENT_REQ, COLONY_CONSENT_RES, TRADE_SYNC,
+            case STORM_CONTROL, TRADE_SYNC,
                  ALLY_JOIN_OFFER, ALLY_JOIN_REPLY, DIALOG_SYNC, DIALOG_VOTE,
                  COMBAT_INIT, COMBAT_SPAWN, COMBAT_STATE, COMBAT_INPUT, COMBAT_ARMOR_DELTA,
                  COMBAT_PROJ_SPAWN, COMBAT_PROJ_HIT, COMBAT_MISSILE_STATE, COMBAT_BEAMS, COMBAT_EVENT,
@@ -5989,14 +5989,10 @@ public class CoopNetPump implements EveryFrameScript {
             case ALLY_BATTLE_JOIN -> handleAllyBattleJoin(message);
             case ALLY_BATTLE_RESULT -> handleAllyBattleResult(message);
             case WINGMAN_HELLO -> handleWingmanHello(message);
-            case AMBIENT_CALL -> handleAmbientCall(message);
             case GUEST_SNAPSHOT_RESTORE -> handleGuestSnapshotRestore(message);
-            case COLONY_CONSENT_REQ, COLONY_CONSENT_RES -> handleColonyConsent(message);
-            case CONTACT_SET -> handleContactSet(message);
             case STORY_STATE -> handleStoryState(message);
             case TRADE_SYNC -> handleTradeSync(message);
             case CHAT_MSG -> handleChatMsg(message);
-            case NEX_EVENT -> handleNexEvent(message);
             case ALLY_JOIN_OFFER -> handleAllyJoinOffer(message);
             case ALLY_JOIN_REPLY -> handleAllyJoinReply(message);
             case DIALOG_SYNC -> handleDialogSync(message);
@@ -10426,25 +10422,7 @@ public class CoopNetPump implements EveryFrameScript {
     }
 
     private final coop.chat.CoopChatService chatService = new coop.chat.CoopChatService();
-    private final coop.campaign.CoopContactAuthority contactAuthority = new coop.campaign.CoopContactAuthority();
-    private final coop.colony.CoopColonizationConsent colonizationConsent = new coop.colony.CoopColonizationConsent();
 
-    /** Phase 26: guest &rarr; host ambient system-call request (slipsurge / abyssal trigger). */
-    private void handleAmbientCall(CoopMessages.Message message) {
-        if (droppedBeforeTheSession(message.type()) || service.role() != CoopConnectionRole.HOST) {
-            return;
-        }
-        try {
-            coop.campaign.CoopAmbientSystemSync.AmbientAction action =
-                    coop.campaign.CoopAmbientSystemSync.AmbientAction.decode(CoopMessages.parseBody(message));
-            if (action != null) {
-                CoopLog.info(CoopNetPump.class, "Coop host accepted AMBIENT_CALL kind=" + action.kind()
-                        + " actor=" + action.actorId() + " pos=(" + action.x() + "," + action.y() + ")");
-            }
-        } catch (RuntimeException | LinkageError ex) {
-            CoopLog.warn(CoopNetPump.class, "Failed to handle AMBIENT_CALL", ex);
-        }
-    }
 
     /** Host &rarr; guest fleet/cargo/credits/officer restore from {@code coop.guestFleetSnapshots}. */
     private void handleGuestSnapshotRestore(CoopMessages.Message message) {
@@ -10470,45 +10448,7 @@ public class CoopNetPump implements EveryFrameScript {
         }
     }
 
-    /** Guest colonization consent request/response when {@code coop.guestColonizationConsent=true}. */
-    private void handleColonyConsent(CoopMessages.Message message) {
-        if (droppedBeforeTheSession(message.type())) {
-            return;
-        }
-        String body = CoopMessages.parseBody(message);
-        List<String> fields = coop.campaign.CoopDelimited.split(body);
-        if (message.type() == CoopMessages.Type.COLONY_CONSENT_REQ
-                && service.role() == CoopConnectionRole.HOST && fields.size() >= 4) {
-            colonizationConsent.submit(new coop.colony.CoopColonizationConsent.Request(
-                    fields.get(0),
-                    message.senderId() == null ? "guest" : message.senderId(),
-                    fields.get(1),
-                    fields.get(2),
-                    fields.get(3),
-                    clockMillis.getAsLong()));
-            coop.ui.CoopFeed.post("Co-op: " + fields.get(1) + " requests permission to colonize "
-                    + fields.get(3) + ".", null, coop.ui.CoopFeed.Severity.IMPORTANT);
-        } else if (message.type() == CoopMessages.Type.COLONY_CONSENT_RES
-                && service.role() == CoopConnectionRole.GUEST && fields.size() >= 2) {
-            boolean approved = Boolean.parseBoolean(fields.get(1));
-            coop.ui.CoopFeed.post(approved
-                    ? "Co-op: host approved colonization."
-                    : "Co-op: host declined colonization.", null, coop.ui.CoopFeed.Severity.IMPORTANT);
-        }
-    }
 
-    /** Host &rarr; guest contacts and contact missions replication. */
-    private void handleContactSet(CoopMessages.Message message) {
-        if (droppedBeforeTheSession(message.type()) || service.role() != CoopConnectionRole.GUEST) {
-            return;
-        }
-        try {
-            contactAuthority.replaceAll(
-                    coop.campaign.CoopContactAuthority.decode(CoopMessages.parseBody(message)));
-        } catch (RuntimeException | LinkageError ex) {
-            CoopLog.warn(CoopNetPump.class, "Failed to apply CONTACT_SET", ex);
-        }
-    }
 
     /** Host &rarr; guest whitelisted Galatia ({@code $ga*}) and Sindrian Diktat ({@code $sd*}) flags. */
     private void handleStoryState(CoopMessages.Message message) {
@@ -10899,21 +10839,6 @@ public class CoopNetPump implements EveryFrameScript {
         }
     }
 
-    /** Host &rarr; guest optional Nexerelin diplomacy/invasion state event. */
-    private void handleNexEvent(CoopMessages.Message message) {
-        if (droppedBeforeTheSession(message.type()) || service.role() != CoopConnectionRole.GUEST) {
-            return;
-        }
-        try {
-            coop.compat.CoopNexerelinAdapter.NexEvent event =
-                    coop.compat.CoopNexerelinAdapter.decode(CoopMessages.parseBody(message));
-            if (event != null) {
-                coop.compat.CoopNexerelinAdapter.apply(event, coop.compat.CoopNexerelinAdapter.liveWorld());
-            }
-        } catch (RuntimeException | LinkageError ex) {
-            CoopLog.warn(CoopNetPump.class, "Failed to apply NEX_EVENT", ex);
-        }
-    }
 
     /** Phase 34: lazily created integration; the first frame a session runs pays the cost. */
     private coop.campaign.CoopBountyAuthority bountyAuthority() {

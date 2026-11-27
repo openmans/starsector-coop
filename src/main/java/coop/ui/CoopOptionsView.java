@@ -128,7 +128,6 @@ public record CoopOptionsView(List<Section> sections) {
         LABELS.put(CoopOptionsRegistry.ALLY_JOIN_RANGE, "Ally battle join range (su)");
         LABELS.put(CoopOptionsRegistry.LOOT_SPLIT, "Battle loot split");
         LABELS.put(CoopOptionsRegistry.INCOME_SPLIT, "Colony income split");
-        LABELS.put(CoopOptionsRegistry.GUEST_COLONIZATION_CONSENT, "Guest asks before colonizing");
         LABELS.put(CoopOptionsRegistry.HUD_DISABLE, "Hide the link HUD");
         LABELS.put(CoopOptionsRegistry.HUD_CORNER, "Link HUD corner");
         LABELS.put(CoopOptionsRegistry.FEED_VERBOSITY, "Event feed detail");

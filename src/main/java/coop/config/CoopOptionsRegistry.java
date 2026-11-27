@@ -257,7 +257,6 @@ public final class CoopOptionsRegistry {
     public static final String ALLOW_MID_SESSION_JOIN = "coop.allowMidSessionJoin";
     public static final String LOOT_SPLIT = "coop.lootSplit";
     public static final String INCOME_SPLIT = "coop.incomeSplit";
-    public static final String GUEST_COLONIZATION_CONSENT = "coop.guestColonizationConsent";
 
     // ---- client preferences ------------------------------------------------------------------
 
@@ -384,10 +383,6 @@ public final class CoopOptionsRegistry {
                 "Phase 24", "next month tick", ApplyBoundary.NEXT_MONTH_TICK,
                 "How monthly colony net income is divided: equal splits 1/N across active players,"
                         + " host-banks leaves 100% with the host."));
-        options.add(boolOption(GUEST_COLONIZATION_CONSENT, Tier.POLICY, "false", "Phase 24",
-                "next colonization", ApplyBoundary.NEXT_COLONIZATION,
-                "When true, a guest founding a colony must wait for host approval before the"
-                        + " colony is finalized."));
 
         // -- Tier 3: per-client preferences ----------------------------------------------------
         options.add(boolOption(HUD_DISABLE, Tier.CLIENT, "false", "Phase 20.6",

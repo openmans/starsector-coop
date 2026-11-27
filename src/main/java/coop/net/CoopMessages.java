@@ -367,24 +367,14 @@ public final class CoopMessages {
          * deploys. Reliable one-shot per session; nothing re-sends it on its own.
          */
         WINGMAN_HELLO,
-        /** Phase 26: guest &rarr; host ambient system-call request (slipsurge / abyssal encounter). */
-        AMBIENT_CALL,
         /** Host &rarr; guest full guest-snapshot restore payload from {@code coop.guestFleetSnapshots}. */
         GUEST_SNAPSHOT_RESTORE,
-        /** Guest &rarr; host colonization approval request when {@code coop.guestColonizationConsent=true}. */
-        COLONY_CONSENT_REQ,
-        /** Host &rarr; guest colonization approval verdict. */
-        COLONY_CONSENT_RES,
-        /** Host &rarr; guest active contacts and contact missions snapshot. */
-        CONTACT_SET,
         /** Host &rarr; guest whitelisted storyline flags ({@code $ga*}, {@code $sd*}). */
         STORY_STATE,
         /** Bidirectional player-to-player direct trade state frame. */
         TRADE_SYNC,
         /** Bidirectional in-game co-op text chat message. */
         CHAT_MSG,
-        /** Host &rarr; guest optional Nexerelin diplomacy/invasion state event. */
-        NEX_EVENT,
         /** Fighting player &rarr; nearby partner within {@code coop.allyJoinRange}: prompt to join battle. */
         ALLY_JOIN_OFFER,
         /** Partner &rarr; fighting player: chosen participation mode (tactical / Wingman / AI / decline). */
@@ -474,7 +464,7 @@ public final class CoopMessages {
                   // Phase 33: the only report of what a battle on the other engine did to this
                   // player's ships. Nothing re-sends it and nothing else carries the same facts.
                   ALLY_BATTLE_RESULT, WINGMAN_HELLO,
-                  GUEST_SNAPSHOT_RESTORE, CHAT_MSG, NEX_EVENT -> true;
+                  GUEST_SNAPSHOT_RESTORE, CHAT_MSG -> true;
              case LOBBY_HELLO, LOBBY_CHALLENGE, LOBBY_ACCEPT, LOBBY_REJECT, LOBBY_STATUS,
                   HANDSHAKE_MANIFEST, HANDSHAKE_RESULT,
                   SEED_LOCK_REQUEST, SEED_LOCK_ACK, SEED_LOCK_REJECT,
@@ -487,11 +477,11 @@ public final class CoopMessages {
                   STREAM_SET, STREAM_ADD, STREAM_DESPAWN, STREAM_REMOVE,
                   WRECK_SET, WRECK_ADD, WRECK_REMOVE, WRECK_CONSUME, WRECK_MUTATION, WRECK_MUTATION_ACK,
                   LIGHT_SET, LIGHT_REQUEST, LIGHT_RESULT,
-                  STORM_SET, STORM_GRID, STORM_CONTROL, AMBIENT_CALL,
+                  STORM_SET, STORM_GRID, STORM_CONTROL,
                   PLAYER_REP_SNAPSHOT, MISSION_POOL_SNAPSHOT,
                   MISSION_CLAIM_REQUEST, MISSION_CLAIM_ACCEPT, MISSION_CLAIM_REJECT,
                   MARKET_OPEN, MARKET_SNAPSHOT, COLONY_INCOME, EXPEDITION_WARNING, BOUNTY_SET,
-                  COLONY_CONSENT_REQ, COLONY_CONSENT_RES, CONTACT_SET, STORY_STATE, TRADE_SYNC,
+                  STORY_STATE, TRADE_SYNC,
                   INTERACTION_CLAIM, INTERACTION_ACCEPT, INTERACTION_REJECT, INTERACTION_RELEASE,
                   ABILITY_ACTIVATE, DIALOG_BEGIN,
                   BATTLE_BEGIN, BATTLE_STATUS, BATTLE_END, BATTLE_RESULT,
@@ -2938,24 +2928,8 @@ public final class CoopMessages {
         return optionalPayloadString(message, "body", "");
     }
 
-    public static Message ambientCall(String sessionId, long seq, long sentAtMillis, String body) {
-        return bodyMessage(Type.AMBIENT_CALL, sessionId, seq, sentAtMillis, body);
-    }
-
     public static Message guestSnapshotRestore(String sessionId, long seq, long sentAtMillis, String body) {
         return bodyMessage(Type.GUEST_SNAPSHOT_RESTORE, sessionId, seq, sentAtMillis, body);
-    }
-
-    public static Message colonyConsentReq(String sessionId, long seq, long sentAtMillis, String body) {
-        return bodyMessage(Type.COLONY_CONSENT_REQ, sessionId, seq, sentAtMillis, body);
-    }
-
-    public static Message colonyConsentRes(String sessionId, long seq, long sentAtMillis, String body) {
-        return bodyMessage(Type.COLONY_CONSENT_RES, sessionId, seq, sentAtMillis, body);
-    }
-
-    public static Message contactSet(String sessionId, long seq, long sentAtMillis, String body) {
-        return bodyMessage(Type.CONTACT_SET, sessionId, seq, sentAtMillis, body);
     }
 
     public static Message storyState(String sessionId, long seq, long sentAtMillis, String body) {
@@ -2968,10 +2942,6 @@ public final class CoopMessages {
 
     public static Message chatMsg(String sessionId, long seq, long sentAtMillis, String body) {
         return bodyMessage(Type.CHAT_MSG, sessionId, seq, sentAtMillis, body);
-    }
-
-    public static Message nexEvent(String sessionId, long seq, long sentAtMillis, String body) {
-        return bodyMessage(Type.NEX_EVENT, sessionId, seq, sentAtMillis, body);
     }
 
     public static Message allyJoinOffer(String sessionId, long seq, long sentAtMillis, String body) {

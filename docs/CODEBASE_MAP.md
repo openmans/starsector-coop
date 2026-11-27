@@ -2,7 +2,7 @@
 
 Orientation map for the Starsector co-op mod. Last checked against the tree on 2026-11-26 (0.2.3 / 0.98.5a-RC9).
 
-P26 remains PARTIAL only for manual native visual checks (M4/M5 paired storms/ghosts). M1/M2, shared wrecks, M3, multi-guest ambient forks, and guest-proximity ambient system-call sync (`CoopAmbientSystemSync` / `AMBIENT_CALL`) are implemented and unit-tested. Decisions and deferred gates live in [the plan](COOP_MP_IMPLEMENTATION_PLAN_V1.md#phase-26-hyperspace-ambient-world-replication-post-v1--slipstreams--abyssal-encounters); dated M3, M4 and M4/M5 acceptance reports retain the run history.
+P26 remains PARTIAL only for manual native visual checks (M4/M5 paired storms/ghosts). M1/M2, shared wrecks, M3 and multi-guest ambient forks are implemented and unit-tested. Decisions and deferred gates live in [the plan](COOP_MP_IMPLEMENTATION_PLAN_V1.md#phase-26-hyperspace-ambient-world-replication-post-v1--slipstreams--abyssal-encounters); dated M3, M4 and M4/M5 acceptance reports retain the run history.
 
 ## Stack
 
@@ -391,9 +391,7 @@ Owns: every wire type, since the enum lives here.
   windows stay transient; native objects save primitive M4 metadata under their existing class names.
 - **`coop.trade`** (1), **`coop.chat`** (1), **`coop.compat`** (1) - direct player-to-player atomic
   trade state machine (`CoopTradeSession` + `CoopTradeDialogPlugin`, `TRADE_SYNC`), in-game text
-  chat (`CoopChatService` + `CoopChatDialog`, `CHAT_MSG`, `coop.chatKey`), and optional Nexerelin
-  diplomacy/invasion sync adapter (`CoopNexerelinAdapter`, `NEX_EVENT`, dormant when Nexerelin is
-  absent).
+  chat (`CoopChatService` + `CoopChatDialog`, `CHAT_MSG`, `coop.chatKey`).
 - **`coop.rng`** (1) and **`coop.presence`** (2) - system classloader only. `CoopRandom` is the
   deterministic session-seeded RNG the forks draw from; `CoopPresenceRegistry` is the multi-guest
   registry through which `coop.jar` tells the forked engine classes where all guests are;

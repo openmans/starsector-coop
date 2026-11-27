@@ -1,6 +1,5 @@
 package coop.config;
 
-import coop.colony.CoopColonizationConsent;
 import coop.combat.CoopAllyBattleOutcome;
 import coop.combat.CoopAllyWreckRecovery;
 import coop.fleet.CoopPresenceIndicator;
@@ -12,7 +11,6 @@ import org.junit.jupiter.api.Test;
 import java.awt.Color;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -77,27 +75,6 @@ class CoopWiredOptionsAndRecoveryTest {
         assertEquals(new Color(0xFF, 0x88, 0x22), CoopPresenceIndicator.parsePartnerColor("#FF8822"));
         assertEquals(new Color(0x11, 0x22, 0x33), CoopPresenceIndicator.parsePartnerColor("112233"));
         assertNull(CoopPresenceIndicator.parsePartnerColor("not-a-color"));
-    }
-
-    @Test
-    void colonizationConsentApprovesDeniesAndExpiresRequests() {
-        CoopColonizationConsent consent = new CoopColonizationConsent();
-        CoopColonizationConsent.Request req1 = new CoopColonizationConsent.Request(
-                "r1", "g1", "Pilot A", "planet_1", "Jangala", 1_000L);
-        assertTrue(consent.submit(req1));
-        assertFalse(consent.submit(req1), "duplicate request id rejected");
-        assertEquals(1, consent.pendingCount());
-        assertEquals(CoopColonizationConsent.Decision.APPROVED, consent.resolve("r1", true));
-        assertNull(consent.resolve("r1", false));
-
-        CoopColonizationConsent.Request req2 = new CoopColonizationConsent.Request(
-                "r2", "g2", "Pilot B", "planet_2", "Eochu Bres", 5_000L);
-        assertTrue(consent.submit(req2));
-        Map<String, CoopColonizationConsent.Request> expired =
-                consent.expireOlderThan(5_000L + CoopColonizationConsent.REQUEST_TIMEOUT_MILLIS);
-        assertEquals(1, expired.size());
-        assertTrue(expired.containsKey("r2"));
-        assertEquals(0, consent.pendingCount());
     }
 
     @Test
