@@ -96,6 +96,25 @@ class CoopInstallLayoutTest {
         assertTrue(layout.isModInstalled());
     }
 
+    @Test
+    void saveAndLoadRememberedInstallRootRoundTripsAndHandlesUtf8Bom(@TempDir Path temp) throws IOException {
+        File customRoot = install(temp.resolve("custom-game"));
+        File pointer = temp.resolve("state").resolve("install-path.txt").toFile();
+
+        CoopInstallLayout.saveInstallRootToFile(customRoot, pointer);
+        CoopInstallLayout loaded = CoopInstallLayout.loadSavedFromFile(pointer);
+        assertEquals(customRoot.getAbsoluteFile(), loaded.installRoot().getAbsoluteFile());
+
+        // C# StreamWriter UTF-8 BOM compatibility
+        Files.writeString(pointer.toPath(), "\uFEFF" + customRoot.getAbsolutePath());
+        CoopInstallLayout loadedBom = CoopInstallLayout.loadSavedFromFile(pointer);
+        assertEquals(customRoot.getAbsoluteFile(), loadedBom.installRoot().getAbsoluteFile());
+
+        // Invalid path returns null cleanly
+        Files.writeString(pointer.toPath(), temp.resolve("missing-dir").toString());
+        assertEquals(null, CoopInstallLayout.loadSavedFromFile(pointer));
+    }
+
     private static File path(File root, String... parts) {
         File file = root;
         for (String part : parts) {

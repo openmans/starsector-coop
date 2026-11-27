@@ -353,7 +353,9 @@ public final class CoopLauncherApp {
             }
             return;
         }
-        CoopInstallLayout discovered = CoopInstallLayout.discover();
+        CoopInstallLayout saved = System.getenv("COOP_LAUNCHER_PREVIEW") == null
+                ? CoopInstallLayout.loadSaved() : null;
+        CoopInstallLayout discovered = saved != null ? saved : CoopInstallLayout.discover();
         File logFile = discovered == null
                 ? new File("coop-launcher.log")
                 : discovered.launcherLog();
@@ -3492,6 +3494,7 @@ public final class CoopLauncherApp {
         if (layout == null) {
             return;
         }
+        CoopInstallLayout.saveInstallRoot(layout.installRoot());
         File launcherExe = new File(layout.modRoot(), "Starsector Coop Launcher.exe");
         File launcherCmd = new File(layout.modRoot(), "Coop Launcher.cmd");
         try {
@@ -3539,6 +3542,7 @@ public final class CoopLauncherApp {
             return;
         }
         CoopInstallLayout adopted = CoopInstallLayout.ofInstallRoot(resolvedRoot);
+        CoopInstallLayout.saveInstallRoot(resolvedRoot);
         adoptLayout(adopted);
         if (!adopted.isModInstalled()) {
             confirmAndInstallMod(true);

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.9 (Remember user-selected Starsector install folder across launcher restarts)
+
+- **Remember chosen `starsector.exe` path across restarts (`CoopInstallLayout` + `CoopLauncherApp` + `StarsectorCoopLauncher.exe`):**
+  selecting a custom `starsector.exe` via **Browse .exe** now persists the install root to the
+  shared `%LOCALAPPDATA%\StarsectorCoop\install-path.txt` file (plus Java `Preferences`) and both
+  the Java launcher and `Starsector Coop Launcher.exe` now prioritize the user's remembered folder
+  ahead of default auto-discovery (`C:\Starsector`).
+
 ## 0.2.8 (Pre-game lobby connect fix + always-open bottom-left Lobby dock with one-click CONNECT)
 
 - **Fixed `"Host closed the lobby"` on real network connections (`CoopPreGameLobby.tickGuest`):**

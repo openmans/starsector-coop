@@ -1,11 +1,15 @@
 package coop.launcher;
 
 import java.io.File;
+import java.io.IOException;
 import java.net.URI;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.security.CodeSource;
 import java.security.ProtectionDomain;
 import java.util.Objects;
+import java.util.prefs.Preferences;
 
 /**
  * Where everything is, relative to one Starsector install root.
@@ -29,6 +33,8 @@ public final class CoopInstallLayout {
     /** Optional Wingman Project mod id and folder name for manual co-op battle piloting. */
     public static final String WINGMAN_MOD_ID = "wingman_project";
     public static final String WINGMAN_FOLDER = "Wingman";
+
+    private static final String PREF_LAST_INSTALL_ROOT = "lastInstallRoot";
 
     private final File installRoot;
     private final File modRoot;
@@ -64,6 +70,93 @@ public final class CoopInstallLayout {
             return null;
         }
         return new CoopInstallLayout(root, mod);
+    }
+
+    /**
+     * Shared path pointer file used by both the Java launcher and {@code Starsector Coop Launcher.exe}
+     * ({@code %LOCALAPPDATA%\StarsectorCoop\install-path.txt}).
+     */
+    public static File savedInstallPathFile() {
+        String localAppData = System.getenv("LOCALAPPDATA");
+        if (localAppData != null && !localAppData.isBlank()) {
+            return new File(new File(localAppData, "StarsectorCoop"), "install-path.txt");
+        }
+        String home = System.getProperty("user.home", ".");
+        return new File(new File(home, ".starsector-coop"), "install-path.txt");
+    }
+
+    /**
+     * Loads the Starsector install folder explicitly chosen by the user in an earlier session
+     * (shared with {@code Starsector Coop Launcher.exe}), or {@code null} if none was saved or it
+     * no longer looks like a valid Starsector install.
+     */
+    public static CoopInstallLayout loadSaved() {
+        CoopInstallLayout fromFile = loadSavedFromFile(savedInstallPathFile());
+        if (fromFile != null) {
+            return fromFile;
+        }
+        try {
+            String pref = Preferences.userNodeForPackage(CoopInstallLayout.class)
+                    .get(PREF_LAST_INSTALL_ROOT, "").trim();
+            if (!pref.isEmpty()) {
+                File resolved = resolveInstallRoot(new File(pref));
+                if (resolved != null) {
+                    return ofInstallRoot(resolved);
+                }
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return null;
+    }
+
+    /** Testable file-based load seam. */
+    static CoopInstallLayout loadSavedFromFile(File pathFile) {
+        if (pathFile == null || !pathFile.isFile()) {
+            return null;
+        }
+        try {
+            String raw = Files.readString(pathFile.toPath(), StandardCharsets.UTF_8);
+            if (raw != null && !raw.isEmpty() && raw.charAt(0) == '\uFEFF') {
+                raw = raw.substring(1);
+            }
+            String trimmed = raw == null ? "" : raw.trim();
+            if (trimmed.isEmpty()) {
+                return null;
+            }
+            File resolved = resolveInstallRoot(new File(trimmed));
+            return resolved == null ? null : ofInstallRoot(resolved);
+        } catch (IOException | RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    /** Persists the user-chosen Starsector install root for both Java and .exe launchers. */
+    public static void saveInstallRoot(File installRoot) {
+        File resolved = resolveInstallRoot(installRoot);
+        if (resolved == null) {
+            return;
+        }
+        saveInstallRootToFile(resolved, savedInstallPathFile());
+        try {
+            Preferences.userNodeForPackage(CoopInstallLayout.class)
+                    .put(PREF_LAST_INSTALL_ROOT, resolved.getAbsolutePath());
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    /** Testable file-based save seam. */
+    static void saveInstallRootToFile(File installRoot, File pathFile) {
+        if (installRoot == null || pathFile == null) {
+            return;
+        }
+        try {
+            File parent = pathFile.getParentFile();
+            if (parent != null && !parent.isDirectory()) {
+                parent.mkdirs();
+            }
+            Files.writeString(pathFile.toPath(), installRoot.getAbsolutePath(), StandardCharsets.UTF_8);
+        } catch (IOException | RuntimeException ignored) {
+        }
     }
 
     /**

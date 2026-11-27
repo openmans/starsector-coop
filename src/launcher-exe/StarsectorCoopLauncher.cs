@@ -19,8 +19,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Starsector Coop Launcher")]
 [assembly: AssemblyDescription("One-click installer, updater and launcher for Starsector Coop")]
 [assembly: AssemblyProduct("Starsector Coop")]
-[assembly: AssemblyVersion("0.2.5.0")]
-[assembly: AssemblyFileVersion("0.2.5.0")]
+[assembly: AssemblyVersion("0.2.9.0")]
+[assembly: AssemblyFileVersion("0.2.9.0")]
 
 namespace StarsectorCoopBootstrap
 {
@@ -237,17 +237,17 @@ namespace StarsectorCoopBootstrap
 
         internal static string FindReadyInstall()
         {
-            // 1. Sitting inside <Starsector>\mods\coop
+            // 1. User's explicitly remembered Starsector install takes priority over auto-discovery
+            string saved = LoadSavedInstallRoot();
+            if (saved != null && IsModReady(saved)) return saved;
+
+            // 2. Sitting inside <Starsector>\mods\coop
             try
             {
                 string twoUp = Path.GetFullPath(Path.Combine(SelfDir(), "..\\.."));
                 if (IsModReady(twoUp)) return twoUp;
             }
             catch { }
-
-            // 2. Previously chosen Starsector install
-            string saved = LoadSavedInstallRoot();
-            if (saved != null && IsModReady(saved)) return saved;
 
             // 3. Common Starsector directories
             foreach (string dir in CommonInstallDirs)
@@ -259,15 +259,15 @@ namespace StarsectorCoopBootstrap
 
         internal static string FindAnyStarsectorInstall()
         {
+            string saved = LoadSavedInstallRoot();
+            if (saved != null) return saved;
+
             try
             {
                 string twoUp = Path.GetFullPath(Path.Combine(SelfDir(), "..\\.."));
                 if (LooksLikeInstall(twoUp)) return twoUp;
             }
             catch { }
-
-            string saved = LoadSavedInstallRoot();
-            if (saved != null) return saved;
 
             foreach (string dir in CommonInstallDirs)
             {
