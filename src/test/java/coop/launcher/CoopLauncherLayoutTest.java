@@ -68,6 +68,10 @@ class CoopLauncherLayoutTest {
             assertTrue(find(frame, "installPathField").getHeight() > 0, "Game path field must be laid out");
             assertNotNull(find(frame, "updateActionButton"), "Update button must be visible");
             assertNotNull(find(frame, "reinstallButton"), "Reinstall button must be visible");
+            assertNotNull(find(frame, "restartLauncherButton"), "Restart launcher button must exist");
+            assertFalse(field("restartLauncherButton", JButton.class).isVisible(),
+                    "Restart button stays hidden until a pending launcher jar update is staged");
+            assertNotNull(find(frame, "modVersion"), "Separate mod version label must be present");
             assertNotNull(find(frame, "launchButton"), "Launch button must be visible");
             assertNotNull(find(frame, "installWingmanBox"), "Optional Wingman checkbox must be present");
             assertNotNull(find(frame, "installRussianBox"), "Optional Russian translation checkbox must be present");
@@ -148,6 +152,21 @@ class CoopLauncherLayoutTest {
                     "Update must be greyed out when already up to date");
             assertTrue(field("reinstallButton", JButton.class).isEnabled(),
                     "Reinstall must stay available when mod is installed");
+            assertTrue(field("launcherVersionLabel", JLabel.class).getText().contains("Launcher:"),
+                    "Header must label Launcher version separately");
+            assertTrue(field("modVersionLabel", JLabel.class).getText().contains("Mod:"),
+                    "Header must label Mod version separately");
+
+            setField("pendingRestartNeeded", true);
+            invoke("updateLaunchGate");
+            assertTrue(field("restartLauncherButton", JButton.class).isVisible(),
+                    "Restart button must appear after a reinstall/update stages pending launcher jars");
+            assertTrue(field("restartLauncherButton", JButton.class).isEnabled(),
+                    "Restart button must be clickable");
+            setField("pendingRestartNeeded", false);
+            invoke("updateLaunchGate");
+            assertFalse(field("restartLauncherButton", JButton.class).isVisible(),
+                    "Restart button hides when no pending restart is needed");
 
             app.applyUpdateOutcome(
                     new CoopUpdateCheck.Outcome(CoopUpdateCheck.Kind.UPDATE_AVAILABLE, "0.2.6",

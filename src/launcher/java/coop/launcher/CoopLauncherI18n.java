@@ -71,6 +71,7 @@ final class CoopLauncherI18n {
         put("Open folder", "Открыть папку");
         put("Update", "Обновить");
         put("Reinstall", "Переустановить");
+        put("Restart", "Перезапустить");
         put("Install", "Установить");
         put("Launch", "Запустить");
         put("Log", "Лог");

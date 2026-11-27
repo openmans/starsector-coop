@@ -778,4 +778,35 @@ public final class CoopInstallCheck {
             return "dev";
         }
     }
+
+    /** Short git commit hash from the running launcher jar manifest, or {@code ""} in dev/tests. */
+    public static String launcherGitCommit() {
+        try (InputStream stream = CoopInstallCheck.class.getResourceAsStream("/META-INF/MANIFEST.MF")) {
+            if (stream == null) {
+                return "";
+            }
+            Manifest manifest = new Manifest(stream);
+            String title = manifest.getMainAttributes().getValue("Implementation-Title");
+            String commit = manifest.getMainAttributes().getValue("Coop-Git-Commit");
+            if (commit == null || title == null
+                    || !title.toLowerCase(Locale.ROOT).contains("launcher")) {
+                return "";
+            }
+            return shortCommit(commit);
+        } catch (IOException | RuntimeException ex) {
+            return "";
+        }
+    }
+
+    /** Trims a full or 12-char commit hash to 7 chars for compact UI display. */
+    public static String shortCommit(String commit) {
+        if (commit == null) {
+            return "";
+        }
+        String clean = commit.trim();
+        if (clean.isEmpty() || "unknown".equalsIgnoreCase(clean)) {
+            return "";
+        }
+        return clean.length() > 7 ? clean.substring(0, 7) : clean;
+    }
 }

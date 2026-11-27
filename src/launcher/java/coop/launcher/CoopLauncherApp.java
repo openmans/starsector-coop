@@ -130,6 +130,8 @@ public final class CoopLauncherApp {
     private CoopInstallLayout layout;
     private CoopLauncherConfig config;
     private String launcherVersion = "dev";
+    private String launcherCommit = "";
+    private boolean pendingRestartNeeded;
 
     private JFrame frame;
 
@@ -137,9 +139,12 @@ public final class CoopLauncherApp {
     private JToggleButton installSegment;
     private JToggleButton hostSegment;
     private JToggleButton guestSegment;
+    private JLabel launcherVersionLabel;
+    private JLabel modVersionLabel;
     private JButton updateChip;
     private JButton langToggle;
     private JButton openFolderButton;
+    private JButton restartLauncherButton;
     private JButton reinstallButton;
     private JButton updateActionButton;
     private CoopLauncherI18n.Lang lang = CoopLauncherI18n.Lang.EN;
@@ -370,6 +375,7 @@ public final class CoopLauncherApp {
         CoopTheme.install();
         this.layout = discovered;
         this.launcherVersion = CoopInstallCheck.launcherVersion();
+        this.launcherCommit = CoopInstallCheck.launcherGitCommit();
         buildFrame();
         if (System.getenv("COOP_LAUNCHER_PREVIEW") == null) {
             setLanguage(CoopLauncherI18n.loadPreferred(), false);
@@ -524,10 +530,14 @@ public final class CoopLauncherApp {
         GridBagConstraints brandLayout = new GridBagConstraints();
         brandLayout.anchor = GridBagConstraints.BASELINE;
         brand.add(title, brandLayout);
-        JLabel version = CoopTheme.small(launcherVersion);
-        version.setName("launcherVersion");
+        launcherVersionLabel = CoopTheme.small("Launcher v" + launcherVersion);
+        launcherVersionLabel.setName("launcherVersion");
         brandLayout.insets = new Insets(0, 10, 0, 0);
-        brand.add(version, brandLayout);
+        brand.add(launcherVersionLabel, brandLayout);
+        modVersionLabel = CoopTheme.small("Mod: —");
+        modVersionLabel.setName("modVersion");
+        brandLayout.insets = new Insets(0, 10, 0, 0);
+        brand.add(modVersionLabel, brandLayout);
         updateChip = CoopTheme.ghost("Check updates");
         updateChip.setName("updateChip");
         updateChip.setToolTipText("Check GitHub for a newer Starsector Coop release.");
@@ -1087,8 +1097,15 @@ public final class CoopLauncherApp {
                 launchSimple();
             }
         });
+        restartLauncherButton = CoopTheme.secondary("Restart");
+        restartLauncherButton.setName("restartLauncherButton");
+        restartLauncherButton.setVisible(false);
+        restartLauncherButton.setToolTipText("Restart Coop Launcher to apply staged jar updates.");
+        restartLauncherButton.addActionListener(event -> restartLauncherNow());
+
         JPanel footerActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         footerActions.setOpaque(false);
+        footerActions.add(restartLauncherButton);
         footerActions.add(reinstallButton);
         footerActions.add(updateActionButton);
         footerActions.add(launchButton);
@@ -1330,7 +1347,58 @@ public final class CoopLauncherApp {
         sessionBody.repaint();
     }
 
+    private String formattedLauncherVersion() {
+        String base = "dev".equals(launcherVersion) ? "dev" : "v" + launcherVersion;
+        return launcherCommit.isEmpty() ? base : base + " (" + launcherCommit + ")";
+    }
+
+    private String formattedModVersion() {
+        if (layout == null || !layout.isModInstalled()) {
+            return tr("not installed", "не установлен");
+        }
+        String modVer = CoopInstallCheck.readJarVersion(layout.coopJar());
+        if (modVer == null || modVer.isBlank()) {
+            modVer = CoopInstallCheck.readModInfoVersion(layout.modInfo());
+        }
+        if (modVer == null || modVer.isBlank()) {
+            modVer = "unknown";
+        }
+        String commit = CoopInstallCheck.shortCommit(
+                CoopInstallCheck.readJarAttribute(layout.coopJar(), "Coop-Git-Commit"));
+        return commit.isEmpty() ? "v" + modVer : "v" + modVer + " (" + commit + ")";
+    }
+
+    private boolean hasPendingLauncherJars() {
+        if (pendingRestartNeeded) {
+            return true;
+        }
+        if (layout == null) {
+            return false;
+        }
+        File jarsDir = new File(layout.modRoot(), "jars");
+        if (!jarsDir.isDirectory()) {
+            return false;
+        }
+        File[] pending = jarsDir.listFiles((dir, name) -> name != null && name.endsWith(".jar.pending"));
+        return pending != null && pending.length > 0;
+    }
+
+    private void refreshVersionLabels() {
+        String lVer = formattedLauncherVersion();
+        String mVer = formattedModVersion();
+        if (launcherVersionLabel != null) {
+            launcherVersionLabel.setText(tr("Launcher: ", "Лаунчер: ") + lVer);
+            launcherVersionLabel.setToolTipText(tr("Running launcher version", "Версия запущенного лаунчера"));
+        }
+        if (modVersionLabel != null) {
+            modVersionLabel.setText("·  " + tr("Mod: ", "Мод: ") + mVer);
+            modVersionLabel.setToolTipText(tr("Installed Starsector Coop mod version (mods\\coop)",
+                    "Версия установленного мода Starsector Coop (mods\\coop)"));
+        }
+    }
+
     private void refreshInstallModeView() {
+        refreshVersionLabels();
         if (installPathField == null || installModeSummary == null) {
             return;
         }
@@ -1343,9 +1411,8 @@ public final class CoopLauncherApp {
                             + "Нажмите «Выбрать .exe» и укажите starsector.exe для установки Starsector Coop с GitHub."));
         } else {
             installPathField.setText(layout.starsectorExe().getPath());
-            String installed = layout.isModInstalled()
-                    ? tr("Installed: v", "Установлено: v") + effectiveVersion()
-                    : tr("Mod not installed in mods\\coop yet", "Мод ещё не установлен в mods\\coop");
+            String versionsLine = tr("Launcher: ", "Лаунчер: ") + formattedLauncherVersion()
+                    + "  ·  " + tr("Mod: ", "Мод: ") + formattedModVersion();
             String github;
             if (latestUpdateOutcome == null) {
                 github = tr("GitHub: checking...", "GitHub: проверка...");
@@ -1375,7 +1442,7 @@ public final class CoopLauncherApp {
                             + " found — click Update or Details to fix.",
                             "Найдено проблем установки: " + fails
                             + " — нажмите «Обновить» или «Подробнее»."));
-            installModeSummary.setText(installed + " · " + github + "\n" + readiness);
+            installModeSummary.setText(versionsLine + "  ·  " + github + "\n" + readiness);
         }
         if (installModeFixButton != null) {
             installModeFixButton.setEnabled(layout != null && !modInstallRunning.get() && !gameRunning);
@@ -1711,6 +1778,15 @@ public final class CoopLauncherApp {
 
         if (openFolderButton != null) {
             openFolderButton.setEnabled(layout != null);
+        }
+        if (restartLauncherButton != null) {
+            boolean showRestart = layout != null && hasPendingLauncherJars();
+            restartLauncherButton.setVisible(showRestart);
+            restartLauncherButton.setEnabled(showRestart && !installing && !gameRunning);
+            restartLauncherButton.setText(t("Restart"));
+            restartLauncherButton.setToolTipText(tr(
+                    "Restart Coop Launcher now to apply the updated launcher jar.",
+                    "Перезапустить лаунчер сейчас, чтобы применить обновлённую версию лаунчера."));
         }
         if (reinstallButton != null) {
             reinstallButton.setEnabled(layout != null && modPresent && !installing && !gameRunning);
@@ -3372,8 +3448,8 @@ public final class CoopLauncherApp {
             return;
         }
         if (result.ok()) {
-            if (!result.version().isEmpty()) {
-                this.launcherVersion = result.version();
+            if (result.restartRecommended()) {
+                this.pendingRestartNeeded = true;
             }
             if (installRussianBox != null && layout != null && layout.isRussianInstalled()) {
                 installRussianBox.setSelected(false);
@@ -3381,17 +3457,70 @@ public final class CoopLauncherApp {
             refreshInstallModeView();
             updateLaunchGate();
             startUpdateCheck(false);
-            String extra = result.restartRecommended()
-                    ? tr("\n\nUpdated launcher jar files will swap automatically on next launcher start.",
-                            "\n\nОбновлённые файлы лаунчера применятся при следующем перезапуске.")
-                    : "";
-            JOptionPane.showMessageDialog(frame,
-                    result.summary() + extra,
-                    tr("Installation Complete", "Установка завершена"),
-                    JOptionPane.INFORMATION_MESSAGE);
+            if (result.restartRecommended() && canRestartLauncher()) {
+                Object[] options = {
+                        tr("Restart launcher", "Перезапустить лаунчер"),
+                        tr("Keep open", "Оставить открытым")
+                };
+                int choice = JOptionPane.showOptionDialog(frame,
+                        result.summary()
+                                + tr("\n\nAn updated launcher jar is ready. Restart Coop Launcher to switch to it?",
+                                        "\n\nСкачана обновлённая версия лаунчера. Перезапустить лаунчер сейчас, чтобы применить её?"),
+                        tr("Installation Complete", "Установка завершена"),
+                        JOptionPane.YES_NO_OPTION,
+                        JOptionPane.INFORMATION_MESSAGE,
+                        null,
+                        options,
+                        options[0]);
+                if (choice == 0) {
+                    restartLauncherNow();
+                }
+            } else {
+                JOptionPane.showMessageDialog(frame,
+                        result.summary(),
+                        tr("Installation Complete", "Установка завершена"),
+                        JOptionPane.INFORMATION_MESSAGE);
+            }
         } else {
             startUpdateCheck(false);
             fail(result.summary());
+        }
+    }
+
+    private boolean canRestartLauncher() {
+        if (layout == null) {
+            return false;
+        }
+        File launcherExe = new File(layout.modRoot(), "Starsector Coop Launcher.exe");
+        File launcherCmd = new File(layout.modRoot(), "Coop Launcher.cmd");
+        return launcherExe.isFile() || launcherCmd.isFile();
+    }
+
+    private void restartLauncherNow() {
+        if (layout == null) {
+            return;
+        }
+        File launcherExe = new File(layout.modRoot(), "Starsector Coop Launcher.exe");
+        File launcherCmd = new File(layout.modRoot(), "Coop Launcher.cmd");
+        try {
+            if (launcherExe.isFile()) {
+                new ProcessBuilder(launcherExe.getAbsolutePath())
+                        .directory(layout.modRoot())
+                        .start();
+            } else if (launcherCmd.isFile()) {
+                new ProcessBuilder("cmd.exe", "/c", "start", "", launcherCmd.getAbsolutePath())
+                        .directory(layout.modRoot())
+                        .start();
+            } else {
+                append(tr("Restart file not found; please close and reopen Coop Launcher manually.",
+                        "Не найден файл запуска; закройте и откройте лаунчер вручную."));
+                return;
+            }
+            shutdown();
+        } catch (Exception ex) {
+            LOG.warn("Could not restart Coop Launcher", ex);
+            append(tr("Could not restart automatically: ", "Не удалось перезапустить автоматически: ")
+                    + ex.getMessage());
         }
     }
 
