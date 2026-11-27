@@ -141,6 +141,7 @@ public final class CoopDialogSpectatorState {
 
     private volatile SyncPayload remoteDialog;
     private volatile String dismissedDialogId = "";
+    private volatile String manualRejoinDialogId = "";
     private volatile int localVotedIndex = -1;
     private volatile String localVotedDialogId = "";
 
@@ -198,6 +199,8 @@ public final class CoopDialogSpectatorState {
             if (remoteDialog != null && (payload.dialogId().isEmpty()
                     || payload.dialogId().equals(remoteDialog.dialogId()))) {
                 remoteDialog = null;
+                dismissedDialogId = "";
+                manualRejoinDialogId = "";
             }
             return;
         }
@@ -205,6 +208,7 @@ public final class CoopDialogSpectatorState {
         if (newDialog) {
             localVotedIndex = -1;
             localVotedDialogId = payload.dialogId();
+            manualRejoinDialogId = "";
         }
         remoteDialog = payload;
     }
@@ -215,7 +219,8 @@ public final class CoopDialogSpectatorState {
 
     /**
      * True ONLY when the remote partner has an open dialog inside the exact same non-hyperspace
-     * star system as {@code localSystemId}, and the spectator has not manually dismissed it.
+     * star system as {@code localSystemId}, and the spectator has not manually dismissed it
+     * (or explicitly requested to rejoin it).
      */
     public boolean shouldAutoOpenSpectator(String localSystemId) {
         SyncPayload current = remoteDialog;
@@ -225,6 +230,86 @@ public final class CoopDialogSpectatorState {
         if (current.dialogId().equals(dismissedDialogId)) {
             return false;
         }
+        if (!current.dialogId().isEmpty() && current.dialogId().equals(manualRejoinDialogId)) {
+            return true;
+        }
+        return isInSameStarSystem(current, localSystemId);
+    }
+
+    /**
+     * True when the remote partner still has an open dialog in the same star system that the local
+     * player manually minimized/closed, so a clickable "Rejoin dialog" HUD prompt should be shown.
+     */
+    public boolean hasRejoinableRemoteDialog(String localSystemId) {
+        SyncPayload current = remoteDialog;
+        if (current == null || !current.open()) {
+            return false;
+        }
+        if (!current.dialogId().equals(dismissedDialogId)) {
+            return false;
+        }
+        return isInSameStarSystem(current, localSystemId);
+    }
+
+    /**
+     * True whenever a remote partner currently has any open dialog that the local player can
+     * manually rejoin (e.g. via the HUD pill, {@code F6}, Partner Comm Link, or Intel page).
+     */
+    public boolean hasActiveRemoteDialog() {
+        SyncPayload current = remoteDialog;
+        return current != null && current.open();
+    }
+
+    /**
+     * Clears the user-dismissed flag for the current remote dialog and marks it for immediate
+     * manual reopen. Returns {@code true} if an active remote dialog exists to return to.
+     */
+    public synchronized boolean requestReopenDismissed() {
+        SyncPayload current = remoteDialog;
+        if (current == null || !current.open()) {
+            return false;
+        }
+        dismissedDialogId = "";
+        manualRejoinDialogId = current.dialogId();
+        return true;
+    }
+
+    /**
+     * Top-center clickable HUD prompt shown when the player closed the live spectator window while
+     * the partner is still talking in the same star system, or {@code ""} when none applies.
+     */
+    public String spectatorRejoinBanner(String localSystemId) {
+        if (!hasRejoinableRemoteDialog(localSystemId)) {
+            return "";
+        }
+        SyncPayload current = remoteDialog;
+        if (current == null || !current.open()) {
+            return "";
+        }
+        String speaker = current.speakerName().isBlank()
+                ? CoopUiLang.tr("Partner", "Напарник") : current.speakerName();
+        String target = current.targetName().isBlank()
+                ? "" : (" (" + current.targetName() + ")");
+        return CoopUiLang.tr(
+                speaker + " in dialog" + target + "  ·  [F6 / Click to rejoin]",
+                "«" + speaker + "» в диалоге" + target + "  ·  [F6 / Клик — вернуться]");
+    }
+
+    /** Short target/speaker summary for Comm Link / Intel rejoin button, or {@code ""} if none. */
+    public String activeRemoteDialogLabel() {
+        SyncPayload current = remoteDialog;
+        if (current == null || !current.open()) {
+            return "";
+        }
+        String speaker = current.speakerName().isBlank()
+                ? CoopUiLang.tr("Partner", "Напарник") : current.speakerName();
+        if (!current.targetName().isBlank()) {
+            return speaker + " — " + current.targetName();
+        }
+        return speaker;
+    }
+
+    private static boolean isInSameStarSystem(SyncPayload current, String localSystemId) {
         if (localSystemId == null || localSystemId.isBlank() || current.locationId().isEmpty()) {
             return false;
         }
@@ -233,6 +318,7 @@ public final class CoopDialogSpectatorState {
 
     public synchronized void markDismissedByUser(String dialogId) {
         dismissedDialogId = dialogId == null ? "" : dialogId;
+        manualRejoinDialogId = "";
     }
 
     public synchronized void recordLocalVote(String dialogId, int optionIndex) {
@@ -286,6 +372,7 @@ public final class CoopDialogSpectatorState {
     public synchronized void reset() {
         remoteDialog = null;
         dismissedDialogId = "";
+        manualRejoinDialogId = "";
         localVotedIndex = -1;
         localVotedDialogId = "";
         clearIncomingVote();

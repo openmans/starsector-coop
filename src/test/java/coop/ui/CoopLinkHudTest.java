@@ -183,4 +183,21 @@ class CoopLinkHudTest {
             }
         }
     }
+
+    @Test
+    void rejoinPillHitTestTracksBoundsAndClearsWhenHidden() {
+        try {
+            CoopLinkHud.setActiveRejoinPillForTest(null);
+            assertFalse(CoopLinkHud.hasActiveRejoinPill());
+            assertFalse(CoopLinkHud.isPointInRejoinPill(500f, 900f));
+
+            CoopLinkHud.setActiveRejoinPillForTest(new CoopLinkHud.PillRect(400f, 1020f, 320f, 34f));
+            assertTrue(CoopLinkHud.hasActiveRejoinPill());
+            assertTrue(CoopLinkHud.isPointInRejoinPill(550f, 1035f));
+            assertFalse(CoopLinkHud.isPointInRejoinPill(399f, 1035f));
+            assertFalse(CoopLinkHud.isPointInRejoinPill(550f, 1019f));
+        } finally {
+            CoopLinkHud.setActiveRejoinPillForTest(null);
+        }
+    }
 }

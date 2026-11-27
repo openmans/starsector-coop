@@ -1142,6 +1142,9 @@ public class CoopNetPump implements EveryFrameScript {
                 this::requestTacticalMapDialog);
         this.intelFeed.setCommsHooks(this::requestChatDialog,
                 (java.util.function.Consumer<String>) this::requestTradeDialog);
+        this.intelFeed.setDialogSpectatorHook(this::isDialogSpectatorRejoinAvailable,
+                this::dialogSpectatorRejoinLabel,
+                this::requestReopenDialogSpectator);
         this.sessionState.setMaxGuests(this.service.peerCapacity());
         coop.ui.CoopSessionIntelFeed.install(this.intelFeed);
         // Phase 28: same static-handle argument. The options page is constructed by the intel screen
@@ -3677,6 +3680,7 @@ public class CoopNetPump implements EveryFrameScript {
         maybeStartFromMemoryFlags();
         t = profiler.split(SECTION_CFG_MEMORY_FLAGS, t);
         pollConnectMenuHotkey();
+        pollDialogRejoinHotkey();
         service.flushOutbound();
         // net-fix-7: before the producers below tick, so a snapshot the queue cap threw away is
         // re-sent on this frame rather than the next one.
@@ -4209,6 +4213,35 @@ public class CoopNetPump implements EveryFrameScript {
     }
 
     private boolean connectMenuKeyWasDown;
+    private boolean dialogRejoinKeyWasDown;
+
+    /**
+     * Polls {@code F6} (edge-triggered) inside the campaign as a fallback to reopen a minimized
+     * partner dialog spectator window even if the HUD font failed to load.
+     */
+    private void pollDialogRejoinHotkey() {
+        try {
+            if (!org.lwjgl.input.Keyboard.isCreated()) {
+                return;
+            }
+            boolean down = org.lwjgl.input.Keyboard.isKeyDown(coop.ui.CoopLinkHud.REJOIN_DIALOG_KEY);
+            boolean pressed = down && !dialogRejoinKeyWasDown;
+            dialogRejoinKeyWasDown = down;
+            if (!pressed || !isDialogSpectatorRejoinAvailable()) {
+                return;
+            }
+            SectorAPI sector = Global.getSector();
+            if (sector == null || sector.getCampaignUI() == null) {
+                return;
+            }
+            if (sector.getCampaignUI().isShowingDialog() || sector.getCampaignUI().isShowingMenu()) {
+                return;
+            }
+            requestReopenDialogSpectator();
+        } catch (Throwable ignored) {
+            // Headless tests or LWJGL unavailable.
+        }
+    }
 
     /**
      * Polls {@code F7} (edge-triggered) inside the campaign to open the native in-game
@@ -11589,6 +11622,55 @@ public class CoopNetPump implements EveryFrameScript {
     /** Speaker-side BG3 option vote banner for {@link coop.ui.CoopLinkHud}. */
     public String dialogVoteBanner(long nowMillis) {
         return dialogSpectatorState.speakerVoteBanner(nowMillis);
+    }
+
+    /**
+     * Clickable top-center HUD prompt shown when the local player minimized the live spectator
+     * window while the partner is still in a dialog in the same star system.
+     */
+    public String dialogSpectatorRejoinBanner() {
+        if (!isGameplaySessionActive() || !service.isConnected() || reconnect.active()
+                || dialogSpectatorDialogs.isRequested()) {
+            return "";
+        }
+        return dialogSpectatorState.spectatorRejoinBanner(currentLocalStarSystemId());
+    }
+
+    /** True when the partner has an active open dialog and the spectator window is currently closed. */
+    public boolean isDialogSpectatorRejoinAvailable() {
+        return isGameplaySessionActive() && service.isConnected() && !reconnect.active()
+                && !dialogSpectatorDialogs.isRequested()
+                && dialogSpectatorState.hasActiveRemoteDialog();
+    }
+
+    /** Short speaker + target label for the Comm Link / Intel rejoin button, or {@code ""} if none. */
+    public String dialogSpectatorRejoinLabel() {
+        return dialogSpectatorState.activeRemoteDialogLabel();
+    }
+
+    /**
+     * Reopens the live partner dialog spectator window after the player previously dismissed it.
+     * The next {@link #tickDialogSpectator()} frame creates and displays a fresh spectator plugin.
+     */
+    public boolean requestReopenDialogSpectator() {
+        if (!isGameplaySessionActive() || !service.isConnected() || reconnect.active()) {
+            return false;
+        }
+        return dialogSpectatorState.requestReopenDismissed();
+    }
+
+    private String currentLocalStarSystemId() {
+        try {
+            SectorAPI sector = Global.getSector();
+            com.fs.starfarer.api.campaign.CampaignFleetAPI localFleet =
+                    sector == null ? null : sector.getPlayerFleet();
+            com.fs.starfarer.api.campaign.LocationAPI localLoc =
+                    localFleet == null ? null : localFleet.getContainingLocation();
+            return (localLoc != null && !localLoc.isHyperspace() && localLoc.getId() != null)
+                    ? localLoc.getId().trim() : "";
+        } catch (Throwable ignored) {
+            return "";
+        }
     }
 
     private void resetDialogSpectator() {

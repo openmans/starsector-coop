@@ -123,6 +123,7 @@ public class CoopSessionIntel extends BaseIntelPlugin {
 
     /** Phase 22: button id for opening the opt-in tactical map during a partner battle. */
     static final String BUTTON_TACTICAL_MAP = "coop_open_tactical_map";
+    static final String BUTTON_REJOIN_DIALOG = "coop_rejoin_dialog";
     static final String BUTTON_OPEN_CHAT = "coop_open_chat";
     static final String BUTTON_OPEN_TRADE = "coop_open_trade";
     static final String BUTTON_TOGGLE_LANG = "coop_toggle_lang";
@@ -407,6 +408,14 @@ public class CoopSessionIntel extends BaseIntelPlugin {
 
         info.addButton(CoopUiLang.toggleButtonLabel(), BUTTON_TOGGLE_LANG, 260f, 24f, 8f);
 
+        if (CoopSessionIntelFeed.isDialogSpectatorRejoinAvailable()) {
+            String activeLabel = CoopSessionIntelFeed.dialogSpectatorRejoinLabel();
+            String btnText = CoopUiLang.tr("Rejoin Partner's Dialog", "Вернуться в диалог напарника");
+            if (!activeLabel.isEmpty()) {
+                btnText += " (" + activeLabel + ")";
+            }
+            info.addButton(btnText, BUTTON_REJOIN_DIALOG, 300f, 26f, 8f);
+        }
         if (CoopSessionIntelFeed.isTacticalMapAvailable()) {
             info.addButton(CoopUiLang.tr("Open Tactical Map", "Открыть тактическую карту"),
                     BUTTON_TACTICAL_MAP, 240f, 26f, 8f);
@@ -522,6 +531,8 @@ public class CoopSessionIntel extends BaseIntelPlugin {
             if (ui != null) {
                 ui.updateUIForItem(this);
             }
+        } else if (BUTTON_REJOIN_DIALOG.equals(buttonId)) {
+            CoopSessionIntelFeed.requestReopenDialogSpectator();
         } else if (BUTTON_TACTICAL_MAP.equals(buttonId)) {
             CoopSessionIntelFeed.requestOpenTacticalMap();
         } else if (BUTTON_OPEN_CHAT.equals(buttonId)) {

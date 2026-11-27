@@ -72,6 +72,9 @@ public final class CoopSessionIntelFeed {
     private volatile Runnable chatOpener;
     private volatile Runnable tradeOpener;
     private volatile java.util.function.Consumer<String> tradePartnerOpener;
+    private volatile java.util.function.BooleanSupplier dialogSpectatorRejoinAvailable;
+    private volatile java.util.function.Supplier<String> dialogSpectatorRejoinLabel;
+    private volatile Runnable dialogSpectatorRejoinOpener;
 
     /** Wall-clock timestamp plus the line; the display age is derived at snapshot time. */
     private record EventEntry(long atMillis, String line) {
@@ -239,6 +242,60 @@ public final class CoopSessionIntelFeed {
                 opener.run();
             } catch (RuntimeException | LinkageError ignored) {
                 // never crash intel UI
+            }
+        }
+    }
+
+    /** Registers pump hooks to check and reopen a minimized partner dialog spectator window. */
+    public void setDialogSpectatorHook(java.util.function.BooleanSupplier available,
+                                       java.util.function.Supplier<String> label,
+                                       Runnable opener) {
+        this.dialogSpectatorRejoinAvailable = available;
+        this.dialogSpectatorRejoinLabel = label;
+        this.dialogSpectatorRejoinOpener = opener;
+    }
+
+    /** True when the partner has an active open dialog and the player can reopen the spectator window. */
+    public static boolean isDialogSpectatorRejoinAvailable() {
+        CoopSessionIntelFeed feed = active;
+        if (feed == null || feed.currentRole() == CoopConnectionRole.NONE) {
+            return false;
+        }
+        java.util.function.BooleanSupplier check = feed.dialogSpectatorRejoinAvailable;
+        if (check == null) {
+            return false;
+        }
+        try {
+            return check.getAsBoolean();
+        } catch (RuntimeException | LinkageError ex) {
+            return false;
+        }
+    }
+
+    /** Short speaker/target description of the partner's active dialog, or {@code ""} if none. */
+    public static String dialogSpectatorRejoinLabel() {
+        CoopSessionIntelFeed feed = active;
+        java.util.function.Supplier<String> supplier = feed == null ? null : feed.dialogSpectatorRejoinLabel;
+        if (supplier == null) {
+            return "";
+        }
+        try {
+            String value = supplier.get();
+            return value == null ? "" : value.trim();
+        } catch (RuntimeException | LinkageError ex) {
+            return "";
+        }
+    }
+
+    /** Requests reopening the live partner dialog spectator window once the campaign map is clear. */
+    public static void requestReopenDialogSpectator() {
+        CoopSessionIntelFeed feed = active;
+        Runnable opener = feed == null ? null : feed.dialogSpectatorRejoinOpener;
+        if (opener != null) {
+            try {
+                opener.run();
+            } catch (RuntimeException | LinkageError ignored) {
+                // UI button must never crash the intel or comm dialog.
             }
         }
     }

@@ -204,4 +204,60 @@ class CoopDialogSpectatorTest {
         };
         assertFalse(CoopDialogSpectatorState.isSpectatablePlugin(dummyInCoopUi));
     }
+
+    @Test
+    void dismissedDialogCanBeRejoinedRepeatedlyAndShowsRejoinBanner() {
+        CoopDialogSpectatorState state = new CoopDialogSpectatorState();
+        CoopDialogSpectatorState.SyncPayload dlg = new CoopDialogSpectatorState.SyncPayload(
+                "host-dlg-9", "host", "Артур", "corvus", "DIALOG", true, "Jangala", "",
+                List.of("Welcome to Jangala."),
+                List.of(new CoopDialogSpectatorState.OptionView("Open market", true)),
+                List.of(), List.of(),
+                -1, 0.5f, 0.5f, -1, "");
+        state.applyRemoteSync(dlg);
+
+        // Before dismissal: auto-opens, no rejoin banner needed.
+        assertTrue(state.shouldAutoOpenSpectator("corvus"));
+        assertFalse(state.hasRejoinableRemoteDialog("corvus"));
+        assertEquals("", state.spectatorRejoinBanner("corvus"));
+        assertEquals("Артур — Jangala", state.activeRemoteDialogLabel());
+
+        // User accidentally closes the spectator window -> banner appears, auto-open pauses.
+        state.markDismissedByUser("host-dlg-9");
+        assertFalse(state.shouldAutoOpenSpectator("corvus"));
+        assertTrue(state.hasRejoinableRemoteDialog("corvus"));
+        assertFalse(state.hasRejoinableRemoteDialog("askonia"));
+
+        CoopUiLang.setRussian(true);
+        String ruBanner = state.spectatorRejoinBanner("corvus");
+        assertTrue(ruBanner.contains("Артур"), "RU banner should include speaker: " + ruBanner);
+        assertTrue(ruBanner.contains("Jangala"), "RU banner should include target: " + ruBanner);
+        assertTrue(ruBanner.contains("F6"), "RU banner should mention F6: " + ruBanner);
+
+        CoopUiLang.setRussian(false);
+        String enBanner = state.spectatorRejoinBanner("corvus");
+        assertTrue(enBanner.contains("Артур"), "EN banner should include speaker: " + enBanner);
+        assertTrue(enBanner.contains("F6"), "EN banner should mention F6: " + enBanner);
+
+        // Player clicks banner / presses F6 -> spectator reopens immediately, local vote preserved.
+        state.recordLocalVote("host-dlg-9", 0);
+        assertTrue(state.requestReopenDismissed());
+        assertTrue(state.shouldAutoOpenSpectator("corvus"));
+        assertFalse(state.hasRejoinableRemoteDialog("corvus"));
+        assertEquals(0, state.localVotedIndexFor("host-dlg-9"));
+
+        // Player can dismiss and rejoin again during the same station conversation.
+        state.markDismissedByUser("host-dlg-9");
+        assertFalse(state.shouldAutoOpenSpectator("corvus"));
+        assertTrue(state.hasRejoinableRemoteDialog("corvus"));
+
+        // Once the partner closes the station dialog, rejoin banner & availability clear.
+        state.applyRemoteSync(new CoopDialogSpectatorState.SyncPayload(
+                "host-dlg-9", "host", "Артур", "corvus", "DIALOG", false, "", "",
+                List.of(), List.of(), List.of(), List.of(), -1, 0.5f, 0.5f, -1, ""));
+        assertFalse(state.hasActiveRemoteDialog());
+        assertFalse(state.hasRejoinableRemoteDialog("corvus"));
+        assertFalse(state.requestReopenDismissed());
+        assertEquals("", state.spectatorRejoinBanner("corvus"));
+    }
 }

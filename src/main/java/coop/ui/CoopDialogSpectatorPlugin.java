@@ -158,16 +158,16 @@ public final class CoopDialogSpectatorPlugin implements InteractionDialogPlugin,
                 sub.append("  ·  ").append(snap.subHeader());
             } else {
                 sub.append("  ·  ").append(CoopUiLang.tr(
-                        "Click to vote · ESC to leave",
-                        "Нажмите для голоса · ESC — выйти"));
+                        "Click to vote · ESC to minimize (F6 to rejoin)",
+                        "Нажмите для голоса · ESC — свернуть (F6 — вернуться)"));
             }
             LabelAPI subtitle = header.addPara(sub.toString(), TARGET_CYAN, 0f);
             subtitle.setAlignment(Alignment.MID);
-            subtitle.getPosition().setSize(PANEL_W - 190f, 20f);
+            subtitle.getPosition().setSize(PANEL_W - 210f, 20f);
             subtitle.getPosition().inTMid(36f);
 
-            ButtonAPI closeBtn = header.addButton(CoopUiLang.tr("Leave", "Выйти"), ID_CLOSE,
-                    OPT_TEXT, OPT_BG, Alignment.MID, CutStyle.ALL, 78f, 24f, 0f);
+            ButtonAPI closeBtn = header.addButton(CoopUiLang.tr("Minimize", "Свернуть"), ID_CLOSE,
+                    OPT_TEXT, OPT_BG, Alignment.MID, CutStyle.ALL, 92f, 24f, 0f);
             closeBtn.getPosition().inTR(14f, 16f);
             closeBtn.setShortcut(Keyboard.KEY_ESCAPE, true);
             panel.addUIElement(header).inTL(0f, 0f);
@@ -510,6 +510,13 @@ public final class CoopDialogSpectatorPlugin implements InteractionDialogPlugin,
         dismissed = true;
         if (byUser && !currentDialogId.isEmpty()) {
             state.markDismissedByUser(currentDialogId);
+            String speaker = currentSpeakerName == null || currentSpeakerName.isBlank()
+                    ? CoopUiLang.tr("partner", "напарника") : currentSpeakerName;
+            CoopFeed.post(
+                    CoopUiLang.tr(
+                            "Minimized dialog of \"" + speaker + "\" — press F6 or click the top banner to rejoin.",
+                            "Диалог игрока «" + speaker + "» свёрнут — нажмите F6 или кнопку сверху экрана, чтобы вернуться."),
+                    HEADER_GREEN, CoopFeed.Severity.INFO);
         }
         if (dialog != null) {
             try {

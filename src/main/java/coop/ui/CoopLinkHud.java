@@ -3,15 +3,19 @@ package coop.ui;
 import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.campaign.CampaignUIAPI;
 import com.fs.starfarer.api.campaign.SectorAPI;
+import com.fs.starfarer.api.campaign.listeners.CampaignInputListener;
 import com.fs.starfarer.api.campaign.listeners.CampaignUIRenderingListener;
 import com.fs.starfarer.api.combat.ViewportAPI;
+import com.fs.starfarer.api.input.InputEventAPI;
 import coop.config.CoopOptionsRegistry;
 import coop.config.CoopOptionsStore;
 import coop.net.CoopNetPump;
 import coop.net.CoopNetStartupConfig;
 import coop.util.CoopLog;
+import org.lwjgl.input.Keyboard;
 
 import java.awt.Color;
+import java.util.List;
 
 /**
  * Phase 20.6 milestone 0: a one-line, always-on campaign HUD saying which side of the link you are,
@@ -29,7 +33,33 @@ import java.awt.Color;
  * {@code saves/common/coop_options.json.data} or on the options page, hides the line; the corner and that
  * flag are both re-read on the refresh tick, so a change from the page applies without a relaunch.
  */
-public final class CoopLinkHud implements CampaignUIRenderingListener {
+public final class CoopLinkHud implements CampaignUIRenderingListener, CampaignInputListener {
+
+    /** Hotkey to reopen a minimized/closed partner dialog spectator window. */
+    public static final int REJOIN_DIALOG_KEY = Keyboard.KEY_F6;
+
+    /** Bounding box of the clickable top-center "Rejoin dialog" HUD pill in UI coordinates. */
+    public record PillRect(float x, float y, float w, float h) {
+        public boolean contains(float mx, float my) {
+            return mx >= x && mx <= x + w && my >= y && my <= y + h;
+        }
+    }
+
+    /** Currently rendered clickable rejoin pill (null whenever hidden or a dialog/menu is open). */
+    private static volatile PillRect activeRejoinPillRect;
+
+    public static boolean hasActiveRejoinPill() {
+        return activeRejoinPillRect != null;
+    }
+
+    public static boolean isPointInRejoinPill(float x, float y) {
+        PillRect rect = activeRejoinPillRect;
+        return rect != null && rect.contains(x, y);
+    }
+
+    public static void setActiveRejoinPillForTest(PillRect rect) {
+        activeRejoinPillRect = rect;
+    }
 
     /**
      * Client preference: when true the line is not drawn. Registered in
@@ -100,6 +130,8 @@ public final class CoopLinkHud implements CampaignUIRenderingListener {
     private String cachedNoticeLine = "";
     /** Live BG3-style partner dialog vote banner shown top-center over the speaker's open dialog. */
     private String cachedVoteBanner = "";
+    /** Clickable top-center prompt shown when the player closed the spectator window while partner is still in a dialog. */
+    private String cachedRejoinBanner = "";
 
     private CoopLinkHud(CoopNetPump pump, CoopHudCorner corner) {
         this.pump = pump;
@@ -112,6 +144,7 @@ public final class CoopLinkHud implements CampaignUIRenderingListener {
      * and must never be walked into a save.
      */
     public static void install(SectorAPI sector, CoopNetPump pump) {
+        activeRejoinPillRect = null;
         if (sector == null || pump == null) {
             return;
         }
@@ -178,13 +211,16 @@ public final class CoopLinkHud implements CampaignUIRenderingListener {
     private void render() {
         SectorAPI sector = Global.getSector();
         if (sector == null) {
+            activeRejoinPillRect = null;
             return;
         }
         CampaignUIAPI ui = sector.getCampaignUI();
         if (ui == null || ui.isHideUI()) {
+            activeRejoinPillRect = null;
             return;
         }
         if (!ensureFont()) {
+            activeRejoinPillRect = null;
             return;
         }
 
@@ -205,6 +241,37 @@ public final class CoopLinkHud implements CampaignUIRenderingListener {
             CoopTitleScreenOverlay.drawRect(bx, by, boxW, boxH, 0.05f, 0.20f, 0.13f, 0.92f);
             CoopTitleScreenOverlay.drawBorder(bx, by, boxW, boxH, 0.38f, 0.95f, 0.60f, 0.95f);
             font.draw(cachedVoteBanner, bx + padX, by + boxH - padY, VOTE_BANNER_COLOR);
+        }
+
+        // Clickable top-center "Rejoin partner's dialog" pill when player minimized the spectator window.
+        boolean showRejoinPill = !cachedRejoinBanner.isEmpty()
+                && !ui.isShowingDialog()
+                && !ui.isShowingMenu();
+        if (showRejoinPill) {
+            float textW = font.width(cachedRejoinBanner);
+            float padX = 18f;
+            float padY = 8f;
+            float boxW = textW + padX * 2f;
+            float boxH = lineHeight + padY * 2f;
+            float bx = (screenWidth - boxW) * 0.5f;
+            float by = screenHeight - boxH - 18f;
+            if (!cachedVoteBanner.isEmpty()) {
+                by -= (lineHeight + 22f);
+            }
+            PillRect rect = new PillRect(bx, by, boxW, boxH);
+            activeRejoinPillRect = rect;
+            boolean hovered = isMouseInside(rect);
+            if (hovered) {
+                CoopTitleScreenOverlay.drawRect(bx, by, boxW, boxH, 0.10f, 0.36f, 0.22f, 0.96f);
+                CoopTitleScreenOverlay.drawBorder(bx, by, boxW, boxH, 0.55f, 1.0f, 0.72f, 1.0f);
+            } else {
+                CoopTitleScreenOverlay.drawRect(bx, by, boxW, boxH, 0.05f, 0.22f, 0.15f, 0.93f);
+                CoopTitleScreenOverlay.drawBorder(bx, by, boxW, boxH, 0.38f, 0.95f, 0.60f, 0.95f);
+            }
+            font.draw(cachedRejoinBanner, bx + padX, by + boxH - padY,
+                    hovered ? Color.WHITE : VOTE_BANNER_COLOR);
+        } else {
+            activeRejoinPillRect = null;
         }
 
         if (hiddenByOption
@@ -314,6 +381,68 @@ public final class CoopLinkHud implements CampaignUIRenderingListener {
         // The notice expires on its own clock; the tick only decides how often the HUD asks.
         cachedNoticeLine = CoopHudNotice.current(now);
         cachedVoteBanner = pump.dialogVoteBanner(now);
+        cachedRejoinBanner = pump.dialogSpectatorRejoinBanner();
+    }
+
+    private static boolean isMouseInside(PillRect rect) {
+        try {
+            float scale = Math.max(0.5f, Global.getSettings().getScreenScaleMult());
+            float mx = Global.getSettings().getMouseX() / scale;
+            float my = Global.getSettings().getMouseY() / scale;
+            return rect.contains(mx, my);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    @Override
+    public int getListenerInputPriority() {
+        return Integer.MAX_VALUE;
+    }
+
+    @Override
+    public void processCampaignInputPreCore(List<InputEventAPI> events) {
+        if (events == null || disabled || pump == null) {
+            return;
+        }
+        try {
+            SectorAPI sector = Global.getSector();
+            CampaignUIAPI ui = sector == null ? null : sector.getCampaignUI();
+            if (ui == null || ui.isShowingDialog() || ui.isShowingMenu()) {
+                return;
+            }
+            for (InputEventAPI ev : events) {
+                if (ev == null || ev.isConsumed()) {
+                    continue;
+                }
+                if (ev.isMouseDownEvent() && ev.getEventValue() == 0
+                        && isPointInRejoinPill(ev.getX(), ev.getY())) {
+                    ev.consume();
+                    activeRejoinPillRect = null;
+                    cachedRejoinBanner = "";
+                    pump.requestReopenDialogSpectator();
+                    return;
+                }
+                if (ev.isKeyDownEvent() && !ev.isRepeat() && ev.getEventValue() == REJOIN_DIALOG_KEY
+                        && pump.isDialogSpectatorRejoinAvailable()) {
+                    ev.consume();
+                    activeRejoinPillRect = null;
+                    cachedRejoinBanner = "";
+                    pump.requestReopenDialogSpectator();
+                    return;
+                }
+            }
+        } catch (Throwable ignored) {
+            // Never disrupt campaign input processing.
+        }
+    }
+
+    @Override
+    public void processCampaignInputPreFleetControl(List<InputEventAPI> events) {
+    }
+
+    @Override
+    public void processCampaignInputPostCore(List<InputEventAPI> events) {
     }
 
     /**

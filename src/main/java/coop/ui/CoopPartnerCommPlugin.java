@@ -20,6 +20,7 @@ import java.util.Map;
 public final class CoopPartnerCommPlugin implements InteractionDialogPlugin {
 
     private static final String ALLY_ABILITY_ID = "coop_ally";
+    private static final String OPT_REJOIN_DIALOG = "comm_rejoin_dialog";
     private static final String OPT_TRADE = "comm_trade";
     private static final String OPT_CHAT = "comm_chat";
     private static final String OPT_TOGGLE_ALLY = "comm_toggle_ally";
@@ -49,6 +50,10 @@ public final class CoopPartnerCommPlugin implements InteractionDialogPlugin {
     public void optionSelected(String optionText, Object optionData) {
         String id = String.valueOf(optionData);
         switch (id) {
+            case OPT_REJOIN_DIALOG -> {
+                dismiss();
+                CoopSessionIntelFeed.requestReopenDialogSpectator();
+            }
             case OPT_TRADE -> {
                 dismiss();
                 CoopSessionIntelFeed.requestOpenTrade(partnerId);
@@ -97,6 +102,13 @@ public final class CoopPartnerCommPlugin implements InteractionDialogPlugin {
                         + " su, напарник получит запрос на участие (Живой бой в реальном времени, Тактическая карта или ИИ)."),
                 Misc.getGrayColor());
 
+        if (CoopSessionIntelFeed.isDialogSpectatorRejoinAvailable()) {
+            String activeLabel = CoopSessionIntelFeed.dialogSpectatorRejoinLabel();
+            String suffix = activeLabel.isEmpty() ? "" : (" (" + activeLabel + ")");
+            opts.addOption(CoopUiLang.tr(
+                    "Rejoin partner's live dialog" + suffix,
+                    "Вернуться в диалог напарника" + suffix), OPT_REJOIN_DIALOG);
+        }
         opts.addOption(CoopUiLang.tr(
                 "Trade goods & transfer credits with " + partnerName,
                 "Обмен товарами и передача кредитов с " + partnerName), OPT_TRADE);

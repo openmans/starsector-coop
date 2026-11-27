@@ -163,6 +163,30 @@ class CoopCampaignInputBlockerTest {
         assertTrue(ffDown.consumed);
     }
 
+    @Test
+    void interactionBlockAllowsRejoinPillClickAndF6HotkeyThrough() {
+        CoopCampaignInputBlocker blocker = new CoopCampaignInputBlocker();
+        blocker.setInteractionBlocked(true);
+        coop.ui.CoopLinkHud.setActiveRejoinPillForTest(
+                new coop.ui.CoopLinkHud.PillRect(400f, 1020f, 320f, 34f));
+        try {
+            RecordingInputEvent insidePill = RecordingInputEvent.mouseClickAt(500, 1035);
+            RecordingInputEvent outsidePill = RecordingInputEvent.mouseClickAt(100, 100);
+            RecordingInputEvent f6Key = RecordingInputEvent.keyEvent(coop.ui.CoopLinkHud.REJOIN_DIALOG_KEY);
+            RecordingInputEvent otherKey = RecordingInputEvent.keyEvent(org.lwjgl.input.Keyboard.KEY_A);
+
+            blocker.processCampaignInputPreCore(List.of(
+                    insidePill.proxy(), outsidePill.proxy(), f6Key.proxy(), otherKey.proxy()));
+
+            assertFalse(insidePill.consumed, "Left-click inside rejoin HUD pill must pass through");
+            assertTrue(outsidePill.consumed, "World click outside pill must stay blocked");
+            assertFalse(f6Key.consumed, "F6 rejoin hotkey must pass through while rejoin pill is active");
+            assertTrue(otherKey.consumed, "Other keys must stay blocked during partner interaction");
+        } finally {
+            coop.ui.CoopLinkHud.setActiveRejoinPillForTest(null);
+        }
+    }
+
     private static final class RecordingInputEvent {
         private final String controlName;
         private final boolean activated;
@@ -172,16 +196,28 @@ class CoopCampaignInputBlockerTest {
         private final boolean mouseScroll;
         private final boolean mouseEvent;
         private final boolean keyboardEvent;
+        private final boolean mouseDown;
+        private final int eventValue;
+        private final int x;
+        private final int y;
         private boolean consumed;
 
         private RecordingInputEvent(String controlName, boolean activated, boolean down, boolean consumed,
                                     Set<String> supportedControls) {
-            this(controlName, activated, down, consumed, supportedControls, false, false, false, false);
+            this(controlName, activated, down, consumed, supportedControls, false, false, false, false, false, 0, 0, 0);
         }
 
         private RecordingInputEvent(String controlName, boolean activated, boolean down, boolean consumed,
                                     Set<String> supportedControls, boolean mouseMove, boolean mouseScroll,
                                     boolean mouseEvent, boolean keyboardEvent) {
+            this(controlName, activated, down, consumed, supportedControls, mouseMove, mouseScroll,
+                    mouseEvent, keyboardEvent, false, 0, 0, 0);
+        }
+
+        private RecordingInputEvent(String controlName, boolean activated, boolean down, boolean consumed,
+                                    Set<String> supportedControls, boolean mouseMove, boolean mouseScroll,
+                                    boolean mouseEvent, boolean keyboardEvent,
+                                    boolean mouseDown, int eventValue, int x, int y) {
             this.controlName = controlName;
             this.activated = activated;
             this.down = down;
@@ -191,11 +227,25 @@ class CoopCampaignInputBlockerTest {
             this.mouseScroll = mouseScroll;
             this.mouseEvent = mouseEvent;
             this.keyboardEvent = keyboardEvent;
+            this.mouseDown = mouseDown;
+            this.eventValue = eventValue;
+            this.x = x;
+            this.y = y;
         }
 
         private static RecordingInputEvent mouseClick() {
             return new RecordingInputEvent("MOUSE_CLICK", false, false, false, Set.of(),
                     false, false, true, false);
+        }
+
+        private static RecordingInputEvent mouseClickAt(int x, int y) {
+            return new RecordingInputEvent("MOUSE_CLICK", false, false, false, Set.of(),
+                    false, false, true, false, true, 0, x, y);
+        }
+
+        private static RecordingInputEvent keyEvent(int keyCode) {
+            return new RecordingInputEvent("KEY", false, false, false, Set.of(),
+                    false, false, false, true, false, keyCode, 0, 0);
         }
 
         private static RecordingInputEvent keyboard() {
@@ -249,6 +299,21 @@ class CoopCampaignInputBlockerTest {
                             }
                             case "isKeyboardEvent" -> {
                                 return keyboardEvent;
+                            }
+                            case "isMouseDownEvent" -> {
+                                return mouseDown;
+                            }
+                            case "isMouseUpEvent" -> {
+                                return false;
+                            }
+                            case "getEventValue" -> {
+                                return eventValue;
+                            }
+                            case "getX" -> {
+                                return x;
+                            }
+                            case "getY" -> {
+                                return y;
                             }
                             default -> throw new UnsupportedOperationException(method.getName());
                         }

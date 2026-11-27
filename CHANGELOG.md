@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.12 (Rejoin minimized/closed shared station dialog via HUD button, F6, Comm Link, or Intel)
+
+- **Rejoin an accidentally closed shared station/partner dialog anytime (`CoopDialogSpectatorState`, `CoopLinkHud`, `CoopNetPump`):**
+  closing or minimizing the live BG3-style partner dialog spectator window (`ESC` / `Свернуть`)
+  now displays a clickable glowing top-center HUD banner (`«Ник» в диалоге (Станция) · [F6 / Клик — вернуться]`)
+  for as long as the partner's dialog remains open, letting you return straight back into the
+  live dialog text, cursor view, and option voting with one click or by pressing **`F6`**
+  (even while the guest interaction blocker is active).
+- **Additional rejoin entry points (`CoopPartnerCommPlugin`, `CoopSessionIntel`, `CoopSessionIntelFeed`):**
+  added a **`Вернуться в диалог напарника`** (`Rejoin partner's live dialog`) option at the top
+  of the Partner Comm Link dialog (clicking the partner's fleet) and on the **Coop Session** Intel page.
+
 ## 0.2.11 (Host-aware CONNECT + Load button in Lobby dock + zero test registry pollution)
 
 - **Fixed bogus `192.168.1.50:7788` / `Тестер` registry pollution from headless unit tests:**

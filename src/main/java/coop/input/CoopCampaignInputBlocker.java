@@ -113,6 +113,11 @@ public class CoopCampaignInputBlocker implements CampaignInputListener {
             // listener first" would be a race; the blocker declining this one key is a fact instead.
             return false;
         }
+        if (isDialogRejoinInput(event)) {
+            // Let F6 and clicks on the top-center "Rejoin dialog" HUD pill reach CoopLinkHud even
+            // while the partner holds an interaction claim.
+            return false;
+        }
         return event.isMouseEvent() || event.isKeyboardEvent();
     }
 
@@ -122,6 +127,24 @@ public class CoopCampaignInputBlocker implements CampaignInputListener {
 
     @Override
     public void processCampaignInputPostCore(List<InputEventAPI> events) {
+    }
+
+    /** True for the dialog spectator rejoin hotkey (F6) or clicks on the active rejoin HUD pill. */
+    private boolean isDialogRejoinInput(InputEventAPI event) {
+        try {
+            if (event.isKeyboardEvent()
+                    && (coop.ui.CoopLinkHud.hasActiveRejoinPill()
+                    || coop.ui.CoopSessionIntelFeed.isDialogSpectatorRejoinAvailable())) {
+                return event.getEventValue() == coop.ui.CoopLinkHud.REJOIN_DIALOG_KEY;
+            }
+            if (event.isMouseEvent() && coop.ui.CoopLinkHud.hasActiveRejoinPill()) {
+                return (event.isMouseDownEvent() || event.isMouseUpEvent())
+                        && coop.ui.CoopLinkHud.isPointInRejoinPill(event.getX(), event.getY());
+            }
+            return false;
+        } catch (RuntimeException | LinkageError ex) {
+            return false;
+        }
     }
 
     /** True for the key {@code CoopMarkInputListener} is currently watching, if any. */

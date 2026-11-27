@@ -339,4 +339,21 @@ class CoopSessionIntelFeedTest {
         assertEquals(1, first.history().size());
         assertEquals(2, feed.snapshot().history().size());
     }
+
+    @Test
+    void dialogSpectatorRejoinHookExposesAvailabilityLabelAndOpener() {
+        java.util.concurrent.atomic.AtomicBoolean reopened = new java.util.concurrent.atomic.AtomicBoolean(false);
+        CoopSessionIntelFeed.install(feed);
+        try {
+            feed.publishSession(CoopConnectionRole.GUEST, "connected", "Artur");
+            feed.setDialogSpectatorHook(() -> true, () -> "Artur — Jangala", () -> reopened.set(true));
+
+            assertTrue(CoopSessionIntelFeed.isDialogSpectatorRejoinAvailable());
+            assertEquals("Artur — Jangala", CoopSessionIntelFeed.dialogSpectatorRejoinLabel());
+            CoopSessionIntelFeed.requestReopenDialogSpectator();
+            assertTrue(reopened.get());
+        } finally {
+            CoopSessionIntelFeed.uninstall();
+        }
+    }
 }
