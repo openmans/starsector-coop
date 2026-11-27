@@ -2,15 +2,16 @@
 
 ## 0.2.5 (3-mode Starsector launcher + .exe installer + 3000 su tactical battles & partner comm link)
 
-- **Baldur's Gate 3-style live dialog spectating, partner cursor & option voting:**
-  added symmetric Host &harr; Guest live dialog mirroring (`CoopDialogSpectatorBridge`,
+- **Baldur's Gate 3-style live dialog, trade & Comm Directory spectating, partner cursor & option voting:**
+  added symmetric Host &harr; Guest live mirroring (`CoopDialogSpectatorBridge`,
   `CoopDialogSpectatorState`, `CoopDialogSpectatorPlugin`, `DIALOG_SYNC` / `DIALOG_VOTE`): whenever
-  either Host or Guest opens any gameplay interaction dialog (stations, bars, quests, ruins,
-  storyline, fleet hails), partner(s) are automatically pulled into a live spectator window titled
-  top-center `Диалог игрока «Ник»` / `Dialog of "Name"`, showing mirrored dialog text, all current
-  choices with speaker hover highlight, a smoothly interpolated OpenGL pointer with the speaker's
-  name tag, and clickable BG3-style option voting that flashes the recommended option button on the
-  speaker's live dialog and displays an emerald top-center vote banner on `CoopLinkHud`.
+  either Host or Guest opens a gameplay dialog, **Market Trade** (`CoreUITabId.CARGO`), or **Comm
+  Directory** (`CommDirectoryAPI`) while both players are in the **same star system** (never across
+  different systems or hyperspace), partner(s) are automatically pulled into a live spectator window
+  titled top-center `Диалог игрока «Ник»` / `Dialog of "Name"`. Includes auto-scrolling to new lines
+  (bars/quests), gold highlighting of numbers (days, credits, units, %) plus inline native commodity
+  icons, dedicated Trade table with commodity icons/stock/prices, dedicated Comm Directory view with
+  NPC portraits/posts, live OpenGL partner cursor, and clickable BG3-style option voting.
 - **Native in-game green `CO-OP` button on the Title Screen, live Pre-Game Lobby & in-campaign Host/Join (`F7`):**
   added a native emerald-green `CO-OP` button directly beneath the main menu on Starsector's Title
   Screen (`CoopTitleScreenBridge`, `CoopTitleScreenOverlay`, `CoopInGameLauncherSession`) with a

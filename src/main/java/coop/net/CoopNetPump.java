@@ -11083,11 +11083,17 @@ public class CoopNetPump implements EveryFrameScript {
                 return;
             }
             long now = clockMillis.getAsLong();
+            com.fs.starfarer.api.campaign.CampaignFleetAPI localFleet = sector.getPlayerFleet();
+            com.fs.starfarer.api.campaign.LocationAPI localLoc =
+                    localFleet == null ? null : localFleet.getContainingLocation();
+            String localSystemId = (localLoc != null && !localLoc.isHyperspace()
+                    && localLoc.getId() != null) ? localLoc.getId().trim() : "";
+
             com.fs.starfarer.api.campaign.InteractionDialogAPI current = ui.getCurrentInteractionDialog();
-            boolean spectatable = current != null
+            boolean spectatable = !localSystemId.isEmpty() && current != null
                     && coop.ui.CoopDialogSpectatorState.isSpectatablePlugin(current.getPlugin());
 
-            // 1. Speaker broadcast (works identically whether Host or Guest opened the dialog).
+            // 1. Speaker broadcast (only inside a star system; never in hyperspace).
             if (spectatable) {
                 if (current != localSpectatedDialogRef) {
                     localSpectatedDialogRef = current;
@@ -11106,15 +11112,32 @@ public class CoopNetPump implements EveryFrameScript {
                     for (coop.ambient.CoopDialogSpectatorBridge.CapturedOption co : cap.options()) {
                         opts.add(new coop.ui.CoopDialogSpectatorState.OptionView(co.text(), co.enabled()));
                     }
+                    java.util.List<coop.ui.CoopDialogSpectatorState.TradeItemView> tradeItems =
+                            new java.util.ArrayList<>(cap.tradeItems().size());
+                    for (coop.ambient.CoopDialogSpectatorBridge.CapturedTradeItem ti : cap.tradeItems()) {
+                        tradeItems.add(new coop.ui.CoopDialogSpectatorState.TradeItemView(
+                                ti.commodityId(), ti.name(), ti.qty(), ti.buyPrice(), ti.sellPrice(), ti.submarket()));
+                    }
+                    java.util.List<coop.ui.CoopDialogSpectatorState.CommEntryView> commEntries =
+                            new java.util.ArrayList<>(cap.commEntries().size());
+                    for (coop.ambient.CoopDialogSpectatorBridge.CapturedCommEntry ce : cap.commEntries()) {
+                        commEntries.add(new coop.ui.CoopDialogSpectatorState.CommEntryView(
+                                ce.name(), ce.post(), ce.faction(), ce.portraitSprite()));
+                    }
                     coop.ui.CoopDialogSpectatorState.SyncPayload payload =
                             new coop.ui.CoopDialogSpectatorState.SyncPayload(
                                     localSpectatedDialogId,
                                     sessionState.localPlayerId(),
                                     sessionState.localName(),
+                                    localSystemId,
+                                    cap.viewMode(),
                                     true,
                                     cap.targetName(),
+                                    cap.subHeader(),
                                     cap.paragraphs(),
                                     opts,
+                                    tradeItems,
+                                    commEntries,
                                     cap.hoveredOptionIndex(),
                                     cap.cursorNormX(),
                                     cap.cursorNormY(),
@@ -11142,8 +11165,13 @@ public class CoopNetPump implements EveryFrameScript {
                                 localSpectatedDialogId,
                                 sessionState.localPlayerId(),
                                 sessionState.localName(),
+                                localSystemId,
+                                "DIALOG",
                                 false,
                                 "",
+                                "",
+                                java.util.List.of(),
+                                java.util.List.of(),
                                 java.util.List.of(),
                                 java.util.List.of(),
                                 -1, 0.5f, 0.5f, -1, "");
@@ -11159,14 +11187,15 @@ public class CoopNetPump implements EveryFrameScript {
                 dialogSpectatorState.clearIncomingVote();
             }
 
-            // 2. Spectator auto-pull (symmetric: pulls Guest into Host dialog OR Host into Guest dialog).
+            // 2. Spectator auto-pull (ONLY when both players are inside the exact same star system).
+            boolean canSpectateHere = dialogSpectatorState.shouldAutoOpenSpectator(localSystemId);
             if (dialogSpectatorDialogs.isRequested()) {
-                if (!dialogSpectatorMayRequest() || !dialogSpectatorState.shouldAutoOpenSpectator()) {
+                if (!dialogSpectatorMayRequest() || !canSpectateHere) {
                     dialogSpectatorDialogs.close();
                 } else {
                     dialogSpectatorDialogs.tick();
                 }
-            } else if (!spectatable && dialogSpectatorState.shouldAutoOpenSpectator()
+            } else if (!spectatable && canSpectateHere
                     && dialogSpectatorMayRequest()
                     && current == null && !ui.isShowingDialog() && !ui.isShowingMenu()) {
                 coop.ui.CoopDialogSpectatorPlugin plugin = new coop.ui.CoopDialogSpectatorPlugin(

@@ -6,15 +6,27 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * Headless-testable state, JSON codec, and plugin filter for Baldur's Gate 3-style
- * live interactive dialog spectating (symmetric for both Host and Guest) with live partner
- * cursor tracking and option voting.
+ * Headless-testable state, JSON codec, same-system proximity filter, and numeric highlight
+ * extractor for Baldur's Gate 3-style live interactive dialog, trade, and Comm Directory spectating.
  */
 public final class CoopDialogSpectatorState {
+
+    /**
+     * Highlights numeric values with optional currency/day/unit/percent suffixes in RU and EN
+     * (e.g. "12 500¢", "15 дней", "240 ед.", "30 days", "50,000 credits", "+25%", "420").
+     */
+    private static final Pattern HIGHLIGHT_PATTERN = Pattern.compile(
+            "[+-]?\\d[\\d\\s,.]*\\d(?:\\s*(?:¢|%|credits?\\b|CR\\b|кредит(?:ов|а)?\\b|дн(?:ей|я|и)\\b|день\\b|days?\\b|цикл(?:ов|а)?\\b|cycles?\\b|ед\\.?|units?\\b|шт\\.?|т\\b))?"
+                    + "|[+-]?\\d+(?:\\s*(?:¢|%|credits?\\b|CR\\b|кредит(?:ов|а)?\\b|дн(?:ей|я|и)\\b|день\\b|days?\\b|цикл(?:ов|а)?\\b|cycles?\\b|ед\\.?|units?\\b|шт\\.?|т\\b))?",
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
 
     public record OptionView(String text, boolean enabled) {
         public OptionView {
@@ -22,14 +34,46 @@ public final class CoopDialogSpectatorState {
         }
     }
 
+    public record TradeItemView(
+            String commodityId,
+            String name,
+            int qty,
+            int buyPrice,
+            int sellPrice,
+            String submarket) {
+        public TradeItemView {
+            commodityId = commodityId == null ? "" : commodityId;
+            name = name == null ? "" : name;
+            submarket = submarket == null ? "" : submarket;
+        }
+    }
+
+    public record CommEntryView(
+            String name,
+            String post,
+            String faction,
+            String portraitSprite) {
+        public CommEntryView {
+            name = name == null ? "" : name;
+            post = post == null ? "" : post;
+            faction = faction == null ? "" : faction;
+            portraitSprite = portraitSprite == null ? "" : portraitSprite;
+        }
+    }
+
     public record SyncPayload(
             String dialogId,
             String speakerId,
             String speakerName,
+            String locationId,
+            String viewMode,
             boolean open,
             String targetName,
+            String subHeader,
             List<String> paragraphs,
             List<OptionView> options,
+            List<TradeItemView> tradeItems,
+            List<CommEntryView> commEntries,
             int hoveredOptionIndex,
             float cursorNormX,
             float cursorNormY,
@@ -40,18 +84,25 @@ public final class CoopDialogSpectatorState {
             dialogId = dialogId == null ? "" : dialogId;
             speakerId = speakerId == null ? "" : speakerId;
             speakerName = speakerName == null || speakerName.isBlank() ? "Partner" : speakerName.trim();
+            locationId = locationId == null ? "" : locationId.trim();
+            viewMode = viewMode == null || viewMode.isBlank() ? "DIALOG" : viewMode.trim();
             targetName = targetName == null ? "" : targetName.trim();
+            subHeader = subHeader == null ? "" : subHeader.trim();
             paragraphs = paragraphs == null ? List.of() : List.copyOf(paragraphs);
             options = options == null ? List.of() : List.copyOf(options);
+            tradeItems = tradeItems == null ? List.of() : List.copyOf(tradeItems);
+            commEntries = commEntries == null ? List.of() : List.copyOf(commEntries);
             cursorNormX = clamp01(cursorNormX);
             cursorNormY = clamp01(cursorNormY);
             voterName = voterName == null ? "" : voterName.trim();
         }
 
-        /** Structural key excluding cursor movement so the spectator panel only rebuilds on text/option changes. */
+        /** Structural key excluding cursor movement so the spectator panel only rebuilds on content changes. */
         public String structuralKey() {
             StringBuilder sb = new StringBuilder();
-            sb.append(dialogId).append('|').append(speakerName).append('|').append(targetName)
+            sb.append(dialogId).append('|').append(locationId).append('|').append(viewMode)
+                    .append('|').append(speakerName).append('|').append(targetName)
+                    .append('|').append(subHeader)
                     .append('|').append(hoveredOptionIndex).append('|').append(votedOptionIndex)
                     .append('|').append(voterName).append('|');
             for (String p : paragraphs) {
@@ -60,6 +111,15 @@ public final class CoopDialogSpectatorState {
             sb.append('\u001d');
             for (OptionView o : options) {
                 sb.append(o.text()).append(':').append(o.enabled() ? '1' : '0').append('\u001f');
+            }
+            sb.append('\u001c');
+            for (TradeItemView t : tradeItems) {
+                sb.append(t.commodityId()).append(':').append(t.qty()).append(':')
+                        .append(t.buyPrice()).append(':').append(t.sellPrice()).append('\u001f');
+            }
+            sb.append('\u001b');
+            for (CommEntryView c : commEntries) {
+                sb.append(c.name()).append(':').append(c.post()).append('\u001f');
             }
             return sb.toString();
         }
@@ -111,6 +171,25 @@ public final class CoopDialogSpectatorState {
                 "Диалог игрока «" + clean + "»");
     }
 
+    /**
+     * Extracts numeric highlights (credits, days, units, percentages, plain counts) from dialog text
+     * for {@code TooltipMakerAPI.addPara(..., highlightColor, highlights)}.
+     */
+    public static List<String> extractNumberHighlights(String text) {
+        if (text == null || text.isBlank()) {
+            return List.of();
+        }
+        Set<String> found = new LinkedHashSet<>();
+        Matcher m = HIGHLIGHT_PATTERN.matcher(text);
+        while (m.find() && found.size() < 24) {
+            String token = m.group().trim();
+            if (!token.isEmpty()) {
+                found.add(token);
+            }
+        }
+        return new ArrayList<>(found);
+    }
+
     public synchronized void applyRemoteSync(SyncPayload payload) {
         if (payload == null) {
             return;
@@ -134,10 +213,22 @@ public final class CoopDialogSpectatorState {
         return remoteDialog;
     }
 
-    /** True when the remote partner has an open dialog that the spectator has not manually closed. */
-    public boolean shouldAutoOpenSpectator() {
+    /**
+     * True ONLY when the remote partner has an open dialog inside the exact same non-hyperspace
+     * star system as {@code localSystemId}, and the spectator has not manually dismissed it.
+     */
+    public boolean shouldAutoOpenSpectator(String localSystemId) {
         SyncPayload current = remoteDialog;
-        return current != null && current.open() && !current.dialogId().equals(dismissedDialogId);
+        if (current == null || !current.open()) {
+            return false;
+        }
+        if (current.dialogId().equals(dismissedDialogId)) {
+            return false;
+        }
+        if (localSystemId == null || localSystemId.isBlank() || current.locationId().isEmpty()) {
+            return false;
+        }
+        return localSystemId.trim().equals(current.locationId());
     }
 
     public synchronized void markDismissedByUser(String dialogId) {
@@ -208,18 +299,23 @@ public final class CoopDialogSpectatorState {
             o.put("id", p.dialogId());
             o.put("sid", p.speakerId());
             o.put("sn", p.speakerName());
+            o.put("loc", p.locationId());
+            o.put("vm", p.viewMode());
             o.put("open", p.open());
             o.put("tgt", p.targetName());
+            o.put("sh", p.subHeader());
             o.put("hv", p.hoveredOptionIndex());
             o.put("mx", Math.round(p.cursorNormX() * 1000f));
             o.put("my", Math.round(p.cursorNormY() * 1000f));
             o.put("vi", p.votedOptionIndex());
             o.put("vn", p.voterName());
+
             JSONArray paras = new JSONArray();
             for (String line : p.paragraphs()) {
                 paras.put(line);
             }
             o.put("p", paras);
+
             JSONArray opts = new JSONArray();
             for (OptionView opt : p.options()) {
                 JSONObject item = new JSONObject();
@@ -228,6 +324,34 @@ public final class CoopDialogSpectatorState {
                 opts.put(item);
             }
             o.put("o", opts);
+
+            if (!p.tradeItems().isEmpty()) {
+                JSONArray tr = new JSONArray();
+                for (TradeItemView t : p.tradeItems()) {
+                    JSONObject item = new JSONObject();
+                    item.put("c", t.commodityId());
+                    item.put("n", t.name());
+                    item.put("q", t.qty());
+                    item.put("b", t.buyPrice());
+                    item.put("s", t.sellPrice());
+                    item.put("m", t.submarket());
+                    tr.put(item);
+                }
+                o.put("tr", tr);
+            }
+
+            if (!p.commEntries().isEmpty()) {
+                JSONArray cm = new JSONArray();
+                for (CommEntryView c : p.commEntries()) {
+                    JSONObject item = new JSONObject();
+                    item.put("n", c.name());
+                    item.put("p", c.post());
+                    item.put("f", c.faction());
+                    item.put("i", c.portraitSprite());
+                    cm.put(item);
+                }
+                o.put("cm", cm);
+            }
             return o.toString();
         } catch (Exception ex) {
             return "{}";
@@ -260,14 +384,49 @@ public final class CoopDialogSpectatorState {
                     }
                 }
             }
+            List<TradeItemView> tradeItems = new ArrayList<>();
+            JSONArray ta = o.optJSONArray("tr");
+            if (ta != null) {
+                for (int i = 0; i < ta.length(); i++) {
+                    JSONObject item = ta.optJSONObject(i);
+                    if (item != null) {
+                        tradeItems.add(new TradeItemView(
+                                item.optString("c", ""),
+                                item.optString("n", ""),
+                                item.optInt("q", 0),
+                                item.optInt("b", 0),
+                                item.optInt("s", 0),
+                                item.optString("m", "")));
+                    }
+                }
+            }
+            List<CommEntryView> commEntries = new ArrayList<>();
+            JSONArray ca = o.optJSONArray("cm");
+            if (ca != null) {
+                for (int i = 0; i < ca.length(); i++) {
+                    JSONObject item = ca.optJSONObject(i);
+                    if (item != null) {
+                        commEntries.add(new CommEntryView(
+                                item.optString("n", ""),
+                                item.optString("p", ""),
+                                item.optString("f", ""),
+                                item.optString("i", "")));
+                    }
+                }
+            }
             return new SyncPayload(
                     o.optString("id", ""),
                     o.optString("sid", ""),
                     o.optString("sn", "Partner"),
+                    o.optString("loc", ""),
+                    o.optString("vm", "DIALOG"),
                     o.optBoolean("open", false),
                     o.optString("tgt", ""),
+                    o.optString("sh", ""),
                     Collections.unmodifiableList(paras),
                     Collections.unmodifiableList(opts),
+                    Collections.unmodifiableList(tradeItems),
+                    Collections.unmodifiableList(commEntries),
                     o.optInt("hv", -1),
                     o.optInt("mx", 500) / 1000f,
                     o.optInt("my", 500) / 1000f,

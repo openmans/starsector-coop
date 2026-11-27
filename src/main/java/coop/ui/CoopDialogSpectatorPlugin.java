@@ -1,8 +1,10 @@
 package coop.ui;
 
+import com.fs.starfarer.api.Global;
 import com.fs.starfarer.api.campaign.CustomUIPanelPlugin;
 import com.fs.starfarer.api.campaign.InteractionDialogAPI;
 import com.fs.starfarer.api.campaign.InteractionDialogPlugin;
+import com.fs.starfarer.api.campaign.econ.CommoditySpecAPI;
 import com.fs.starfarer.api.campaign.rules.MemoryAPI;
 import com.fs.starfarer.api.combat.EngagementResultAPI;
 import com.fs.starfarer.api.input.InputEventAPI;
@@ -12,40 +14,47 @@ import com.fs.starfarer.api.ui.CustomPanelAPI;
 import com.fs.starfarer.api.ui.CutStyle;
 import com.fs.starfarer.api.ui.LabelAPI;
 import com.fs.starfarer.api.ui.PositionAPI;
+import com.fs.starfarer.api.ui.ScrollPanelAPI;
 import com.fs.starfarer.api.ui.TooltipMakerAPI;
 import coop.util.CoopLog;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.opengl.GL11;
 
 import java.awt.Color;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.BiConsumer;
 
 /**
- * Baldur's Gate 3-style live dialog spectator window.
+ * Baldur's Gate 3-style live spectator window for dialogs, market trading, and Comm Directory.
  *
- * <p>Automatically opened when the partner (Host OR Guest) enters any gameplay
- * {@code InteractionDialog}. Renders:
+ * <p>Features:
  * <ul>
  *   <li>Top-center title: {@code Диалог игрока «Ник»} / {@code Dialog of "Name"}</li>
- *   <li>Live mirrored dialog text and target name</li>
- *   <li>All current dialog options with live speaker hover highlight</li>
- *   <li>Clickable option voting (recommends an option to the speaking partner)</li>
- *   <li>Smoothly interpolated OpenGL pointer showing the speaker's live mouse cursor</li>
+ *   <li>Auto-scrolling dialog text with numeric highlights (credits, days, units, %) and
+ *       inline native commodity icons whenever commodities are mentioned</li>
+ *   <li>Dedicated Trade view with native commodity icons, stock counts, and buy/sell prices</li>
+ *   <li>Dedicated Comm Directory view with NPC portraits, posts, and factions</li>
+ *   <li>Clickable BG3-style option voting and live OpenGL partner cursor</li>
  * </ul>
  */
 public final class CoopDialogSpectatorPlugin implements InteractionDialogPlugin, CoopDismissableDialog {
 
-    private static final float PANEL_W = 840f;
-    private static final float PANEL_H = 580f;
+    private static final float PANEL_W = 880f;
+    private static final float PANEL_H = 610f;
     private static final String ID_CLOSE = "spectator.close";
     private static final String ID_VOTE_PREFIX = "spectator.vote.";
 
     private static final Color HEADER_GREEN = new Color(110, 255, 165);
     private static final Color TARGET_CYAN = new Color(130, 225, 255);
     private static final Color BODY_TEXT = new Color(224, 240, 250);
+    private static final Color HIGHLIGHT_GOLD = new Color(255, 214, 102);
     private static final Color MUTED = new Color(145, 185, 205);
     private static final Color OPT_BG = new Color(16, 38, 54);
     private static final Color OPT_TEXT = new Color(205, 238, 255);
@@ -68,6 +77,9 @@ public final class CoopDialogSpectatorPlugin implements InteractionDialogPlugin,
     private String currentSpeakerName = "";
     private CoopBitmapFont cursorFont;
     private boolean cursorFontAttempted;
+
+    // Lazily cached localized commodity names -> spec (works in both RU and EN Starsector)
+    private Map<String, CommoditySpecAPI> commodityByLowerName;
 
     public CoopDialogSpectatorPlugin(CoopDialogSpectatorState state,
                                      BiConsumer<Integer, String> onVote,
@@ -103,7 +115,6 @@ public final class CoopDialogSpectatorPlugin implements InteractionDialogPlugin,
             dismissInternal(false);
             return;
         }
-        // Smooth cursor interpolation at 60 Hz between ~8 Hz network samples
         float lerp = Math.min(1f, Math.max(0.15f, amount * 14f));
         smoothCursorX += (current.cursorNormX() - smoothCursorX) * lerp;
         smoothCursorY += (current.cursorNormY() - smoothCursorY) * lerp;
@@ -129,96 +140,362 @@ public final class CoopDialogSpectatorPlugin implements InteractionDialogPlugin,
                     PANEL_W, PANEL_H, new SpectatorPanelPlugin());
 
             // 1. Top-center header: "Диалог игрока «Ник»"
-            float headerH = 62f;
+            float headerH = 64f;
             TooltipMakerAPI header = panel.createUIElement(PANEL_W, headerH, false);
             LabelAPI title = header.addPara(CoopDialogSpectatorState.headerTitle(snap.speakerName()),
                     HEADER_GREEN, 0f);
             title.setAlignment(Alignment.MID);
-            title.getPosition().setSize(PANEL_W - 180f, 24f);
+            title.getPosition().setSize(PANEL_W - 190f, 24f);
             title.getPosition().inTMid(10f);
 
-            String sub = snap.targetName().isEmpty()
-                    ? CoopUiLang.tr("Live view · Click any option to vote · ESC to leave",
-                            "Прямой эфир · Нажмите на вариант, чтобы проголосовать · ESC — выйти")
-                    : snap.targetName() + "  ·  " + CoopUiLang.tr(
-                            "Click an option to vote · ESC to leave",
-                            "Нажмите на вариант для голоса · ESC — выйти");
-            LabelAPI subtitle = header.addPara(sub, TARGET_CYAN, 0f);
+            String modeLabel = viewModeBadge(snap.viewMode());
+            StringBuilder sub = new StringBuilder();
+            if (!snap.targetName().isEmpty()) {
+                sub.append(snap.targetName()).append("  ·  ");
+            }
+            sub.append(modeLabel);
+            if (!snap.subHeader().isEmpty()) {
+                sub.append("  ·  ").append(snap.subHeader());
+            } else {
+                sub.append("  ·  ").append(CoopUiLang.tr(
+                        "Click to vote · ESC to leave",
+                        "Нажмите для голоса · ESC — выйти"));
+            }
+            LabelAPI subtitle = header.addPara(sub.toString(), TARGET_CYAN, 0f);
             subtitle.setAlignment(Alignment.MID);
-            subtitle.getPosition().setSize(PANEL_W - 180f, 20f);
+            subtitle.getPosition().setSize(PANEL_W - 190f, 20f);
             subtitle.getPosition().inTMid(36f);
 
             ButtonAPI closeBtn = header.addButton(CoopUiLang.tr("Leave", "Выйти"), ID_CLOSE,
-                    OPT_TEXT, OPT_BG, Alignment.MID, CutStyle.ALL, 76f, 24f, 0f);
-            closeBtn.getPosition().inTR(14f, 14f);
+                    OPT_TEXT, OPT_BG, Alignment.MID, CutStyle.ALL, 78f, 24f, 0f);
+            closeBtn.getPosition().inTR(14f, 16f);
             closeBtn.setShortcut(Keyboard.KEY_ESCAPE, true);
             panel.addUIElement(header).inTL(0f, 0f);
 
-            // 2. Scrollable dialog text area
             float pad = 18f;
             float innerW = PANEL_W - pad * 2f;
-            int optCount = snap.options().size();
-            float optionsH = Math.min(240f, Math.max(88f, optCount * 34f + 36f));
-            float textH = PANEL_H - headerH - optionsH - 18f;
+            float bodyY = headerH + 6f;
+            float bodyH = PANEL_H - bodyY - 14f;
 
-            TooltipMakerAPI textUi = panel.createUIElement(innerW, textH, true);
-            if (snap.paragraphs().isEmpty()) {
-                textUi.addPara(CoopUiLang.tr("Waiting for dialog text...", "Ожидание текста диалога..."),
-                        MUTED, 6f);
+            if ("TRADE".equals(snap.viewMode())) {
+                buildTradeView(panel, snap, pad, innerW, bodyY, bodyH);
+            } else if ("COMM".equals(snap.viewMode())) {
+                buildCommDirectoryView(panel, snap, pad, innerW, bodyY, bodyH);
             } else {
-                float pPad = 4f;
-                for (String para : snap.paragraphs()) {
-                    textUi.addPara(para, BODY_TEXT, pPad);
-                    pPad = 8f;
-                }
+                buildStandardDialogView(panel, snap, pad, innerW, bodyY, bodyH);
             }
-            panel.addUIElement(textUi).inTL(pad, headerH + 4f);
-
-            // 3. Clickable mirrored options + hover & BG3 vote markers
-            TooltipMakerAPI optUi = panel.createUIElement(innerW, optionsH, true);
-            optUi.addSectionHeading(
-                    CoopUiLang.tr("Choices (click to vote for a reply)",
-                            "Варианты ответа (нажмите, чтобы посоветовать)"),
-                    HEADER_GREEN, new Color(18, 46, 36), Alignment.MID, 0f);
-
-            int localVote = state.localVotedIndexFor(snap.dialogId());
-            int activeVote = localVote >= 0 ? localVote : snap.votedOptionIndex();
-            for (int i = 0; i < snap.options().size(); i++) {
-                CoopDialogSpectatorState.OptionView opt = snap.options().get(i);
-                boolean hovered = i == snap.hoveredOptionIndex();
-                boolean voted = i == activeVote;
-
-                StringBuilder label = new StringBuilder();
-                if (hovered) {
-                    label.append("> ");
-                }
-                if (voted) {
-                    label.append(CoopUiLang.tr("[VOTE] ", "[ГОЛОС] "));
-                }
-                label.append(i + 1).append(". ").append(opt.text());
-                if (hovered) {
-                    label.append(CoopUiLang.tr("  <-- " + snap.speakerName(),
-                            "  <-- " + snap.speakerName()));
-                }
-
-                Color fg = !opt.enabled() ? OPT_DISABLED_TEXT
-                        : voted ? OPT_VOTE_TEXT
-                        : hovered ? OPT_HOVER_TEXT : OPT_TEXT;
-                Color bg = voted ? OPT_VOTE_BG
-                        : hovered ? OPT_HOVER_BG : OPT_BG;
-
-                ButtonAPI btn = optUi.addButton(label.toString(), ID_VOTE_PREFIX + i,
-                        fg, bg, Alignment.LMID, CutStyle.ALL, innerW - 14f, 26f, 6f);
-                btn.setEnabled(opt.enabled());
-            }
-            if (snap.options().isEmpty()) {
-                optUi.addPara(CoopUiLang.tr("No choices shown yet.", "Варианты ответа пока не отображаются."),
-                        MUTED, 8f);
-            }
-            panel.addUIElement(optUi).inTL(pad, headerH + textH + 10f);
         } catch (Throwable ex) {
             CoopLog.warn(CoopDialogSpectatorPlugin.class, "Could not render dialog spectator window", ex);
         }
+    }
+
+    private void buildTradeView(CustomPanelAPI panel, CoopDialogSpectatorState.SyncPayload snap,
+                                float pad, float innerW, float bodyY, float bodyH) {
+        TooltipMakerAPI tradeUi = panel.createUIElement(innerW, bodyH, true);
+        tradeUi.addSectionHeading(
+                CoopUiLang.tr("Market Trade — click any commodity to recommend",
+                        "Окно торговли — нажмите на товар, чтобы посоветовать"),
+                HEADER_GREEN, new Color(18, 46, 36), Alignment.MID, 0f);
+
+        int localVote = state.localVotedIndexFor(snap.dialogId());
+        int activeVote = localVote >= 0 ? localVote : snap.votedOptionIndex();
+
+        if (snap.tradeItems().isEmpty()) {
+            tradeUi.addPara(CoopUiLang.tr(
+                    "The partner has the trade screen open (no commodities listed in this market).",
+                    "Напарник открыл окно торговли (товары на этом рынке не найдены)."),
+                    MUTED, 10f);
+        } else {
+            String lastSub = "";
+            for (int i = 0; i < snap.tradeItems().size(); i++) {
+                CoopDialogSpectatorState.TradeItemView item = snap.tradeItems().get(i);
+                if (!item.submarket().isEmpty() && !item.submarket().equals(lastSub)) {
+                    lastSub = item.submarket();
+                    tradeUi.addPara(lastSub, TARGET_CYAN, i == 0 ? 6f : 10f);
+                }
+                boolean voted = i == activeVote;
+                String sprite = commodityIcon(item.commodityId());
+                if (!sprite.isEmpty()) {
+                    TooltipMakerAPI row = tradeUi.beginImageWithText(sprite, 26f);
+                    String qtyText = item.qty() + CoopUiLang.tr(" units", " ед.");
+                    String buyText = item.buyPrice() + "¢";
+                    String sellText = item.sellPrice() + "¢";
+                    String line = (voted ? CoopUiLang.tr("[VOTE] ", "[ГОЛОС] ") : "")
+                            + item.name() + "  —  " + qtyText
+                            + "  |  " + CoopUiLang.tr("Buy: ", "Покупка: ") + buyText
+                            + "  ·  " + CoopUiLang.tr("Sell: ", "Продажа: ") + sellText;
+                    row.addPara(line, 2f, voted ? OPT_VOTE_TEXT : BODY_TEXT, HIGHLIGHT_GOLD,
+                            qtyText, buyText, sellText);
+                    tradeUi.addImageWithText(4f);
+                } else {
+                    String qtyText = item.qty() + CoopUiLang.tr(" units", " ед.");
+                    String buyText = item.buyPrice() + "¢";
+                    String sellText = item.sellPrice() + "¢";
+                    tradeUi.addPara(item.name() + " — " + qtyText + " | " + buyText + " / " + sellText,
+                            4f, BODY_TEXT, HIGHLIGHT_GOLD, qtyText, buyText, sellText);
+                }
+                if (i < snap.options().size()) {
+                    ButtonAPI voteBtn = tradeUi.addButton(
+                            (voted ? CoopUiLang.tr("[VOTED] ", "[ГОЛОС] ") : CoopUiLang.tr("Suggest: ", "Советовать: "))
+                                    + item.name() + " (" + item.buyPrice() + "¢)",
+                            ID_VOTE_PREFIX + i,
+                            voted ? OPT_VOTE_TEXT : OPT_TEXT,
+                            voted ? OPT_VOTE_BG : OPT_BG,
+                            Alignment.LMID, CutStyle.ALL, 260f, 20f, 2f);
+                    voteBtn.setEnabled(true);
+                }
+            }
+        }
+        panel.addUIElement(tradeUi).inTL(pad, bodyY);
+    }
+
+    private void buildCommDirectoryView(CustomPanelAPI panel, CoopDialogSpectatorState.SyncPayload snap,
+                                        float pad, float innerW, float bodyY, float bodyH) {
+        TooltipMakerAPI commUi = panel.createUIElement(innerW, bodyH, true);
+        commUi.addSectionHeading(
+                CoopUiLang.tr("Comm Directory — click any NPC to recommend",
+                        "Каталог коммуникаций — нажмите на персонажа, чтобы посоветовать"),
+                HEADER_GREEN, new Color(18, 46, 36), Alignment.MID, 0f);
+
+        int localVote = state.localVotedIndexFor(snap.dialogId());
+        int activeVote = localVote >= 0 ? localVote : snap.votedOptionIndex();
+
+        if (snap.commEntries().isEmpty()) {
+            if (snap.paragraphs().isEmpty()) {
+                commUi.addPara(CoopUiLang.tr("No contacts available in this Comm Directory.",
+                        "В каталоге коммуникаций нет доступных контактов."), MUTED, 10f);
+            } else {
+                for (String p : snap.paragraphs()) {
+                    addHighlightedPara(commUi, p, 6f);
+                }
+            }
+        } else {
+            for (int i = 0; i < snap.commEntries().size(); i++) {
+                CoopDialogSpectatorState.CommEntryView entry = snap.commEntries().get(i);
+                boolean hovered = i == snap.hoveredOptionIndex();
+                boolean voted = i == activeVote;
+
+                String portrait = entry.portraitSprite();
+                if (!portrait.isEmpty()) {
+                    try {
+                        TooltipMakerAPI row = commUi.beginImageWithText(portrait, 40f);
+                        String titleLine = (hovered ? "> " : "")
+                                + (voted ? CoopUiLang.tr("[VOTE] ", "[ГОЛОС] ") : "")
+                                + entry.name()
+                                + (hovered ? "  <-- " + snap.speakerName() : "");
+                        row.addPara(titleLine, voted ? OPT_VOTE_TEXT : (hovered ? OPT_HOVER_TEXT : HEADER_GREEN), 2f);
+                        String meta = entry.post()
+                                + (!entry.post().isEmpty() && !entry.faction().isEmpty() ? "  ·  " : "")
+                                + entry.faction();
+                        if (!meta.isEmpty()) {
+                            row.addPara(meta, TARGET_CYAN, 2f);
+                        }
+                        commUi.addImageWithText(8f);
+                    } catch (Throwable ignored) {
+                        commUi.addPara(entry.name() + " — " + entry.post(), BODY_TEXT, 6f);
+                    }
+                } else {
+                    commUi.addPara(entry.name() + (entry.post().isEmpty() ? "" : " — " + entry.post()),
+                            hovered ? OPT_HOVER_TEXT : BODY_TEXT, 8f);
+                }
+
+                ButtonAPI btn = commUi.addButton(
+                        (voted ? CoopUiLang.tr("[VOTED] Talk to ", "[ГОЛОС] Поговорить с ")
+                                : CoopUiLang.tr("Suggest: Talk to ", "Посоветовать: ")) + entry.name(),
+                        ID_VOTE_PREFIX + i,
+                        voted ? OPT_VOTE_TEXT : (hovered ? OPT_HOVER_TEXT : OPT_TEXT),
+                        voted ? OPT_VOTE_BG : (hovered ? OPT_HOVER_BG : OPT_BG),
+                        Alignment.LMID, CutStyle.ALL, innerW - 18f, 22f, 3f);
+                btn.setEnabled(true);
+            }
+        }
+        panel.addUIElement(commUi).inTL(pad, bodyY);
+    }
+
+    private void buildStandardDialogView(CustomPanelAPI panel, CoopDialogSpectatorState.SyncPayload snap,
+                                         float pad, float innerW, float bodyY, float bodyH) {
+        int optCount = snap.options().size();
+        float optionsH = Math.min(244f, Math.max(92f, optCount * 34f + 36f));
+        float textH = bodyH - optionsH - 10f;
+
+        // Scrollable dialog text area with numeric highlights + mentioned commodity icons + auto-scroll to bottom
+        TooltipMakerAPI textUi = panel.createUIElement(innerW, textH, true);
+        if (snap.paragraphs().isEmpty()) {
+            textUi.addPara(CoopUiLang.tr("Waiting for dialog text...", "Ожидание текста диалога..."),
+                    MUTED, 6f);
+        } else {
+            float pPad = 4f;
+            for (String para : snap.paragraphs()) {
+                addHighlightedPara(textUi, para, pPad);
+                pPad = 8f;
+            }
+        }
+        panel.addUIElement(textUi).inTL(pad, bodyY);
+
+        // Auto-scroll to the latest lines (fixes bar/quest dialog not scrolling down!)
+        try {
+            ScrollPanelAPI scroller = textUi.getExternalScroller();
+            if (scroller != null) {
+                float contentH = textUi.getHeightSoFar();
+                if (contentH > textH) {
+                    scroller.setYOffset(Math.max(0f, contentH - textH + 12f));
+                }
+                scroller.scrollToBottom();
+            }
+        } catch (Throwable ignored) {
+        }
+
+        // Clickable mirrored options + hover & BG3 vote markers
+        TooltipMakerAPI optUi = panel.createUIElement(innerW, optionsH, true);
+        optUi.addSectionHeading(
+                CoopUiLang.tr("Choices (click to vote for a reply)",
+                        "Варианты ответа (нажмите, чтобы посоветовать)"),
+                HEADER_GREEN, new Color(18, 46, 36), Alignment.MID, 0f);
+
+        int localVote = state.localVotedIndexFor(snap.dialogId());
+        int activeVote = localVote >= 0 ? localVote : snap.votedOptionIndex();
+        for (int i = 0; i < snap.options().size(); i++) {
+            CoopDialogSpectatorState.OptionView opt = snap.options().get(i);
+            boolean hovered = i == snap.hoveredOptionIndex();
+            boolean voted = i == activeVote;
+
+            StringBuilder label = new StringBuilder();
+            if (hovered) {
+                label.append("> ");
+            }
+            if (voted) {
+                label.append(CoopUiLang.tr("[VOTE] ", "[ГОЛОС] "));
+            }
+            label.append(i + 1).append(". ").append(opt.text());
+            if (hovered) {
+                label.append("  <-- ").append(snap.speakerName());
+            }
+
+            Color fg = !opt.enabled() ? OPT_DISABLED_TEXT
+                    : voted ? OPT_VOTE_TEXT
+                    : hovered ? OPT_HOVER_TEXT : OPT_TEXT;
+            Color bg = voted ? OPT_VOTE_BG
+                    : hovered ? OPT_HOVER_BG : OPT_BG;
+
+            ButtonAPI btn = optUi.addButton(label.toString(), ID_VOTE_PREFIX + i,
+                    fg, bg, Alignment.LMID, CutStyle.ALL, innerW - 14f, 26f, 6f);
+            btn.setEnabled(opt.enabled());
+        }
+        if (snap.options().isEmpty()) {
+            optUi.addPara(CoopUiLang.tr("No choices shown yet.", "Варианты ответа пока не отображаются."),
+                    MUTED, 8f);
+        }
+        panel.addUIElement(optUi).inTL(pad, bodyY + textH + 10f);
+    }
+
+    /**
+     * Renders a dialog paragraph with gold highlights on numbers (days, cost, units, %) and
+     * commodity names, plus compact inline native commodity icons when commodities are mentioned.
+     */
+    private void addHighlightedPara(TooltipMakerAPI ui, String text, float pad) {
+        List<String> highlights = new ArrayList<>(CoopDialogSpectatorState.extractNumberHighlights(text));
+        List<CommoditySpecAPI> mentioned = findMentionedCommodities(text);
+        for (CommoditySpecAPI spec : mentioned) {
+            if (spec.getName() != null && !spec.getName().isEmpty()) {
+                highlights.add(spec.getName());
+            }
+        }
+        if (highlights.isEmpty()) {
+            ui.addPara(text, BODY_TEXT, pad);
+        } else {
+            ui.addPara(text, pad, BODY_TEXT, HIGHLIGHT_GOLD, highlights.toArray(new String[0]));
+        }
+        // Render native commodity icons mentioned in this paragraph (up to 4 icons per paragraph)
+        if (!mentioned.isEmpty()) {
+            int limit = Math.min(4, mentioned.size());
+            for (int i = 0; i < limit; i++) {
+                CommoditySpecAPI spec = mentioned.get(i);
+                String icon = spec.getIconName();
+                if (icon != null && !icon.isEmpty()) {
+                    try {
+                        TooltipMakerAPI row = ui.beginImageWithText(icon, 20f);
+                        String priceHint = Math.round(spec.getBasePrice()) + "¢";
+                        row.addPara(spec.getName() + " (" + priceHint + ")", 1f, TARGET_CYAN, HIGHLIGHT_GOLD, priceHint);
+                        ui.addImageWithText(3f);
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }
+        }
+    }
+
+    private List<CommoditySpecAPI> findMentionedCommodities(String text) {
+        if (text == null || text.length() < 3) {
+            return List.of();
+        }
+        ensureCommodityCache();
+        if (commodityByLowerName == null || commodityByLowerName.isEmpty()) {
+            return List.of();
+        }
+        String lower = text.toLowerCase(Locale.ROOT);
+        Set<String> addedIds = new LinkedHashSet<>();
+        List<CommoditySpecAPI> out = new ArrayList<>();
+        for (Map.Entry<String, CommoditySpecAPI> e : commodityByLowerName.entrySet()) {
+            String key = e.getKey();
+            if (key.length() < 4) {
+                continue;
+            }
+            if (lower.contains(key)) {
+                CommoditySpecAPI spec = e.getValue();
+                if (addedIds.add(spec.getId())) {
+                    out.add(spec);
+                    if (out.size() >= 4) {
+                        break;
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    private void ensureCommodityCache() {
+        if (commodityByLowerName != null) {
+            return;
+        }
+        Map<String, CommoditySpecAPI> map = new LinkedHashMap<>();
+        try {
+            for (CommoditySpecAPI spec : Global.getSettings().getAllCommoditySpecs()) {
+                if (spec == null || spec.getId() == null || spec.getName() == null) {
+                    continue;
+                }
+                if (spec.isMeta() || spec.isNonEcon()) {
+                    continue;
+                }
+                String name = spec.getName().trim().toLowerCase(Locale.ROOT);
+                if (name.length() >= 4) {
+                    map.putIfAbsent(name, spec);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        commodityByLowerName = map;
+    }
+
+    private static String commodityIcon(String commodityId) {
+        if (commodityId == null || commodityId.isEmpty()) {
+            return "";
+        }
+        try {
+            CommoditySpecAPI spec = Global.getSettings().getCommoditySpec(commodityId);
+            return spec == null || spec.getIconName() == null ? "" : spec.getIconName();
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    private static String viewModeBadge(String viewMode) {
+        return switch (viewMode == null ? "DIALOG" : viewMode) {
+            case "TRADE" -> CoopUiLang.tr("Trade / Market", "Торговля / Рынок");
+            case "COMM" -> CoopUiLang.tr("Comm Directory", "Каталог коммуникаций");
+            case "FLEET" -> CoopUiLang.tr("Fleet screen", "Экран флота");
+            case "REFIT" -> CoopUiLang.tr("Refit screen", "Переоборудование");
+            default -> CoopUiLang.tr("Live dialog", "Прямой эфир");
+        };
     }
 
     @Override
@@ -262,16 +539,14 @@ public final class CoopDialogSpectatorPlugin implements InteractionDialogPlugin,
         @Override
         public void renderBelow(float alphaMult) {
             CoopTitleScreenOverlay.drawRect(px, py, pw, ph, 0.04f, 0.08f, 0.13f, 0.96f * alphaMult);
-            // Header band
-            CoopTitleScreenOverlay.drawRect(px, py + ph - 62f, pw, 62f, 0.06f, 0.16f, 0.14f, 0.95f * alphaMult);
+            CoopTitleScreenOverlay.drawRect(px, py + ph - 64f, pw, 64f, 0.06f, 0.16f, 0.14f, 0.95f * alphaMult);
             CoopTitleScreenOverlay.drawBorder(px, py, pw, ph, 0.28f, 0.88f, 0.51f, 0.95f * alphaMult);
         }
 
         @Override
         public void render(float alphaMult) {
-            // Draw the speaking partner's live mouse cursor over the mirrored dialog
             float cx = px + 14f + smoothCursorX * Math.max(1f, pw - 28f);
-            float cy = py + 14f + smoothCursorY * Math.max(1f, ph - 76f);
+            float cy = py + 14f + smoothCursorY * Math.max(1f, ph - 78f);
             drawPartnerCursor(cx, cy, alphaMult);
         }
 
@@ -319,7 +594,6 @@ public final class CoopDialogSpectatorPlugin implements InteractionDialogPlugin,
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
 
-        // Pointer triangle (tip at (x, y), pointing up-left like a desktop cursor)
         GL11.glColor4f(0.43f, 1.0f, 0.65f, 0.95f * alpha);
         GL11.glBegin(GL11.GL_TRIANGLES);
         GL11.glVertex2f(x, y);
@@ -335,7 +609,6 @@ public final class CoopDialogSpectatorPlugin implements InteractionDialogPlugin,
         GL11.glVertex2f(x + 4f, y - 17f);
         GL11.glEnd();
 
-        // Name tag pill next to cursor
         if (!currentSpeakerName.isEmpty()) {
             ensureCursorFont();
             if (cursorFont != null) {

@@ -34,18 +34,25 @@ class CoopDialogSpectatorTest {
     }
 
     @Test
-    void syncPayloadRoundTripsJsonWithCursorHoverAndVote() {
+    void syncPayloadRoundTripsDialogTradeAndCommViews() {
         CoopDialogSpectatorState.SyncPayload original = new CoopDialogSpectatorState.SyncPayload(
                 "host-dlg-7",
                 "host-id",
                 "Commander Artur",
+                "corvus",
+                "TRADE",
                 true,
                 "Jangala",
-                List.of("The station comm officer greets your fleet.", "A bounty broker waves from the bar."),
+                "125 000¢ · 420 / 600",
+                List.of("The station comm officer greets your fleet."),
                 List.of(
-                        new CoopDialogSpectatorState.OptionView("Open the comm directory", true),
-                        new CoopDialogSpectatorState.OptionView("Visit the bar", true),
-                        new CoopDialogSpectatorState.OptionView("Demand tribute", false)),
+                        new CoopDialogSpectatorState.OptionView("Топливо (320) · 24¢ / 19¢", true),
+                        new CoopDialogSpectatorState.OptionView("Припасы (150) · 98¢ / 82¢", true)),
+                List.of(
+                        new CoopDialogSpectatorState.TradeItemView("fuel", "Топливо", 320, 24, 19, "Открытый рынок"),
+                        new CoopDialogSpectatorState.TradeItemView("supplies", "Припасы", 150, 98, 82, "Открытый рынок")),
+                List.of(
+                        new CoopDialogSpectatorState.CommEntryView("Артём", "Комендант станции", "Гегемония", "graphics/portraits/portrait_hegemony01.png")),
                 1,
                 0.375f,
                 0.625f,
@@ -57,19 +64,61 @@ class CoopDialogSpectatorTest {
 
         assertNotNull(decoded);
         assertEquals("host-dlg-7", decoded.dialogId());
-        assertEquals("host-id", decoded.speakerId());
-        assertEquals("Commander Artur", decoded.speakerName());
-        assertTrue(decoded.open());
-        assertEquals("Jangala", decoded.targetName());
-        assertEquals(2, decoded.paragraphs().size());
-        assertEquals(3, decoded.options().size());
-        assertEquals("Visit the bar", decoded.options().get(1).text());
-        assertFalse(decoded.options().get(2).enabled());
-        assertEquals(1, decoded.hoveredOptionIndex());
-        assertEquals(0.375f, decoded.cursorNormX(), 0.002f);
-        assertEquals(0.625f, decoded.cursorNormY(), 0.002f);
-        assertEquals(1, decoded.votedOptionIndex());
-        assertEquals("Alex", decoded.voterName());
+        assertEquals("corvus", decoded.locationId());
+        assertEquals("TRADE", decoded.viewMode());
+        assertEquals("125 000¢ · 420 / 600", decoded.subHeader());
+        assertEquals(2, decoded.tradeItems().size());
+        assertEquals("fuel", decoded.tradeItems().get(0).commodityId());
+        assertEquals(320, decoded.tradeItems().get(0).qty());
+        assertEquals(24, decoded.tradeItems().get(0).buyPrice());
+        assertEquals(1, decoded.commEntries().size());
+        assertEquals("Артём", decoded.commEntries().get(0).name());
+        assertEquals("graphics/portraits/portrait_hegemony01.png", decoded.commEntries().get(0).portraitSprite());
+    }
+
+    @Test
+    void sameStarSystemGateBlocksDifferentSystemsAndHyperspace() {
+        CoopDialogSpectatorState state = new CoopDialogSpectatorState();
+        CoopDialogSpectatorState.SyncPayload inCorvus = new CoopDialogSpectatorState.SyncPayload(
+                "dlg-1", "p1", "Host", "corvus", "DIALOG", true, "Jangala", "",
+                List.of("Hello"),
+                List.of(new CoopDialogSpectatorState.OptionView("Hi", true)),
+                List.of(), List.of(),
+                -1, 0.5f, 0.5f, -1, "");
+        state.applyRemoteSync(inCorvus);
+
+        // Same star system -> opens!
+        assertTrue(state.shouldAutoOpenSpectator("corvus"));
+        // Different star system -> NEVER opens!
+        assertFalse(state.shouldAutoOpenSpectator("askonia"));
+        // Local player in hyperspace (empty system id) -> NEVER opens!
+        assertFalse(state.shouldAutoOpenSpectator(""));
+        assertFalse(state.shouldAutoOpenSpectator(null));
+
+        // Speaker in hyperspace (empty locationId) -> NEVER opens even if local is in a system!
+        CoopDialogSpectatorState.SyncPayload inHyper = new CoopDialogSpectatorState.SyncPayload(
+                "dlg-2", "p1", "Host", "", "DIALOG", true, "Hyperspace", "",
+                List.of("Anomaly"), List.of(), List.of(), List.of(),
+                -1, 0.5f, 0.5f, -1, "");
+        state.applyRemoteSync(inHyper);
+        assertFalse(state.shouldAutoOpenSpectator("corvus"));
+        assertFalse(state.shouldAutoOpenSpectator(""));
+    }
+
+    @Test
+    void extractNumberHighlightsFindsCreditsDaysUnitsAndPercents() {
+        String ruText = "Доставьте 240 ед. припасов за 15 дней и получите 12 500¢ (+25% к цене).";
+        List<String> ru = CoopDialogSpectatorState.extractNumberHighlights(ruText);
+        assertTrue(ru.contains("240 ед."), "Expected units highlight, got " + ru);
+        assertTrue(ru.contains("15 дней"), "Expected days highlight, got " + ru);
+        assertTrue(ru.contains("12 500¢"), "Expected cost highlight, got " + ru);
+        assertTrue(ru.contains("+25%"), "Expected percent highlight, got " + ru);
+
+        String enText = "Deliver 150 units within 30 days for 50,000 credits.";
+        List<String> en = CoopDialogSpectatorState.extractNumberHighlights(enText);
+        assertTrue(en.contains("150 units"), "Expected EN units highlight, got " + en);
+        assertTrue(en.contains("30 days"), "Expected EN days highlight, got " + en);
+        assertTrue(en.contains("50,000 credits"), "Expected EN credits highlight, got " + en);
     }
 
     @Test
@@ -96,29 +145,32 @@ class CoopDialogSpectatorTest {
     void autoPullRespectsManualDismissPerDialogIdAndResumesForNextDialog() {
         CoopDialogSpectatorState state = new CoopDialogSpectatorState();
         CoopDialogSpectatorState.SyncPayload dlg1 = new CoopDialogSpectatorState.SyncPayload(
-                "dlg-1", "p1", "Host", true, "Corvus", List.of("Hello"),
+                "dlg-1", "p1", "Host", "corvus", "DIALOG", true, "Corvus", "",
+                List.of("Hello"),
                 List.of(new CoopDialogSpectatorState.OptionView("Hi", true)),
+                List.of(), List.of(),
                 -1, 0.5f, 0.5f, -1, "");
         state.applyRemoteSync(dlg1);
-        assertTrue(state.shouldAutoOpenSpectator());
+        assertTrue(state.shouldAutoOpenSpectator("corvus"));
 
-        // User closes spectator manually -> never auto-reopens for dlg-1
         state.markDismissedByUser("dlg-1");
-        assertFalse(state.shouldAutoOpenSpectator());
+        assertFalse(state.shouldAutoOpenSpectator("corvus"));
         state.applyRemoteSync(dlg1);
-        assertFalse(state.shouldAutoOpenSpectator());
+        assertFalse(state.shouldAutoOpenSpectator("corvus"));
 
-        // Speaker closes dlg-1 and opens dlg-2 -> auto-pulls again
         state.applyRemoteSync(new CoopDialogSpectatorState.SyncPayload(
-                "dlg-1", "p1", "Host", false, "", List.of(), List.of(), -1, 0.5f, 0.5f, -1, ""));
+                "dlg-1", "p1", "Host", "corvus", "DIALOG", false, "", "",
+                List.of(), List.of(), List.of(), List.of(), -1, 0.5f, 0.5f, -1, ""));
         assertNull(state.activeRemoteDialog());
 
         CoopDialogSpectatorState.SyncPayload dlg2 = new CoopDialogSpectatorState.SyncPayload(
-                "dlg-2", "p1", "Host", true, "Kazeron", List.of("New encounter"),
+                "dlg-2", "p1", "Host", "corvus", "DIALOG", true, "Kazeron", "",
+                List.of("New encounter"),
                 List.of(new CoopDialogSpectatorState.OptionView("Hail", true)),
+                List.of(), List.of(),
                 0, 0.2f, 0.8f, -1, "");
         state.applyRemoteSync(dlg2);
-        assertTrue(state.shouldAutoOpenSpectator());
+        assertTrue(state.shouldAutoOpenSpectator("corvus"));
     }
 
     @Test
@@ -141,7 +193,6 @@ class CoopDialogSpectatorTest {
         assertFalse(CoopDialogSpectatorState.isSpectatablePlugin(internal));
         assertFalse(CoopDialogSpectatorState.isSpectatablePlugin(null));
 
-        // Anonymous test plugin lives in coop.ui, so check class-name rule explicitly:
         InteractionDialogPlugin dummyInCoopUi = new InteractionDialogPlugin() {
             @Override public void init(InteractionDialogAPI dialog) {}
             @Override public void optionSelected(String optionText, Object optionData) {}
