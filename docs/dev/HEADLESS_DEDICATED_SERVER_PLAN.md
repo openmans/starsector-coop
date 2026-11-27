@@ -1,5 +1,13 @@
 # План реализации Headless Dedicated Server без OpenGL (`Null-LWJGL` шим)
 
+> **Статус: реализовано в 0.2.20.** Что именно сделано, чем отличается от плана и как это
+> проверялось — `docs/dev/HEADLESS_DEDICATED_SERVER.md`. Полный список членов `org.lwjgl`,
+> которые обязана покрыть заглушка — `docs/dev/HEADLESS_LWJGL_AUDIT.md`.
+> Отличия от плана: точка входа стартует через `StarfarerLauncher` (преамбула настроек и модов
+> нужна движку), а `CombatMain` подменён шимом, потому что лаунчер всегда передаёт три аргумента и
+> реальный класс на этом пути упирается в `Toolkit.getScreenSize()`; класс
+> `com.fs.starfarer.launcher.ooOO…` пропатчен в байткоде по той же причине.
+
 **Дата:** 2026-11-27  
 **Репозиторий:** `starsector-coop` (ветка `port/rc9`, целевая версия движка `0.98.5a-RC9`)  
 **Предыдущий этап (`v0.2.19`):** режим `-Dcoop.dedicatedHost=true` уже реализован в `CoopNetPump` / `CoopSharedPauseCoordinator` / `CoopTitleScreenOverlay` / `CoopTitleScreenBridge` (`coop_vault`, живой мир в бою `1x`, авто-пауза без игроков, 4+ слотов, автозагрузка последнего сейва, автосохранение каждые 10 мин).  
