@@ -24,7 +24,7 @@ import java.util.function.Consumer;
  *   <li>Decline (stay out of this battle)</li>
  * </ul>
  */
-public final class CoopAllyJoinDialogPlugin implements InteractionDialogPlugin {
+public final class CoopAllyJoinDialogPlugin implements InteractionDialogPlugin, CoopDismissableDialog {
 
     private final JoinOffer offer;
     private final Consumer<JoinChoice> onDecision;
@@ -76,6 +76,16 @@ public final class CoopAllyJoinDialogPlugin implements InteractionDialogPlugin {
             dialog.dismiss();
         }
         onDecision.accept(choice);
+    }
+
+    @Override
+    public void close() {
+        if (dialog != null) {
+            try {
+                dialog.dismiss();
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     @Override

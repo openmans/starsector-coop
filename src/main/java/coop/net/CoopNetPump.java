@@ -5436,6 +5436,8 @@ public class CoopNetPump implements EveryFrameScript {
             CoopMessages.Type type = msg.type();
             if (type == CoopMessages.Type.BATTLE_ORDER) {
                 battleBridge.handleCombatOrder(engine, msg);
+            } else if (type == CoopMessages.Type.ALLY_JOIN_REPLY) {
+                handleMidBattleAllyJoinReply(engine, msg);
             } else if (type == CoopMessages.Type.STATE_DATAGRAM) {
                 String wrapped = CoopMessages.parseStateDatagram(msg);
                 if (wrapped != null && !wrapped.isEmpty()) {
@@ -10260,6 +10262,7 @@ public class CoopNetPump implements EveryFrameScript {
 
     private void onLocalAllyJoinDecision(coop.combat.CoopAllyReinforceCoordinator.JoinOffer offer,
                                          coop.combat.CoopAllyReinforceCoordinator.JoinChoice choice) {
+        allyJoinDialogs.close();
         allyReinforce.noteLocalChoice(choice);
         String localId = sessionState.localPlayerId();
         coop.combat.CoopAllyReinforceCoordinator.JoinReply reply =
@@ -10337,6 +10340,125 @@ public class CoopNetPump implements EveryFrameScript {
             }
         } catch (RuntimeException | LinkageError ex) {
             CoopLog.warn(CoopNetPump.class, "Failed to handle ALLY_JOIN_REPLY", ex);
+        }
+    }
+
+    /**
+     * Handles {@code ALLY_JOIN_REPLY} arriving AFTER the fighter has already clicked into combat:
+     * hot-deploys the partner's mirrored ships onto Side 0 if they weren't pulled in before start,
+     * and arms {@link coop.combat.live.CoopLiveCombatAuthority} so the partner joins live mid-battle.
+     */
+    private void handleMidBattleAllyJoinReply(com.fs.starfarer.api.combat.CombatEngineAPI engine,
+                                              CoopMessages.Message message) {
+        if (engine == null || droppedBeforeTheSession(message.type())) {
+            return;
+        }
+        try {
+            coop.combat.CoopAllyReinforceCoordinator.JoinReply reply =
+                    coop.combat.CoopAllyReinforceCoordinator.decodeReply(CoopMessages.parseBody(message));
+            if (reply == null) {
+                return;
+            }
+            allyReinforce.consumeOutgoingOffer(reply.offerId());
+            if (!reply.choice().joinsBattle()) {
+                return;
+            }
+            String partnerId = reply.partnerPlayerId().isEmpty()
+                    ? (message.senderId() == null ? sessionState.remotePlayerId() : message.senderId())
+                    : reply.partnerPlayerId();
+            String partnerName = sessionState.guestDisplayName(partnerId);
+
+            // Check whether partner's allied ships are already deployed in this battle
+            boolean hasAlliedShip = false;
+            java.util.List<com.fs.starfarer.api.combat.ShipAPI> existing = engine.getShips();
+            if (existing != null) {
+                for (com.fs.starfarer.api.combat.ShipAPI s : existing) {
+                    if (s != null && s.getOwner() == 0 && s.isAlly() && !s.isFighter()) {
+                        hasAlliedShip = true;
+                        break;
+                    }
+                }
+            }
+
+            // If fighter entered combat before partner clicked Join, hot-deploy partner's mirror ships now
+            if (!hasAlliedShip) {
+                hotDeployPartnerMirrorIntoCombat(engine, partnerId);
+            }
+
+            if (reply.choice() == coop.combat.CoopAllyReinforceCoordinator.JoinChoice.JOIN_LIVE_COMBAT) {
+                liveCombatSession.armAuthorityForPartner(partnerId, partnerName);
+                try {
+                    if (engine.getCombatUI() != null) {
+                        engine.getCombatUI().addMessage(0,
+                                com.fs.starfarer.api.util.Misc.getPositiveHighlightColor(),
+                                coop.ui.CoopUiLang.tr(
+                                        partnerName + " joined live combat!",
+                                        partnerName + " подключился к живому бою!"));
+                    }
+                } catch (RuntimeException | LinkageError ignored) {
+                }
+            }
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to handle mid-battle ALLY_JOIN_REPLY", ex);
+        }
+    }
+
+    private void hotDeployPartnerMirrorIntoCombat(com.fs.starfarer.api.combat.CombatEngineAPI engine,
+                                                  String partnerId) {
+        try {
+            SectorAPI sector = Global.getSector();
+            CampaignFleetAPI player = sector == null ? null : sector.getPlayerFleet();
+            if (player == null || player.getContainingLocation() == null) {
+                return;
+            }
+            CampaignFleetAPI partnerMirror = null;
+            for (CampaignFleetAPI f : player.getContainingLocation().getFleets()) {
+                if (f == null || f == player || f.getMemoryWithoutUpdate() == null) {
+                    continue;
+                }
+                if (!f.getMemoryWithoutUpdate().getBoolean(coop.fleet.CoopMirrorTags.PLAYER_MIRROR_TAG)) {
+                    continue;
+                }
+                String ownerId = f.getMemoryWithoutUpdate().getString(
+                        coop.fleet.CoopMirrorTags.PLAYER_MIRROR_OWNER_ID);
+                if (ownerId == null || ownerId.isBlank() || ownerId.equals(partnerId)) {
+                    partnerMirror = f;
+                    break;
+                }
+            }
+            if (partnerMirror == null || partnerMirror.getFleetData() == null) {
+                return;
+            }
+            com.fs.starfarer.api.combat.CombatFleetManagerAPI fm = engine.getFleetManager(0);
+            if (fm == null) {
+                return;
+            }
+            java.util.List<com.fs.starfarer.api.fleet.FleetMemberAPI> members =
+                    partnerMirror.getFleetData().getMembersListCopy();
+            if (members == null || members.isEmpty()) {
+                return;
+            }
+            float spawnY = -(engine.getMapHeight() * 0.42f);
+            int deployed = 0;
+            for (com.fs.starfarer.api.fleet.FleetMemberAPI member : members) {
+                if (member == null || member.isMothballed()) {
+                    continue;
+                }
+                if (deployed >= 10) {
+                    break;
+                }
+                float spawnX = (deployed - 2) * 320f;
+                com.fs.starfarer.api.combat.ShipAPI spawned = fm.spawnFleetMember(
+                        member, new org.lwjgl.util.vector.Vector2f(spawnX, spawnY), 90f, 0f);
+                if (spawned != null) {
+                    spawned.setAlly(true);
+                    deployed++;
+                }
+            }
+            CoopLog.info(CoopNetPump.class, "Coop hot-deployed " + deployed
+                    + " partner mirror ship(s) into ongoing combat for partnerId=" + partnerId);
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Could not hot-deploy partner ships into ongoing combat", ex);
         }
     }
 

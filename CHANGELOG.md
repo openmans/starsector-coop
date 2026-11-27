@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.7 (Mid-battle live co-op hot-join + <700 su Fight Alongside live piloting fix)
+
+- **Seamless mid-battle hot-join into live co-op combat (`ALLY_JOIN_REPLY` during active combat):**
+  if the engaging player clicks into battle before their nearby partner answers the reinforcement
+  prompt, `CoopNetPump.drainCombatInbound` now handles `ALLY_JOIN_REPLY` live inside the running
+  `CombatEngineAPI`, hot-deploys the partner's mirrored ships onto Side 0 (`ship.setAlly(true)`)
+  when they were not pulled in pre-battle, arms `CoopLiveCombatAuthority` immediately, and drops
+  the partner straight into the ongoing battle at the helm of their flagship.
+- **Close-range (`< 700 su`) `Fight Alongside` live-join fix & clean prompt dismissal:**
+  partners already pulled into the battle by vanilla's `700 su` ally radius still receive the
+  interactive `ALLY_JOIN_OFFER` prompt for live real-time piloting, and `allyJoinDialogs.close()`
+  clears cleanly on choice so the dialog controller never re-requests the prompt.
+
 ## 0.2.6 (Native Real-Time Co-op Combat + Direct Player Trade + Pre-Game Lobby)
 
 - **Native Real-Time Co-op Physical Combat (replaces Wingman completely):**
