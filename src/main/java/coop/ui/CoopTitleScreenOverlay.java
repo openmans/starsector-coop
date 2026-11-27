@@ -82,6 +82,8 @@ public final class CoopTitleScreenOverlay {
     private static long dockLastRevision = -1L;
     private static boolean dockLastRussian;
     private static boolean openModalOnNextConnectError;
+    private static boolean pendingOpenLoadGame;
+    private static boolean launchingIntoGame;
     private static CustomPanelAPI modalPanel;
     private static boolean modalOpen;
     private static boolean rebuildPending;
@@ -163,6 +165,11 @@ public final class CoopTitleScreenOverlay {
                 detachAll();
                 attachedScreen = screen;
             }
+            if (launchingIntoGame) {
+                removeModal();
+                removeDock();
+                return;
+            }
 
             boolean vanillaDialogOpen = CoopTitleScreenBridge.isTitleScreenShowingDialog();
             if (vanillaDialogOpen) {
@@ -171,16 +178,12 @@ public final class CoopTitleScreenOverlay {
                 return;
             }
 
-            // If all lobby members were ready and Start Session triggered, drop straight into the game!
-            if (session.consumePendingAutoEnterGame()) {
-                modalOpen = false;
-                removeModal();
-                removeDock();
-                if (CoopTitleScreenBridge.enterGameFromTitleScreen()) {
-                    return;
-                }
-                dockRebuildPending = true;
-            }
+            // NOTE: Never call enterGameFromTitleScreen() or openLoadGameDialog() here!
+            // onTitleFrame() runs inside CoopBattleStatusCombatPlugin.advance() -> CombatEngine.advanceInner().
+            // Calling TitleScreenState.menuItemSelected(Continue) there invokes CampaignEngine.resetInstance() ->
+            // CombatEngine.destroyInstance(), nulling collisionChecker on the CombatEngine frame still on the stack!
+            // Instead, DockPlugin.advance() / ModalPlugin.advance() run inside TitleScreenState.screenPanel.advance()
+            // BEFORE CombatEngine.advance() and safely invoke flushPendingTitleActions().
 
             if (modalOpen) {
                 removeDock();
@@ -218,6 +221,48 @@ public final class CoopTitleScreenOverlay {
         dockRebuildPending = false;
         dockLastRevision = -1L;
         openModalOnNextConnectError = false;
+        pendingOpenLoadGame = false;
+        launchingIntoGame = false;
+    }
+
+    /**
+     * Executes deferred Title Screen actions (Continue/New Game auto-enter and Load Save dialog)
+     * from {@code screenPanel.advance(dt)} — outside {@code CombatEngine.advanceInner()}, so
+     * {@code CampaignEngine.resetInstance()} -> {@code CombatEngine.destroyInstance()} never wipes
+     * an actively executing {@code CombatEngine} frame.
+     */
+    private static void flushPendingTitleActions() {
+        try {
+            if (Global.getCurrentState() != GameState.TITLE) {
+                return;
+            }
+            if (CoopTitleScreenBridge.isTitleScreenShowingDialog()) {
+                return;
+            }
+            if (pendingOpenLoadGame) {
+                pendingOpenLoadGame = false;
+                openModalOnNextConnectError = false;
+                modalOpen = false;
+                removeModal();
+                removeDock();
+                CoopTitleScreenBridge.openLoadGameDialog();
+                return;
+            }
+            CoopInGameLauncherSession session = CoopInGameLauncherSession.shared();
+            if (session.consumePendingAutoEnterGame()) {
+                openModalOnNextConnectError = false;
+                modalOpen = false;
+                removeModal();
+                removeDock();
+                if (CoopTitleScreenBridge.enterGameFromTitleScreen()) {
+                    launchingIntoGame = true;
+                } else {
+                    dockRebuildPending = true;
+                }
+            }
+        } catch (Throwable ex) {
+            CoopLog.warn(CoopTitleScreenOverlay.class, "Title screen deferred action failed", ex);
+        }
     }
 
     private static void removeDock() {
@@ -1075,7 +1120,9 @@ public final class CoopTitleScreenOverlay {
         }
 
         @Override public void render(float alphaMult) {}
-        @Override public void advance(float amount) {}
+        @Override public void advance(float amount) {
+            flushPendingTitleActions();
+        }
         @Override public void processInput(List<InputEventAPI> events) {}
 
         @Override
@@ -1099,10 +1146,7 @@ public final class CoopTitleScreenOverlay {
             }
             if (ID_DOCK_LOAD.equals(buttonId)) {
                 openModalOnNextConnectError = false;
-                modalOpen = false;
-                removeModal();
-                removeDock();
-                CoopTitleScreenBridge.openLoadGameDialog();
+                pendingOpenLoadGame = true;
                 return;
             }
             if (ID_DOCK_OPEN.equals(buttonId)) {
@@ -1152,7 +1196,9 @@ public final class CoopTitleScreenOverlay {
         }
 
         @Override public void render(float alphaMult) {}
-        @Override public void advance(float amount) {}
+        @Override public void advance(float amount) {
+            flushPendingTitleActions();
+        }
 
         @Override
         public void processInput(List<InputEventAPI> events) {

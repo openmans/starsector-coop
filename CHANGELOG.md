@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.13 (Fix Title Screen crash when starting/loading a game from the Lobby dock)
+
+- **Fixed fatal `NullPointerException` (`CombatEngine.advanceInner` / `this.ÔÕ0000 is null`) when launching or loading a save from the Title Screen `CO-OP ЛОББИ` dock (`CoopTitleScreenOverlay`):**
+  previously `enterGameFromTitleScreen()` ran inside `CoopBattleStatusCombatPlugin.advance()`
+  (inside `CombatEngine.advanceInner()`), where `CampaignEngine.resetInstance()` called
+  `CombatEngine.destroyInstance()` and nulled `collisionChecker` on the very `CombatEngine` frame
+  still on the call stack. Deferred Title Screen transitions (`enterGameFromTitleScreen()` and
+  `openLoadGameDialog()`) now execute strictly from `DockPlugin.advance()` / `ModalPlugin.advance()`
+  inside `TitleScreenState.screenPanel.advance()` — before `CombatEngine.advance()` is entered.
+
 ## 0.2.12 (Rejoin minimized/closed shared station dialog via HUD button, F6, Comm Link, or Intel)
 
 - **Rejoin an accidentally closed shared station/partner dialog anytime (`CoopDialogSpectatorState`, `CoopLinkHud`, `CoopNetPump`):**
