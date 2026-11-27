@@ -295,6 +295,7 @@ public class CoopNetPump implements EveryFrameScript {
     /** A6/A9: datagrams whose senderId was not the remote coop player's token. */
     private long datagramSenderMismatchCount;
     private long nextSenderMismatchLogAtMillis;
+    private long nextStormSyncWarnAtMillis;
     /**
      * A8: the newest accepted sender stream-time stamp, in the sender's own milliseconds.
      * {@link Long#MIN_VALUE} means "nothing accepted yet", which is the one sample that cannot be
@@ -414,6 +415,8 @@ public class CoopNetPump implements EveryFrameScript {
     /** Phase 27: additional player mirrors and roster caches keyed by playerId (2nd/3rd guests). */
     private final java.util.Map<String, CoopFleetMirror> extraPlayerMirrors = new java.util.LinkedHashMap<>();
     private final java.util.Map<String, coop.fleet.CoopRosterCache> extraRosterCaches = new java.util.LinkedHashMap<>();
+    /** Phase 27: host-cached raw FLEET_ROSTER payloads per guest, replayed to newly joining guests. */
+    private final java.util.Map<String, String> lastGuestRosterPayloads = new java.util.LinkedHashMap<>();
     /** Phase 27: known peer names keyed by playerId (populated from LOBBY_STATUS on guests). */
     private final java.util.Map<String, String> peerPlayerNames = new java.util.LinkedHashMap<>();
     /** Phase 27: per-guest reported join phase and ready state on the host. */
@@ -4638,7 +4641,11 @@ public class CoopNetPump implements EveryFrameScript {
         // Unconditionally, every frame: the generation has to be tracked even across frames where
         // there is no link, or the first attach after a quiet stretch reads as a replacement.
         boolean replaced = consumeConnectionReplaced();
-        if (channelWasConnected && (!connected || replaced)
+        // Multi-guest hosts share a single connectionGeneration counter across peer slots;
+        // accepting guest 2 on slot 1 bumps generation while guest 1 is still connected and must
+        // never trigger a single-peer disconnect teardown.
+        boolean multiGuestHost = service.role() == CoopConnectionRole.HOST && sessionState.maxGuests() > 1;
+        if (channelWasConnected && (!connected || (replaced && !multiGuestHost))
                 && service.role() != CoopConnectionRole.NONE) {
             if (replaced && connected) {
                 CoopLog.warn(CoopNetPump.class, "Coop TCP link was replaced without a visible"
@@ -5369,7 +5376,9 @@ public class CoopNetPump implements EveryFrameScript {
         // Phase 20 M4: the returning peer holds no roster, so this side owes it one before its next
         // tick can be applied to anything.
         lastSentRosterHash = "";
-        rosterCache.reset();
+        if (sessionState.guestCount() <= 1) {
+            rosterCache.reset();
+        }
         // Phase 28 M2: the returning peer may have missed a policy change while it was gone, and
         // the resume broadcast the plan asks for is exactly this one line - the periodic comparison
         // in maybeSendOptionsSnapshot does the rest.
@@ -7101,6 +7110,12 @@ public class CoopNetPump implements EveryFrameScript {
                     sessionState.sessionId(), service.nextSeq(), clockMillis.getAsLong(),
                     players, -1L, true, "", 0L);
             service.send(statusMsg);
+            for (java.util.Map.Entry<String, String> entry : lastGuestRosterPayloads.entrySet()) {
+                if (!entry.getKey().equals(message.senderId())) {
+                    service.sendTo(message.senderId(), CoopMessages.fleetRoster(
+                            sessionState.sessionId(), service.nextSeq(), clockMillis.getAsLong(), entry.getValue()));
+                }
+            }
             forceFullRebroadcast();
         }
         if (CoopDebug.diagnosticsEnabled()) {
@@ -7957,6 +7972,7 @@ public class CoopNetPump implements EveryFrameScript {
                 }
                 extraPlayerMirrors.clear();
                 extraRosterCaches.clear();
+                lastGuestRosterPayloads.clear();
                 peerPlayerNames.clear();
                 guestReportedPhases.clear();
                 guestReportedReadies.clear();
@@ -8033,9 +8049,11 @@ public class CoopNetPump implements EveryFrameScript {
         if (!isGameplaySessionActive()) {
             return;
         }
+        String rawRoster;
         coop.fleet.CoopFleetRoster roster;
         try {
-            roster = coop.fleet.CoopFleetRoster.decode(CoopMessages.parseFleetRoster(message));
+            rawRoster = CoopMessages.parseFleetRoster(message);
+            roster = coop.fleet.CoopFleetRoster.decode(rawRoster);
         } catch (RuntimeException ex) {
             CoopLog.warn(CoopNetPump.class, "Failed to decode coop FLEET_ROSTER", ex);
             return;
@@ -8048,13 +8066,18 @@ public class CoopNetPump implements EveryFrameScript {
             return;
         }
         rosterCacheFor(peerId).accept(roster);
+        if (service.role() == CoopConnectionRole.HOST) {
+            lastGuestRosterPayloads.put(peerId, rawRoster);
+        }
         CoopLog.info(CoopNetPump.class, "Coop cached FLEET_ROSTER from " + peerId
                 + " ships=" + roster.members().size() + " fleetHash16=" + roster.fleetHash16());
         // Phase 27: host relays a guest's roster to all other connected guests so they render each other.
         if (service.role() == CoopConnectionRole.HOST && sessionState.guestCount() > 1) {
+            CoopMessages.Message relayRoster = CoopMessages.fleetRoster(
+                    sessionState.sessionId(), service.nextSeq(), clockMillis.getAsLong(), rawRoster);
             for (String otherGuestId : sessionState.guestIds()) {
                 if (!otherGuestId.equals(peerId)) {
-                    service.sendTo(otherGuestId, message);
+                    service.sendTo(otherGuestId, relayRoster);
                 }
             }
         }
@@ -8702,6 +8725,7 @@ public class CoopNetPump implements EveryFrameScript {
         guestReportedReadies.remove(guestId);
         guestReadyPendingIds.remove(guestId);
         extraRosterCaches.remove(guestId);
+        lastGuestRosterPayloads.remove(guestId);
         coop.fleet.CoopGuestMirrorHandle.clearForPlayer(guestId);
         if (wasPrimary) {
             if (fleetMirror.hasMirrorFleet()) {
@@ -9038,12 +9062,15 @@ public class CoopNetPump implements EveryFrameScript {
         motionTimeline.noteSample(sampleTimeSeconds);
         playerMirrorFor(peerId).apply(snapshot, localPlayerFactionId(), sampleTimeSeconds);
         // Phase 27: host relays guest A's fleet tick to all other connected guests so they see each other.
+        // Re-stamp with the host's stream clock so every guest's shared motionTimeline tracks one axis.
         if (service.role() == CoopConnectionRole.HOST && sessionState.guestCount() > 1) {
+            CoopMessages.DatagramSection hostStampedSection = new CoopMessages.DatagramSection(
+                    section.epoch(), streamClock.gameTimeMillis(), section.body());
             String relayedDatagram = CoopMessages.datagram(
                     CoopMessages.wireToken(sessionState.sessionId()),
                     senderId,
                     CoopMessages.Type.FLEET_SNAPSHOT,
-                    java.util.List.of(section));
+                    java.util.List.of(hostStampedSection));
             CoopMessages.Message relayMsg = CoopMessages.stateDatagram(
                     sessionState.sessionId(), service.nextSeq(), clockMillis.getAsLong(), relayedDatagram);
             for (String otherGuestId : sessionState.guestIds()) {
@@ -9431,7 +9458,14 @@ public class CoopNetPump implements EveryFrameScript {
             else if (active && service.role() == CoopConnectionRole.GUEST) stormAuthority.tickGuest();
             else if (service.role() == CoopConnectionRole.GUEST) stormAuthority.observeGuest();
         } catch (RuntimeException | LinkageError ex) {
-            CoopLog.warn(CoopNetPump.class, "Failed to sync hyperspace storms", ex);
+            if (service.role() == CoopConnectionRole.HOST) {
+                stormAuthority.reset();
+            }
+            long now = clockMillis.getAsLong();
+            if (now >= nextStormSyncWarnAtMillis) {
+                nextStormSyncWarnAtMillis = now + FAILURE_LOG_INTERVAL_MILLIS;
+                CoopLog.warn(CoopNetPump.class, "Failed to sync hyperspace storms", ex);
+            }
         }
     }
 

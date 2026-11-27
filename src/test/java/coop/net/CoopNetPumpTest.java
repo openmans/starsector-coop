@@ -10451,6 +10451,107 @@ class CoopNetPumpTest {
                 service.lastOfType(CoopMessages.Type.SEED_LOCK_REJECT).type());
     }
 
+    @Test
+    void multiGuestHostDoesNotTreatSecondGuestAttachAsSessionDrop() {
+        RecordingNetService service = new RecordingNetService(CoopConnectionRole.HOST) {
+            @Override
+            public int peerCapacity() {
+                return 3;
+            }
+        };
+        CoopSessionState session = twoGuestHostSession();
+        AtomicLong now = new AtomicLong(1_000L);
+        Global.setSector(new RecordingSector(false).proxy());
+        CoopNetPump pump = new CoopNetPump(service, session, now::get,
+                () -> emptyManifest("0.98.5a-RC9", "commit-a"), () -> false,
+                () -> new CoopSeedSync.SeedData(123456789L, "coop-seed", "fingerprint-host"),
+                () -> "fingerprint-host",
+                () -> "coop-seed");
+        pump.advance(0f);
+
+        // Accepting a second guest on peer slot 1 increments connectionGeneration while connected stays true.
+        service.connectionGeneration++;
+        pump.advance(0f);
+
+        assertTrue(pump.gameplaySessionActiveForBridge(), "session stays live across 2nd guest socket attach");
+        assertEquals("session-a", session.sessionId());
+        assertFalse(service.expectedTokens.contains(null), "expectedSessionToken must not be cleared");
+    }
+
+    @Test
+    void hostRelaysGuestFleetSnapshotOnHostClockAndReplaysCachedRosterToNewGuest() {
+        java.util.Map<String, List<CoopMessages.Message>> sentToTarget = new java.util.LinkedHashMap<>();
+        RecordingNetService service = new RecordingNetService(CoopConnectionRole.HOST) {
+            @Override
+            public int peerCapacity() {
+                return 3;
+            }
+
+            @Override
+            public void sendTo(String senderId, CoopMessages.Message message) {
+                super.sendTo(senderId, message);
+                sentToTarget.computeIfAbsent(senderId, ignored -> new ArrayList<>()).add(message);
+            }
+        };
+        CoopSessionState session = new CoopSessionState(
+                new SequencedIds("lobby-a", "host-player", "session-a", "session-b"));
+        session.startHost("Host");
+        session.setMaxGuests(3);
+        session.setAllowMidSessionJoin(true);
+        session.hostAcceptGuest(new CoopPlayerInfo("guest-a", "Guest A"));
+        session.hostAcceptHandshake("guest-a");
+        session.recordSeedLock(123456789L, "coop-seed", "fingerprint-host");
+        session.recordSeedLockForGuest("guest-a", 123456789L, "coop-seed", "fingerprint-host");
+        session.releaseLobby();
+
+        AtomicLong now = new AtomicLong(1_000L);
+        Global.setSector(new RecordingSector(false).proxy());
+        CoopNetPump pump = new CoopNetPump(service, session, now::get,
+                () -> emptyManifest("0.98.5a-RC9", "commit-a"), () -> false,
+                () -> new CoopSeedSync.SeedData(123456789L, "coop-seed", "fingerprint-host"),
+                () -> "fingerprint-host",
+                () -> "coop-seed");
+
+        coop.fleet.CoopFleetSnapshot guestASnap = playerSnapshot("guest-a", 2);
+        service.inbound.add(CoopMessages.fleetRoster("session-a", 1L, now.get(),
+                coop.fleet.CoopFleetRoster.of(guestASnap).encode()).withSenderId("guest-a"));
+        pump.advance(0.5f);
+
+        // Now Guest B connects mid-session and finishes seed lock.
+        session.hostAcceptGuest(new CoopPlayerInfo("guest-b", "Guest B"));
+        session.hostAcceptHandshake("guest-b");
+        service.inbound.add(CoopMessages.seedLockAck("session-a", 2L, now.get(), "fingerprint-host")
+                .withSenderId("guest-b"));
+        pump.advance(0f);
+
+        List<CoopMessages.Message> toGuestB = sentToTarget.getOrDefault("guest-b", List.of());
+        boolean replayedGuestARoster = toGuestB.stream()
+                .filter(m -> m.type() == CoopMessages.Type.FLEET_ROSTER)
+                .map(m -> coop.fleet.CoopFleetRoster.decode(CoopMessages.parseFleetRoster(m)))
+                .anyMatch(r -> "guest-a".equals(r.playerId()));
+        assertTrue(replayedGuestARoster, "Guest B must receive Guest A's cached roster on mid-session join");
+
+        // Guest A sends a FLEET_SNAPSHOT stamped far ahead on Guest A's local clock (99_999 ms).
+        service.inboundDatagrams.add(CoopMessages.datagram(
+                CoopMessages.wireToken("session-a"),
+                CoopMessages.wireToken("guest-a"),
+                CoopMessages.Type.FLEET_SNAPSHOT,
+                11L, 99_999L, coop.fleet.CoopFleetSnapshot.Tick.of(guestASnap).encode()));
+        pump.advance(0f);
+
+        List<CoopMessages.Message> relayedDatagrams = sentToTarget.getOrDefault("guest-b", List.of()).stream()
+                .filter(m -> m.type() == CoopMessages.Type.STATE_DATAGRAM)
+                .toList();
+        assertFalse(relayedDatagrams.isEmpty(), "Host must relay Guest A's FLEET_SNAPSHOT to Guest B");
+        CoopMessages.Datagram inner = CoopMessages.parseDatagram(
+                CoopMessages.parseStateDatagram(relayedDatagrams.get(relayedDatagrams.size() - 1)));
+        assertEquals(CoopMessages.Type.FLEET_SNAPSHOT, inner.type());
+        assertEquals(CoopMessages.wireToken("guest-a"), inner.senderId());
+        long relayedStamp = inner.sections().get(0).sentGameTimeMillis();
+        assertNotEquals(99_999L, relayedStamp, "Host must re-stamp relayed section onto host stream clock");
+        assertTrue(relayedStamp >= 0L && relayedStamp < 10_000L, "Unexpected host clock stamp: " + relayedStamp);
+    }
+
     private static RecordingNetService recordingHostWithDropTracking(List<String> dropped) {
         return new RecordingNetService(CoopConnectionRole.HOST) {
             @Override

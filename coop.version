@@ -22,7 +22,7 @@
     {
         "major":0,
         "minor":2,
-        "patch":22
+        "patch":23
     },
 
     # Optional, read by LunaLib's bundled version checker UI.
