@@ -29,7 +29,9 @@ solo play and the preview features that still need in-game checking.
 - **Rejoin by loading the co-op save,** never by starting a New Game on the same seed.
 - **Turn the mod off for solo campaigns.** With it enabled the game is under co-op rules whether or
   not a session exists.
-- **Up to 3 guests (`coop.maxGuests=1..3`, default `1`), optional encryption & relay.** Plaintext
+- **Up to 3 guests (`coop.maxGuests=1..3`, default `1`), optional encryption & relay.** The relay
+  bridges exactly one socket pair, so a relayed session is host + one guest regardless of
+  `coop.maxGuests`, and state updates ride TCP because UDP cannot traverse the relay. Plaintext
   TCP/UDP is the default for zero-config compatibility; set `coop.encryption=aes-gcm` (with a shared
   `coop.password`) for AES-256-GCM frame encryption, and `coop.relayAddress` (with
   `coop-launcher.jar --relay <port>`) for CGNAT relay without port forwarding.

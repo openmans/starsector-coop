@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.2.25 (Wire the features that were only classes: chat, encryption, restore, wrecks, relay)
+
+- **Chat hotkey (`coop.chatKey`, default F8):** the chat service, dialog and `CHAT_MSG` existed but
+  nothing opened the dialog from a key. New `CoopChatInputListener` installs for the session like the
+  marker listener, the guest input blocker passes the key through, and the dialog yields to any
+  higher-priority coop screen. The dialog also gained a **free-text field** (the four canned messages
+  stay).
+- **Transport encryption (`coop.encryption=aes-gcm`):** `CoopCipher` was never constructed, so the
+  option did nothing. `CoopTransportCodec` is now the single seam for every TCP frame and UDP
+  datagram: frames are sealed on send and opened on receive, and a plaintext frame on an encrypted
+  transport (or the reverse) is refused rather than decoded - a downgrade cannot pass. The datagram
+  budget follows the seal, so a payload that would not fit the wire after base64 expansion takes the
+  existing TCP escalation instead of being dropped. aes-gcm without `coop.password` runs plaintext
+  with one warning that says so.
+- **Guest fleet restore (`GUEST_SNAPSHOT_RESTORE`):** the host stored every guest snapshot and the
+  guest had a handler, but nothing sent the message. A guest that adopts the host campaign (deleted
+  save + `coop.adoptCampaignId=true`, or a pre-6b save) now gets its stored fleet back on the first
+  live-session frame. A guest that kept its own save is left alone.
+- **Allied wreck recovery (Item 2.5):** the battle tracker named no wrecks and nothing offered them.
+  Destroyed non-fighter ships of the partner's fleet are now offered to their owner after the battle
+  (`CoopAllyRecoveryDialogPlugin`, arbiter kind `ALLY_RECOVERY`), with vanilla's quarter hull, 15% CR
+  and two fresh D-mods, paid in supplies.
+- **Loot split (`coop.lootSplit`):** with `equal`, each recovered wreck pays the partner half the
+  hull's base value through the ordinary `CREDITS_GRANT` ledger; `pilot-keeps` pays nothing. The
+  option had no consumer before.
+- **Multiguest reconnect:** per-guest grace windows are now actually used. A guest dropping while
+  others stay connected keeps its slot and row for the grace window and its resume is accepted; the
+  session keeps running for everybody else. Single-guest sessions are unchanged.
+- **CGNAT relay (`coop.relayAddress` + new `coop.relayRoom`/`coop.relayToken`):** the mod now dials
+  the relay that `coop-launcher.jar --relay` serves - the host registers, the guest joins, and the
+  bridged socket becomes the peer channel. UDP cannot traverse the relay, so relay sessions ride the
+  existing TCP state-stream fallback. One bridged socket means one guest per room.
+- **Removed, not wired:** `AMBIENT_CALL`, `COLONY_CONSENT_*`, `CONTACT_SET` and `NEX_EVENT` had no
+  senders at all, and `CoopCommissionRewardSync` would have paid guests a share of a commission
+  amount vanilla never exposes - four classes, their message types and the
+  `coop.guestColonizationConsent` option are gone, and the docs now say contacts, Nexerelin and
+  commission payouts are not synchronized.
+
 ## 0.2.21 (Allow Title Screen Drop-In & Vault Save Download Directly from a Live Dedicated Server / Host)
 
 - **Fixed `Missing string field: type` on the live host/dedicated port (`CoopNetService`, `CoopPeerLink`, `CoopNetPump`):**

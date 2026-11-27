@@ -553,6 +553,10 @@ use it.
 | `coop.connectPort` | unset | The host's port. Required whenever `coop.connectHost` is set. |
 | `coop.portMapping` | `auto` | `auto` asks the router to open the host port (UPnP first, NAT-PMP second). `off` skips it. Any other value as a `-D` stops the game at startup. Guests never map anything. |
 | `coop.password` | none | Lobby password. Same string on both, empty for none. The guest proves it knows the password without sending it, but the rest of the traffic is plaintext: this stops strangers from joining an open port, it does not encrypt the session. |
+| `coop.encryption` | `off` | `aes-gcm` seals every TCP frame and UDP datagram with AES-256-GCM derived from `coop.password`. Both sides must match; a plaintext frame on an encrypted transport is refused. Without a password the session runs unencrypted and says so once in the log. |
+| `coop.relayAddress` | unset | `host:port` of a `coop-launcher.jar --relay` server for CGNAT players who cannot forward ports. Needs `coop.relayRoom` and `coop.relayToken`; one bridged socket means one guest per room. |
+| `coop.relayRoom` | unset | Room code both players send to the relay. Blank leaves the relay off. |
+| `coop.relayToken` | unset | Shared token the relay checks. Same secret on both installs; never sent to the other player. |
 | `coop.playerName` | your character's name | The name your partner sees in the HUD and on the session page. |
 
 **Session rules.** The host owns these. A new campaign takes them from the host's install at its
@@ -561,13 +565,13 @@ campaign already in progress; use the options page for that.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `coop.maxGuests` | `1` | Peer capacity. Anything other than 1 is clamped back to 1 with a warning in the log. |
+| `coop.maxGuests` | `1` | Peer capacity, `1`..`3` (host + up to 3 guests). Values outside the range are clamped with a warning in the log. |
 | `coop.reconnectGraceSeconds` | `60` | How long a dropped link is held open before the session ends, 0 to 3600. `0` ends it on the first drop. Each side sets its own. |
 | `coop.pauseOnGuestScreens` | `true` | Whether the world stops while a guest browses the vanilla auto-pause screens. `false` lets the world keep running. Interaction dialogs and combat pause either way. |
-| `coop.allowGuestPause` | `true` | Whether the guest may pause the shared world. No effect in this build. |
-| `coop.allowMidSessionJoin` | `true` | Whether a guest may join a campaign already in progress. No effect in this build. |
-| `coop.lootSplit` | `equal` | How salvage from a jointly fought battle is divided. No effect in this build. |
-| `coop.incomeSplit` | `equal` | `equal` splits colony income 50/50; `host-banks` pays it all to the host. No effect in this build. |
+| `coop.allowGuestPause` | `true` | Whether the guest may pause and unpause the shared world. Never gates the pause an open screen forces. |
+| `coop.allowMidSessionJoin` | `true` | Whether an additional guest may join a multi-guest campaign after the lobby has released. |
+| `coop.lootSplit` | `equal` | `equal` pays the partner half the base value of every allied wreck you recover after a joint battle (through the ordinary credit ledger); `pilot-keeps` pays nothing. |
+| `coop.incomeSplit` | `equal` | `equal` splits colony income 50/50; `host-banks` pays it all to the host. |
 
 **Your preferences.** Local, never sent to your partner.
 
@@ -575,8 +579,8 @@ campaign already in progress; use the options page for that.
 |---|---|---|
 | `coop.hud.disable` | `false` | `true` removes the co-op status line. Re-read while the game runs. |
 | `coop.hudCorner` | `TR` | Which corner the status line sits in: `TR`, `TL`, `BR`, `BL`. Re-read while the game runs. |
-| `coop.feedVerbosity` | `all` | How much of the co-op event feed is shown: `all`, `important`, `minimal`. No effect in this build. |
-| `coop.partnerColor` | unset | Colour of your partner's presence marker. No effect in this build. |
+| `coop.feedVerbosity` | `all` | How much of the co-op event feed is shown: `all`, `important`, `minimal`. |
+| `coop.partnerColor` | unset | Colour of your partner's presence marker. Empty uses the built-in cyan preset. |
 | `coop.markKey` | `F11` | Which key writes a `COOP-MARK` line into both logs. An LWJGL key name (`F11`, `F9`, `HOME`); an unknown name is warned about in the log and falls back to `F11`. Read once when the game loads. |
 | `coop.chatKey` | `F8` | Which key opens the in-game chat. An LWJGL key name; an unknown name is warned about and falls back to `F8`. Read once when the game loads. Chat holds four canned messages plus a free-text field. |
 

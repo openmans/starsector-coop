@@ -289,6 +289,9 @@ Owns: every wire type, since the enum lives here.
   call returns from native membership/location observations. Opt-in `lightgrantfault` and
   `lightmessagehold` provide transient bounded fault/transport probes; they do not edit ledgers.
   Evidence and unresolved M3 edge cases are in [the native acceptance report](P26_M3_NATIVE_ACCEPTANCE_2026-10-20.md).
+- `coop.net.CoopTransportCodec` (the encryption seam) / `coop.input.CoopChatInputListener` (the F8
+  chat hotkey) / `coop.ui.CoopAllyRecoveryDialogPlugin` (post-battle wreck recovery, arbiter kind
+  `ALLY_RECOVERY`).
 - `CoopRepDelta` / `CoopFactionRelations` / `CoopCommissionSync` / `CoopCreditTransfer` /
   `CoopAbilityArbiter` / `CoopAbilityEffectApplier` / `CoopOrbitSync` / `CoopCampaignEventListener` /
   `CoopStoryChainGate` / `CoopDelimited` / `CoopAllyToggleAbility` (Phase 33: the `coop_ally` row in
@@ -399,9 +402,10 @@ Owns: every wire type, since the enum lives here.
 
 ## Wire Protocol
 
-Types are declared in `coop/net/CoopMessages.java` as `CoopMessages.Type`: **102 constants**. The
-envelope is flat JSON with six fields (optionally wrapped in `ENC1:<iv>:<ciphertext>` when
-`coop.encryption=aes-gcm` with `coop.password`). Structured payloads travel as primitive text using
+Types are declared in `coop/net/CoopMessages.java` as `CoopMessages.Type`: **113 constants**. The
+envelope is flat JSON with six fields. With `coop.encryption=aes-gcm` and a `coop.password`, every
+TCP frame and UDP datagram is wrapped in `ENC1:<iv>:<ciphertext>` by `CoopTransportCodec` — the one
+seam all wire reads and writes pass through — and an unsealed frame is refused rather than decoded. Structured payloads travel as primitive text using
 their record codec, including delimiter or length-prefixed formats:
 
 ```text
