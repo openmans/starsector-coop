@@ -347,6 +347,11 @@ public class CoopNetPump implements EveryFrameScript {
     private final CoopStreamCadence fleetSnapshotCadence =
             new CoopStreamCadence(FLEET_SNAPSHOT_INTERVAL_MILLIS);
     private long nextGuestSnapshotAtMillis;
+
+    /** Item 2.3: guest whose fleet restore is owed once the session is live, or null. */
+    private String pendingGuestRestorePlayerId;
+    /** Guest: this launch adopted the host campaign, so a restore is welcome; cleared on apply. */
+    private boolean guestFreshlyAdoptedCampaign;
     private static final int LIVE_SAVE_SYNC_CHUNK_BYTES = 32 * 1024;
     private static final int LIVE_SAVE_SYNC_CHUNKS_PER_FRAME = 2;
     private static final int LIVE_SAVE_SYNC_MAX_CHUNKS = 1024;
@@ -3749,6 +3754,7 @@ public class CoopNetPump implements EveryFrameScript {
         maybeSendHandshakeManifest();
         t = profiler.split(SECTION_HANDSHAKE_MANIFEST, t);
         maybeSendSeedLockRequest();
+        maybeSendGuestSnapshotRestore();
         t = profiler.split(SECTION_SEED_LOCK_REQUEST, t);
         // Phase 21: before tickLobby so the lower-ranked lobby and connecting controllers see this
         // one's request on the same frame rather than one frame late.
@@ -6185,6 +6191,11 @@ public class CoopNetPump implements EveryFrameScript {
                 sessionState.localPlayerInfo());
         service.sendTo(message.senderId(), accept);
         log("outbound", accept);
+        // Item 2.3: the guest may have adopted this campaign without a fleet of its own (deleted
+        // save + coop.adoptCampaignId). Arm the restore here and send it from the live-session
+        // frame below - a state-changing message written during the lobby would meet the session
+        // gate and be dropped.
+        armGuestSnapshotRestore(guest.playerId());
         CoopLog.info(CoopNetPump.class,
                 "Coop lobby accepted provisionalLobbyId=" + sessionState.provisionalLobbyId()
                         + " hostPlayerId=" + sessionState.localPlayerId()
@@ -6886,18 +6897,21 @@ public class CoopNetPump implements EveryFrameScript {
         if (stored.isEmpty()) {
             if (hostCampaignIdMinted) {
                 campaignIdStore.accept(hostCampaignId);
+                guestFreshlyAdoptedCampaign = true;
                 CoopLog.info(CoopNetPump.class,
                         "Coop campaign id adopted at campaign birth campaignId=" + hostCampaignId);
                 return true;
             }
             if (priorCoopSessionSupplier.getAsBoolean()) {
                 campaignIdStore.accept(hostCampaignId);
+                guestFreshlyAdoptedCampaign = true;
                 CoopLog.info(CoopNetPump.class, "Coop campaign id adopted by pre-6b save migration"
                         + " campaignId=" + hostCampaignId);
                 return true;
             }
             if (adoptCampaignIdSupplier.getAsBoolean()) {
                 campaignIdStore.accept(hostCampaignId);
+                guestFreshlyAdoptedCampaign = true;
                 consumeAdoptCampaignIdConsent();
                 CoopLog.warn(CoopNetPump.class, "Coop campaign id adopted by explicit override ("
                         + ADOPT_CAMPAIGN_ID_PROPERTY + "=true): fresh guest campaign joins in-flight"
@@ -6914,6 +6928,7 @@ public class CoopNetPump implements EveryFrameScript {
         }
         if (adoptCampaignIdSupplier.getAsBoolean()) {
             campaignIdStore.accept(hostCampaignId);
+            guestFreshlyAdoptedCampaign = true;
             consumeAdoptCampaignIdConsent();
             CoopLog.warn(CoopNetPump.class, "Coop campaign id adopted by explicit override ("
                     + ADOPT_CAMPAIGN_ID_PROPERTY + "=true): host=" + hostCampaignId
@@ -8141,6 +8156,55 @@ public class CoopNetPump implements EveryFrameScript {
             CoopLog.warn(CoopNetPump.class, "Failed to send the coop guest snapshot", ex);
         } finally {
             nextGuestSnapshotAtMillis = now + GUEST_SNAPSHOT_INTERVAL_MILLIS;
+        }
+    }
+
+    /**
+     * Item 2.3: records that the accepted guest should get its stored fleet back as soon as the
+     * session is live. Only when a snapshot actually exists for that player id - a first-time guest
+     * has none, and arming on every accept would make the send a no-op at best.
+     */
+    private void armGuestSnapshotRestore(String playerId) {
+        if (playerId == null || playerId.trim().isEmpty()) {
+            return;
+        }
+        if (coop.save.CoopGuestSnapshotStore.findForRestore(playerId) == null) {
+            return;
+        }
+        pendingGuestRestorePlayerId = playerId.trim();
+        CoopLog.info(CoopNetPump.class, "Coop holding a guest fleet restore for " + playerId
+                + " until the session is live");
+    }
+
+    /**
+     * Host: sends the armed restore once, on the first live-session frame. Called right after the
+     * inbound drain, so a LOBBY_ACCEPT sent this frame is already answered by a guest that is in
+     * the campaign rather than on the lobby screen.
+     */
+    private void maybeSendGuestSnapshotRestore() {
+        String playerId = pendingGuestRestorePlayerId;
+        if (playerId == null) {
+            return;
+        }
+        if (service.role() != CoopConnectionRole.HOST || !isGameplaySessionActive()
+                || !service.isConnected()) {
+            return;
+        }
+        pendingGuestRestorePlayerId = null;
+        coop.save.CoopGuestSnapshot snapshot = coop.save.CoopGuestSnapshotStore.findForRestore(playerId);
+        if (snapshot == null) {
+            return;
+        }
+        try {
+            CoopMessages.Message message = CoopMessages.guestSnapshotRestore(
+                    sessionState.sessionId(), service.nextSeq(), clockMillis.getAsLong(),
+                    snapshot.encodeBody());
+            service.send(message);
+            log("outbound", message);
+            CoopLog.info(CoopNetPump.class, "Coop sent the stored fleet restore to " + playerId
+                    + " (" + snapshot.summary() + ")");
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to send GUEST_SNAPSHOT_RESTORE", ex);
         }
     }
 
@@ -10431,6 +10495,16 @@ public class CoopNetPump implements EveryFrameScript {
         if (droppedBeforeTheSession(message.type()) || service.role() != CoopConnectionRole.GUEST) {
             return;
         }
+        if (!guestFreshlyAdoptedCampaign) {
+            // A guest that kept its own save already has its fleet; overwriting it with whatever the
+            // host stored last session would silently roll back progress.
+            if (CoopDebug.diagnosticsEnabled()) {
+                CoopLog.info(CoopNetPump.class, "Coop ignoring GUEST_SNAPSHOT_RESTORE: this campaign"
+                        + " was not adopted this launch");
+            }
+            return;
+        }
+        guestFreshlyAdoptedCampaign = false;
         try {
             coop.save.CoopGuestSnapshot snapshot =
                     coop.save.CoopGuestSnapshot.decodeBody(CoopMessages.parseBody(message));
