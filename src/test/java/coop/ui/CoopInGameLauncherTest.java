@@ -5,6 +5,7 @@ import coop.config.CoopOptionsStore;
 import coop.net.CoopConnectionRole;
 import coop.net.CoopInGameInvite;
 import coop.net.CoopNetStartupConfig;
+import coop.net.CoopPortMapper;
 import coop.net.CoopPreGameLobby;
 import org.json.JSONObject;
 import org.junit.jupiter.api.AfterEach;
@@ -227,6 +228,69 @@ class CoopInGameLauncherTest {
             System.clearProperty(CoopOptionsRegistry.ADOPT_CAMPAIGN_ID);
             host.stop();
             guest.leavePreGameLobby();
+        }
+    }
+
+    @Test
+    void titleScreenHostLobbyStartsPortMapperPromotesLanIpAndKeepsLeaseOnCampaignTransition() throws Exception {
+        assertTrue(CoopInGameLauncherSession.isPrivateIpv4Address(""));
+        assertTrue(CoopInGameLauncherSession.isPrivateIpv4Address("10.2.3.12"));
+        assertTrue(CoopInGameLauncherSession.isPrivateIpv4Address("192.168.1.50"));
+        assertTrue(CoopInGameLauncherSession.isPrivateIpv4Address("172.16.0.1"));
+        assertTrue(CoopInGameLauncherSession.isPrivateIpv4Address("100.64.1.2"));
+        assertFalse(CoopInGameLauncherSession.isPrivateIpv4Address("46.160.242.48"));
+
+        int freePort;
+        try (java.net.ServerSocket probe = new java.net.ServerSocket(0)) {
+            freePort = probe.getLocalPort();
+        }
+        CoopInGameLauncherSession session = new CoopInGameLauncherSession();
+        session.setRussian(false);
+        session.setPlayerName("Artur");
+        session.setHostAddress("10.2.3.12");
+        session.setHostPort(String.valueOf(freePort));
+
+        java.util.List<Integer> startedPorts = new java.util.ArrayList<>();
+        session.setLobbyPortMapperFactoryForTests((port, enabled) -> {
+            startedPorts.add(port);
+            return CoopPortMapper.start(port, false, System::currentTimeMillis);
+        });
+        try {
+            assertTrue(session.openHostLobby(null));
+            assertEquals(java.util.List.of(freePort), startedPorts);
+            assertNotNull(session.lobbyPortMapperForTests());
+
+            // Ticking ticks the mapper cleanly without failing
+            session.tickPreGameLobby(null);
+
+            // Mapped public IP promotes private LAN hostAddress and updates status
+            assertTrue(session.applyLobbyPortMapperResult(new CoopPortMapper.Result(
+                    CoopPortMapper.Tier.UPNP, "10.2.3.1", "MikroTik",
+                    "46.160.242.48", freePort, false, "", true)));
+            assertEquals("46.160.242.48", session.hostAddress());
+            assertTrue(session.statusText().contains("46.160.242.48:" + freePort));
+
+            // Explicit non-private hostAddress is preserved on re-map
+            assertTrue(session.applyLobbyPortMapperResult(new CoopPortMapper.Result(
+                    CoopPortMapper.Tier.UPNP, "10.2.3.1", "MikroTik",
+                    "203.0.113.99", freePort, false, "", true)));
+            assertEquals("46.160.242.48", session.hostAddress());
+
+            // CGNAT warning and UPnP failure surface actionable status
+            assertTrue(session.applyLobbyPortMapperResult(new CoopPortMapper.Result(
+                    CoopPortMapper.Tier.UPNP, "10.2.3.1", "Router",
+                    "100.64.5.5", freePort, true, "", true)));
+            assertTrue(session.statusText().contains("CGNAT"));
+
+            assertTrue(session.applyLobbyPortMapperResult(new CoopPortMapper.Result(
+                    CoopPortMapper.Tier.NONE, "", "", "", 0, false, "no IGD", true)));
+            assertTrue(session.statusText().contains("no IGD"));
+
+            // Campaign transition closes local sockets without releasing router lease, then leave cleans up
+            session.stopPreGameLobbyOnStateExit();
+            assertNull(session.lobbyPortMapperForTests());
+        } finally {
+            session.leavePreGameLobby();
         }
     }
 

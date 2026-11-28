@@ -86,6 +86,18 @@ class CoopPortMapperUpnpExchangeTest {
     }
 
     @Test
+    void closeWithoutReleaseLeavesRouterMappingIntact() throws Exception {
+        CoopPortMapper mapper = runToCompletion(CoopPortMapper.startFromDescriptor(
+                MAPPED_PORT, System::currentTimeMillis, igd.descriptorUrl()));
+
+        assertTrue(mapper.result().mapped(), mapper.result().failureText());
+        mapper.closeWithoutRelease();
+
+        assertEquals(List.of("GetExternalIPAddress", "AddPortMapping", "AddPortMapping"),
+                igd.actions(), "closing for campaign handoff must not delete router UPnP leases");
+    }
+
+    @Test
     void retriesWithAPermanentLeaseWhenTheRouterAnswers725() throws Exception {
         igd.failFirstAddWith(CoopUpnpSoap.ERROR_ONLY_PERMANENT_LEASES, "OnlyPermanentLeasesSupported");
 

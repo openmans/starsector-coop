@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.30 (UPnP in the Title Screen lobby)
+
+Opening the Host lobby on the Title Screen never asked the router to forward the port: UPnP only
+ran *after* entering a campaign, and the desktop launcher explicitly deleted its own temporary UPnP
+mapping when clicking Launch. A remote friend clicking CONNECT from the Title Screen was therefore
+blocked by the router even when the host was listening on `7777`.
+
+- **Title Screen Host Lobby now maps TCP+UDP via UPnP / NAT-PMP (`CoopPortMapper`)** immediately
+  when opening the lobby, and automatically promotes a local LAN address (e.g. `10.2.3.12`) in the
+  host field/invite to the mapped public WAN IP.
+- **No gap into campaign launch.** Leaving the Title Screen into the campaign closes the lobby
+  mapper sockets without deleting the router lease (`CoopPortMapper#closeWithoutRelease`), so the
+  mapping stays open while the campaign pump takes over renewals. Leaving the lobby or disabling
+  co-op releases the router mapping cleanly.
+
 ## 0.2.29 (7777 everywhere - the launcher and the in-game screen agree)
 
 0.2.28 stopped the Java preferences from restoring an old port, but the port also lived in

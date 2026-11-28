@@ -386,13 +386,21 @@ public final class CoopPortMapper {
         } catch (Throwable throwable) {
             CoopLog.warn(CoopPortMapper.class, "Coop port mapper shutdown failed: " + throwable, throwable);
         } finally {
-            closeQuietly(ssdpChannel);
-            ssdpChannel = null;
-            closeQuietly(natPmpChannel);
-            natPmpChannel = null;
-            closeExchange();
-            stage = Stage.CLOSED;
+            closeWithoutRelease();
         }
+    }
+
+    /**
+     * Closes local discovery/HTTP sockets without sending UPnP/NAT-PMP delete requests,
+     * handing an active router mapping over to the campaign's {@code CoopNetPump}.
+     */
+    public void closeWithoutRelease() {
+        closeQuietly(ssdpChannel);
+        ssdpChannel = null;
+        closeQuietly(natPmpChannel);
+        natPmpChannel = null;
+        closeExchange();
+        stage = Stage.CLOSED;
     }
 
     // ---------------------------------------------------------------- UPnP: SSDP discovery

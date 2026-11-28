@@ -7,6 +7,7 @@ import coop.config.CoopOptionsStore;
 import coop.net.CoopConnectionRole;
 import coop.net.CoopInGameInvite;
 import coop.net.CoopNetStartupConfig;
+import coop.net.CoopPortMapper;
 import coop.net.CoopPreGameLobby;
 import coop.storm.CoopStormBridge;
 import coop.util.CoopLog;
@@ -15,6 +16,7 @@ import java.awt.Color;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.BiFunction;
 
 /**
  * Headless-testable state and config controller behind the native in-game CO-OP window
@@ -71,6 +73,9 @@ public final class CoopInGameLauncherSession {
     private String statusText = "";
     private Color statusColor = new Color(165, 225, 195);
     private boolean initialized;
+    private CoopPortMapper lobbyPortMapper;
+    private boolean lobbyPortMapperReported;
+    private BiFunction<Integer, Boolean, CoopPortMapper> lobbyPortMapperFactory;
 
     public CoopInGameLauncherSession() {
     }
@@ -195,6 +200,19 @@ public final class CoopInGameLauncherSession {
             return com.fs.starfarer.api.Global.getSettings() != null;
         } catch (Throwable ignored) {
             return false;
+        }
+    }
+
+    private static void applyRuntimeSeedSafe(String seed) {
+        if (isLiveGameRuntime()) {
+            CoopModPlugin.applyRuntimeSeed(seed);
+            return;
+        }
+        String clean = seed == null ? "" : seed.trim();
+        if (clean.isEmpty()) {
+            System.clearProperty(CoopNetStartupConfig.NEW_GAME_SEED_PROPERTY);
+        } else {
+            System.setProperty(CoopNetStartupConfig.NEW_GAME_SEED_PROPERTY, clean);
         }
     }
 
@@ -375,7 +393,7 @@ public final class CoopInGameLauncherSession {
             store.writeSessionLaunchSettings(values);
             store.reload();
         }
-        CoopModPlugin.applyRuntimeSeed(seed);
+        applyRuntimeSeedSafe(seed);
         CoopStormBridge.configureGuest(false);
         armedRole = CoopConnectionRole.HOST;
 
@@ -432,7 +450,7 @@ public final class CoopInGameLauncherSession {
             store.writeSessionLaunchSettings(values);
             store.reload();
         }
-        CoopModPlugin.applyRuntimeSeed(seed);
+        applyRuntimeSeedSafe(seed);
         CoopStormBridge.configureGuest(true);
         if (store == CoopOptionsStore.system() && isLiveGameRuntime()) {
             CoopTitleScreenBridge.saveLastJoinSettings(host, String.valueOf(port));
@@ -463,14 +481,24 @@ public final class CoopInGameLauncherSession {
                     new Color(255, 120, 110));
             return false;
         }
+        startLobbyPortMapper(port);
         String invite = buildHostInvite();
-        boolean copied = !invite.isEmpty() && CoopTitleScreenBridge.writeClipboard(invite);
-        setStatus(copied
-                        ? tr("Lobby open (port " + port + ") & invite copied! Waiting for players...",
-                                "Лобби открыто (порт " + port + "), инвайт скопирован! Ожидание игроков...")
-                        : tr("Lobby open (port " + port + ")! Share your invite and wait for players.",
-                                "Лобби открыто (порт " + port + ")! Отправьте инвайт друзьям."),
-                new Color(110, 255, 165));
+        boolean copied = !invite.isEmpty() && isLiveGameRuntime() && CoopTitleScreenBridge.writeClipboard(invite);
+        if (portMappingAuto && lobbyPortMapper != null) {
+            setStatus(copied
+                            ? tr("Lobby open (port " + port + "), mapping UPnP... Invite copied.",
+                                    "Лобби открыто (порт " + port + "), настройка UPnP... Инвайт скопирован.")
+                            : tr("Lobby open (port " + port + "), mapping UPnP... Waiting for players.",
+                                    "Лобби открыто (порт " + port + "), настройка UPnP... Ожидание игроков."),
+                    new Color(110, 255, 165));
+        } else {
+            setStatus(copied
+                            ? tr("Lobby open (port " + port + ") & invite copied! Waiting for players...",
+                                    "Лобби открыто (порт " + port + "), инвайт скопирован! Ожидание игроков...")
+                            : tr("Lobby open (port " + port + ")! Share your invite and wait for players.",
+                                    "Лобби открыто (порт " + port + ")! Отправьте инвайт друзьям."),
+                    new Color(110, 255, 165));
+        }
         return true;
     }
 
@@ -539,9 +567,11 @@ public final class CoopInGameLauncherSession {
         if (!preGameLobby.isActive()) {
             return false;
         }
-        boolean changed = preGameLobby.tick(System.currentTimeMillis());
+        long now = System.currentTimeMillis();
+        boolean mapperChanged = tickLobbyPortMapper(now);
+        boolean changed = preGameLobby.tick(now);
         if (!changed) {
-            return false;
+            return mapperChanged;
         }
         CoopPreGameLobby.State st = preGameLobby.state();
         if (st == CoopPreGameLobby.State.ERROR) {
@@ -742,6 +772,7 @@ public final class CoopInGameLauncherSession {
     }
 
     public void leavePreGameLobby() {
+        closeLobbyPortMapper(true);
         preGameLobby.stop();
         launchedFromPreGameLobby = false;
         pendingAutoEnterGame = false;
@@ -752,11 +783,14 @@ public final class CoopInGameLauncherSession {
 
     /** Releases the pre-game lobby port cleanly when leaving the Title Screen into the campaign. */
     public void stopPreGameLobbyOnStateExit() {
+        // Keep the router UPnP mapping alive while transitioning into the campaign so CoopNetPump can renew it.
+        closeLobbyPortMapper(false);
         preGameLobby.closeChannelsKeepSummary();
     }
 
     /** Turns off CO-OP auto-start and restores pure singleplayer mode. */
     public void disableCoop(CoopOptionsStore store) {
+        closeLobbyPortMapper(true);
         preGameLobby.stop();
         Map<String, String> values = new LinkedHashMap<>();
         values.put(CoopOptionsRegistry.HOST_PORT, null);
@@ -770,7 +804,7 @@ public final class CoopInGameLauncherSession {
             store.writeSessionLaunchSettings(values);
             store.reload();
         }
-        CoopModPlugin.applyRuntimeSeed("");
+        applyRuntimeSeedSafe("");
         CoopStormBridge.configureGuest(false);
         armedRole = CoopConnectionRole.NONE;
         setStatus(tr("CO-OP disabled (Singleplayer mode).",
@@ -861,5 +895,123 @@ public final class CoopInGameLauncherSession {
 
     private static String trim(String s) {
         return s == null ? "" : s.trim();
+    }
+
+    void setLobbyPortMapperFactoryForTests(BiFunction<Integer, Boolean, CoopPortMapper> factory) {
+        this.lobbyPortMapperFactory = factory;
+    }
+
+    CoopPortMapper lobbyPortMapperForTests() {
+        return lobbyPortMapper;
+    }
+
+    private void startLobbyPortMapper(int port) {
+        if (lobbyPortMapper != null) {
+            closeLobbyPortMapper(lobbyPortMapper.port() != port);
+        }
+        lobbyPortMapperReported = false;
+        if (lobbyPortMapperFactory != null) {
+            lobbyPortMapper = lobbyPortMapperFactory.apply(port, portMappingAuto);
+        } else if (isLiveGameRuntime()) {
+            lobbyPortMapper = CoopPortMapper.start(port, portMappingAuto, System::currentTimeMillis);
+        }
+    }
+
+    private void closeLobbyPortMapper(boolean releaseMapping) {
+        CoopPortMapper mapper = lobbyPortMapper;
+        lobbyPortMapper = null;
+        lobbyPortMapperReported = false;
+        if (mapper == null) {
+            return;
+        }
+        if (releaseMapping) {
+            mapper.shutdown();
+        } else {
+            mapper.closeWithoutRelease();
+        }
+    }
+
+    private boolean tickLobbyPortMapper(long now) {
+        if (lobbyPortMapper == null || !preGameLobby.isHost()) {
+            return false;
+        }
+        lobbyPortMapper.tick(now);
+        CoopPortMapper.Result res = lobbyPortMapper.result();
+        if (lobbyPortMapperReported || !res.finished()) {
+            return false;
+        }
+        lobbyPortMapperReported = true;
+        return applyLobbyPortMapperResult(res);
+    }
+
+    boolean applyLobbyPortMapperResult(CoopPortMapper.Result res) {
+        if (res == null) {
+            return false;
+        }
+        if (res.mapped()) {
+            CoopLog.info(CoopInGameLauncherSession.class,
+                    "Coop Title Screen lobby mapped " + res.externalEndpoint() + " via " + res.tier());
+            if (res.cgnat()) {
+                setStatus(tr("Lobby open, but CGNAT (" + res.externalAddress()
+                                + ") blocks direct joins. Use VPN / IPv6.",
+                        "Лобби открыто, но провайдер за CGNAT (" + res.externalAddress()
+                                + ") блокирует прямой вход. Нужен VPN / IPv6."),
+                        new Color(255, 185, 80));
+            } else {
+                if (!res.externalAddress().isEmpty()
+                        && (hostAddress.isEmpty() || isPrivateIpv4Address(hostAddress))) {
+                    hostAddress = res.externalAddress();
+                }
+                String invite = buildHostInvite();
+                boolean copied = !invite.isEmpty() && isLiveGameRuntime()
+                        && CoopTitleScreenBridge.writeClipboard(invite);
+                setStatus(tr("Lobby open! UPnP mapped " + res.externalEndpoint()
+                                + (copied ? " (invite copied)" : "") + ". Waiting for players...",
+                        "Лобби открыто! Порт открыт (UPnP): " + res.externalEndpoint()
+                                + (copied ? " (инвайт скопирован)" : "") + ". Ожидание игроков..."),
+                        new Color(110, 255, 165));
+            }
+            return true;
+        }
+        if (!res.failureText().isEmpty()) {
+            CoopLog.warn(CoopInGameLauncherSession.class,
+                    "Coop Title Screen lobby UPnP failed: " + res.failureText());
+            int p = lobbyPortMapper != null ? lobbyPortMapper.port() : parsePort(hostPort);
+            setStatus(tr("Lobby open (port " + p + "), UPnP failed: " + res.failureText()
+                            + ". Forward port manually or use VPN.",
+                    "Лобби открыто (порт " + p + "), UPnP не сработал: " + res.failureText()
+                            + ". Пробросьте порт вручную или используйте VPN."),
+                    new Color(255, 185, 80));
+            return true;
+        }
+        return false;
+    }
+
+    static boolean isPrivateIpv4Address(String address) {
+        String s = trim(address);
+        if (s.isEmpty() || "localhost".equalsIgnoreCase(s) || "0.0.0.0".equals(s)) {
+            return true;
+        }
+        String[] parts = s.split("\\.");
+        if (parts.length != 4) {
+            return false;
+        }
+        int[] octets = new int[4];
+        try {
+            for (int i = 0; i < 4; i++) {
+                octets[i] = Integer.parseInt(parts[i]);
+                if (octets[i] < 0 || octets[i] > 255) {
+                    return false;
+                }
+            }
+        } catch (NumberFormatException ex) {
+            return false;
+        }
+        return octets[0] == 10
+                || octets[0] == 127
+                || (octets[0] == 192 && octets[1] == 168)
+                || (octets[0] == 169 && octets[1] == 254)
+                || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
+                || (octets[0] == 100 && octets[1] >= 64 && octets[1] <= 127);
     }
 }
