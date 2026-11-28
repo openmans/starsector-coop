@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.29 (7777 everywhere - the launcher and the in-game screen agree)
+
+0.2.28 stopped the Java preferences from restoring an old port, but the port also lived in
+`saves/common/coop_options.json.data`: the launcher restored it into its Host field and the in-game
+screen adopted it from the settings store. A host could therefore come up on 7788 while the guest
+was told 7777.
+
+- **Launcher Host field always opens on 7777.** It no longer restores the last port, and the value
+  it launches with is what gets written for the session.
+- **The in-game Host screen takes the port from the launch only.** A port passed as
+  `-Dcoop.hostPort` is honoured (that is a real launch); a port merely remembered from a previous
+  session is ignored and the field starts on `DEFAULT_PORT`.
+
 ## 0.2.28 (the lobby starts at 7777 with no password, every time)
 
 - **No preset secret.** The in-game Host screen still generated a password on start-up

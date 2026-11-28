@@ -119,7 +119,13 @@ public final class CoopInGameLauncherSession {
                 armedRole = cfg.role();
                 if (cfg.role() == CoopConnectionRole.HOST) {
                     activeTab = Tab.HOST;
-                    hostPort = String.valueOf(cfg.port());
+                    // A port only comes from the launch itself (the launcher passed -Dcoop.hostPort).
+                    // The settings store keeps the port the last session used, and reading it back
+                    // made the host screen come up on whatever was tried months ago instead of 7777.
+                    String launchPort = System.getProperty(CoopOptionsRegistry.HOST_PORT);
+                    hostPort = launchPort != null && !launchPort.trim().isEmpty()
+                            ? String.valueOf(cfg.port())
+                            : String.valueOf(DEFAULT_PORT);
                     hostPassword = cfg.password();
                     portMappingAuto = cfg.portMappingEnabled();
                 } else if (cfg.role() == CoopConnectionRole.GUEST) {

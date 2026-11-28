@@ -1213,7 +1213,10 @@ public final class CoopLauncherApp {
         hostSegment.setSelected(host);
         guestSegment.setSelected(!host);
 
-        hostPortField.setText(hostPort.isEmpty() ? String.valueOf(DEFAULT_PORT) : hostPort);
+        // Always 7777. The field used to restore the last port from the settings file, so a port
+        // from an old experiment came back on every launch and the host ended up listening
+        // somewhere the guest was not told about.
+        hostPortField.setText(String.valueOf(DEFAULT_PORT));
         guestHostField.setText(connectHost);
         guestPortField.setText(connectPort.isEmpty() ? String.valueOf(DEFAULT_PORT) : connectPort);
 
