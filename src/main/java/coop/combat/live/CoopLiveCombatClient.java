@@ -273,6 +273,19 @@ public final class CoopLiveCombatClient {
         }
         CoopLog.info(CoopLiveCombatClient.class, "Coop puppet arena initialised: removed "
                 + removedMarkers + " marker ship(s); awaiting streamed spawns");
+        // Say what the mode is before the player concludes it is broken: this arena is a pilot's
+        // seat, not a command chair, and vanilla's command points never exist here.
+        try {
+            String notice = coop.ui.CoopUiLang.tr(
+                    "Live co-op battle: you fly your own ship. There are no command points here -"
+                            + " the battle is commanded on the other side.",
+                    "Живой кооп-бой: вы пилотируете свой корабль. Очков командывания здесь нет —"
+                            + " боем командует другая сторона.");
+            coop.ui.CoopHudNotice.show(notice);
+            coop.ui.CoopFeed.post(notice, null, coop.ui.CoopFeed.Severity.IMPORTANT);
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopLiveCombatClient.class, "Coop could not announce the puppet arena", ex);
+        }
         engine.addLayeredRenderingPlugin(beamRenderer);
     }
 
