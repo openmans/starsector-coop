@@ -96,6 +96,12 @@ that generate the world are not in it, so opening it without a host is unsupport
 Both saves need the mod. Once a campaign has been played in co-op it cannot be loaded without the
 mod enabled.
 
+**When the host loads, the partner is taken to the same campaign's save.** The host's load ends the
+session, so the mod tells the partner which campaign it just opened before the socket closes; the
+partner's own save of that campaign is found in the save index and the load screen is opened with
+that name on screen. The last click is the player's: Starsector has no programmatic save load, and
+the mod's sandbox forbids the reflection that would reach one.
+
 **Rejoining is by loading the co-op autosave, not by starting a New Game.** The mod writes a
 coordinated autosave carrying the campaign's id. A fresh campaign on the same seed is refused,
 because the host's campaign is already in flight and a brand new one is not it. There is an override

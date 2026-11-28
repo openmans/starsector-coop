@@ -404,7 +404,14 @@ public final class CoopMessages {
         /** Bidirectional live combat control & VFX events (ship death/hulk, EMP arc, explosion, objective, pilot switch, pause, end). */
         COMBAT_EVENT,
         /** Guest &rarr; host: chunked personal save ZIP upload on save/autosave for per-name host vault. */
-        PLAYER_SAVE_SYNC
+        PLAYER_SAVE_SYNC,
+        /**
+         * Host &rarr; guest: "I just loaded campaign X; load your save of it too." Sent before the
+         * host's transport is torn down by the load, so the partner is not left sitting in a
+         * campaign the host has left. The guest answers by loading its own save for that campaign,
+         * which is the only file that carries its fleet.
+         */
+        SESSION_LOAD
     }
 
     /**
@@ -464,7 +471,10 @@ public final class CoopMessages {
                   // Phase 33: the only report of what a battle on the other engine did to this
                   // player's ships. Nothing re-sends it and nothing else carries the same facts.
                   ALLY_BATTLE_RESULT, WINGMAN_HELLO,
-                  GUEST_SNAPSHOT_RESTORE, CHAT_MSG -> true;
+                  GUEST_SNAPSHOT_RESTORE, CHAT_MSG,
+                  // One order, no repeat: if it is lost the partner keeps playing a campaign that
+                  // has just been abandoned, which is exactly the divergence it exists to prevent.
+                  SESSION_LOAD -> true;
              case LOBBY_HELLO, LOBBY_CHALLENGE, LOBBY_ACCEPT, LOBBY_REJECT, LOBBY_STATUS,
                   HANDSHAKE_MANIFEST, HANDSHAKE_RESULT,
                   SEED_LOCK_REQUEST, SEED_LOCK_ACK, SEED_LOCK_REJECT,
@@ -3001,6 +3011,31 @@ public final class CoopMessages {
     }
 
     /** Chunked guest -> host personal save upload on save/autosave. */
+    /**
+     * Host &rarr; guest: the campaign the host has just loaded. {@code saveDirName} is the host's
+     * folder, for the log only; the guest resolves its own file from {@code campaignId}, because
+     * the two installs never share save folder names.
+     */
+    public static Message sessionLoad(String sessionId, long seq, long sentAtMillis,
+                                      String campaignId, String characterName, String saveDirName) {
+        return new Message(Type.SESSION_LOAD, requireText(sessionId, "sessionId"), seq, sentAtMillis,
+                "{\"campaignId\":\"" + escapeJson(requireText(campaignId, "campaignId")) + "\","
+                        + "\"characterName\":\"" + escapeJson(characterName == null ? "" : characterName) + "\","
+                        + "\"saveDirName\":\"" + escapeJson(saveDirName == null ? "" : saveDirName) + "\"}");
+    }
+
+    /** Decoded {@link Type#SESSION_LOAD}. */
+    public record SessionLoad(String campaignId, String characterName, String saveDirName) {
+    }
+
+    public static SessionLoad parseSessionLoad(Message message) {
+        Payload payload = payload(message);
+        return new SessionLoad(
+                payload.requiredString("campaignId"),
+                payload.optionalString("characterName", ""),
+                payload.optionalString("saveDirName", ""));
+    }
+
     public static Message playerSaveSync(String sessionId, long seq, long sentAtMillis,
                                          String playerName, long transferId, int chunkIndex,
                                          int totalChunks, int totalBytes, String dataBase64) {

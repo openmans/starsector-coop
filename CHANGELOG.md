@@ -32,6 +32,11 @@
   the relay that `coop-launcher.jar --relay` serves - the host registers, the guest joins, and the
   bridged socket becomes the peer channel. UDP cannot traverse the relay, so relay sessions ride the
   existing TCP state-stream fallback. One bridged socket means one guest per room.
+- **Load follow (`SESSION_LOAD`):** when the host loads another save, the partner is told which
+  campaign before the transport goes down, and the mod opens their load screen with their own save
+  of that campaign named. Starsector exposes no programmatic save load (the loader is obfuscated and
+  the script sandbox refuses both reflection and `java.io`), so the final click stays with the
+  player - but nobody has to guess which of a dozen saves to open.
 - **Live-combat join no longer opens the deployment screen.** The puppet arena starts from two
   synthetic marker fleets, so vanilla offered the joining pilot a deployment dialog listing one
   marker frigate and no command points; the streamed battle only appeared after confirming a screen

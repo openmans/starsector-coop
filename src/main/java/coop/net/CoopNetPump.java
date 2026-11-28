@@ -5222,6 +5222,10 @@ public class CoopNetPump implements EveryFrameScript {
                  // grace window opened, is precisely the case this feature exists for - it turns a
                  // sixty second hold into an immediate, explained ending.
                  SESSION_LEAVE,
+                 // A load order written a frame before the socket died still tells the partner the
+                 // host is leaving that campaign; dropping it would strand them in a world nobody
+                 // else is running.
+                 SESSION_LOAD,
                  // The sender already debited itself; dropping this on the drop edge would burn the
                  // money. The receiver's grant ledger absorbs the duplicate if it also arrives again.
                  CREDITS_GRANT,
@@ -6074,6 +6078,7 @@ public class CoopNetPump implements EveryFrameScript {
             case SAVE_CHECKPOINT_RESULT -> handleSaveCheckpointResult(message);
             case PLAYER_SAVE_SYNC -> handlePlayerSaveSync(message);
             case SESSION_LEAVE -> handleSessionLeave(message);
+            case SESSION_LOAD -> handleSessionLoad(message);
             case MARK -> {
                 // Session-only, both directions. The gate is stated here rather than inherited
                 // from the default branch below, because that branch routes through the campaign
@@ -8654,6 +8659,52 @@ public class CoopNetPump implements EveryFrameScript {
      * teardown runs here: {@link #endSessionAfterDrop()} (which is where the unacknowledged-reliable
      * drain and the credit refunds live) and then the dialog.
      */
+    /**
+     * Host side: "I just loaded campaign X; follow me." Called from {@code CoopModPlugin.onGameLoad}
+     * <em>before</em> the transport is shut down, because the load is what ends the session and the
+     * notice has to leave on the socket that is still open. Sent once per load; the guest resolves
+     * its own save for the campaign and is taken to the load screen.
+     */
+    public void notifyHostLoadedCampaign(String campaignId, String characterName, String saveDirName) {
+        if (campaignId == null || campaignId.isBlank()) {
+            return;
+        }
+        if (service.role() != CoopConnectionRole.HOST || !service.isConnected()) {
+            return;
+        }
+        try {
+            CoopMessages.Message message = CoopMessages.sessionLoad(
+                    sessionState.sessionId() == null ? "load" : sessionState.sessionId(),
+                    service.nextSeq(), clockMillis.getAsLong(),
+                    campaignId, characterName, saveDirName);
+            service.send(message);
+            service.flushOutbound();
+            CoopLog.info(CoopNetPump.class, "Coop told the partner about the loaded campaign "
+                    + campaignId + " (save=" + saveDirName + ") before tearing the session down");
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Coop could not announce the loaded campaign", ex);
+        }
+    }
+
+    /** Guest side: the host loaded another campaign - bring up our own save of it. */
+    private void handleSessionLoad(CoopMessages.Message message) {
+        if (droppedBeforeTheSession(message.type()) || service.role() != CoopConnectionRole.GUEST) {
+            return;
+        }
+        try {
+            CoopMessages.SessionLoad load = CoopMessages.parseSessionLoad(message);
+            String local = storedCampaignIdSupplier.get();
+            if (local != null && local.trim().equals(load.campaignId())) {
+                CoopLog.info(CoopNetPump.class, "Coop load follow: already on campaign "
+                        + load.campaignId() + "; nothing to do");
+                return;
+            }
+            coop.save.CoopSaveLoadSync.openLoadFor(load.campaignId(), load.characterName());
+        } catch (RuntimeException | LinkageError ex) {
+            CoopLog.warn(CoopNetPump.class, "Failed to handle SESSION_LOAD", ex);
+        }
+    }
+
     private void handleSessionLeave(CoopMessages.Message message) {
         if (!isGameplaySessionActive()) {
             return;

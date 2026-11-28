@@ -411,6 +411,29 @@ public class CoopModPlugin extends BaseModPlugin {
             // the current game when you load another one. The guest therefore does NOT autosave on a
             // "session end" checkpoint (CoopSaveCheckpoint.onCheckpointReceived): doing so would put
             // its save ahead of the host's last real one, and the guest rejoins by loading that file.
+            // "One player loads, everyone loads": the partner is told which campaign this is
+            // BEFORE the transport goes down, because the load is what ends the session and the
+            // notice has to leave on the socket that is still open. The guest resolves its own save
+            // for that campaign id and is taken to the load screen; only a host can be followed.
+            try {
+                if (!newGame && netPump != null) {
+                    String campaignId = coop.seed.CoopSeedSync.currentCampaignId();
+                    String character = "";
+                    try {
+                        if (com.fs.starfarer.api.Global.getSector() != null
+                                && com.fs.starfarer.api.Global.getSector().getPlayerPerson() != null) {
+                            character = com.fs.starfarer.api.Global.getSector()
+                                    .getPlayerPerson().getNameString();
+                        }
+                    } catch (RuntimeException | LinkageError ignored) {
+                        // The name is cosmetic in the notice.
+                    }
+                    netPump.notifyHostLoadedCampaign(campaignId, character, "");
+                }
+            } catch (RuntimeException | LinkageError ex) {
+                coop.util.CoopLog.warn(CoopModPlugin.class,
+                        "Coop could not announce the loaded campaign to the partner", ex);
+            }
             CoopSaveCheckpoint.notifySessionEnding();
             // 0.1.1, after the checkpoint and before the shutdown, so the existing order is
             // untouched and the last thing the partner reads is why the silence is about to start.

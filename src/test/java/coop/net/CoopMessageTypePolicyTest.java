@@ -88,7 +88,8 @@ class CoopMessageTypePolicyTest {
             CoopMessages.Type.COMBAT_ARMOR_DELTA, CoopMessages.Type.COMBAT_PROJ_SPAWN,
             CoopMessages.Type.COMBAT_PROJ_HIT, CoopMessages.Type.COMBAT_MISSILE_STATE,
             CoopMessages.Type.COMBAT_BEAMS, CoopMessages.Type.COMBAT_EVENT,
-            CoopMessages.Type.PLAYER_SAVE_SYNC);
+            CoopMessages.Type.PLAYER_SAVE_SYNC,
+            CoopMessages.Type.SESSION_LOAD);
 
     // ---- table: CoopNetService.coalesceKey(Message) ------------------------------------------
     // Whitelist of whole-state snapshots that may supersede a queued copy of themselves; every
@@ -164,7 +165,8 @@ class CoopMessageTypePolicyTest {
             CoopMessages.Type.WINGMAN_HELLO,
             // Extended sync: guest restore and chat messages.
             CoopMessages.Type.GUEST_SNAPSHOT_RESTORE,
-            CoopMessages.Type.CHAT_MSG);
+            CoopMessages.Type.CHAT_MSG,
+            CoopMessages.Type.SESSION_LOAD);
 
     // ---- table: CoopNetPump.allowedDuringReconnectGrace(Type) --------------------------------
     // The only vocabulary an unproven peer may speak while a reconnect grace window is open: the
@@ -237,7 +239,8 @@ class CoopMessageTypePolicyTest {
             CoopMessages.Type.WINGMAN_HELLO,
             CoopMessages.Type.GUEST_SNAPSHOT_RESTORE,
             CoopMessages.Type.STORY_STATE,
-            CoopMessages.Type.CHAT_MSG);
+            CoopMessages.Type.CHAT_MSG,
+            CoopMessages.Type.SESSION_LOAD);
 
     // ---- table: CoopNetPump.isTerminalRejectType(Type) ---------------------------------------
     // The peer's verdicts on a join, dispatched a few lines early out of the pre-drop drain so

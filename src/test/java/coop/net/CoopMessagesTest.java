@@ -1075,4 +1075,23 @@ class CoopMessagesTest {
 
         assertEquals("", CoopMessages.parseSessionLeaveReason(decoded));
     }
+
+    @Test
+    void sessionLoadCarriesTheCampaignTheHostJustOpened() {
+        CoopMessages.Message message = CoopMessages.sessionLoad(
+                "session-a", 7L, 1_000L, "camp-1234", "Banan", "save_Banan_42");
+
+        CoopMessages.SessionLoad load = CoopMessages.parseSessionLoad(message);
+
+        assertEquals("camp-1234", load.campaignId());
+        assertEquals("Banan", load.characterName());
+        assertEquals("save_Banan_42", load.saveDirName());
+        assertEquals(CoopMessages.Type.SESSION_LOAD, message.type());
+    }
+
+    @Test
+    void sessionLoadWithoutACampaignIdIsRefused() {
+        assertThrows(IllegalArgumentException.class,
+                () -> CoopMessages.sessionLoad("session-a", 7L, 1_000L, "", "Banan", ""));
+    }
 }
