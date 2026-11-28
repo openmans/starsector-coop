@@ -91,6 +91,10 @@ public final class CoopLiveCombatClient {
     private final CoopCombatBeamRenderer beamRenderer = new CoopCombatBeamRenderer();
 
     private boolean arenaInitialized;
+    /** First streamed ship and the first-frame stamp: the two numbers a stuck-arena log needs. */
+    private boolean firstSpawnLogged;
+    private boolean noSpawnWarned;
+    private long arenaStartedAtMillis;
     private long nextInputAtMillis;
     private int lastStateTickSeq = -1;
     private int lastMissileTickSeq = -1;
@@ -123,6 +127,7 @@ public final class CoopLiveCombatClient {
             while ((sp = session.pollSpawn()) != null) {
                 spawnShipFromNet(engine, sp);
             }
+            noteEmptyArena(engine, nowMillis);
 
             // 2. Apply latest authoritative ship states
             ShipStateBatch batch;
@@ -241,6 +246,7 @@ public final class CoopLiveCombatClient {
 
     private void initPuppetArena(CombatEngineAPI engine) {
         arenaInitialized = true;
+        arenaStartedAtMillis = System.currentTimeMillis();
         engine.setDoNotEndCombat(true);
         try {
             CombatFleetManagerAPI fm0 = engine.getFleetManager(0);
@@ -270,6 +276,24 @@ public final class CoopLiveCombatClient {
         engine.addLayeredRenderingPlugin(beamRenderer);
     }
 
+    /**
+     * One warning if the arena has been up for ten seconds with nothing streamed into it. The arena
+     * can be an empty box for legitimate reasons (a battle that really has no ships left), but ten
+     * seconds of silence right after a join is the shape of a broken stream, and the next log should
+     * say so in one line instead of leaving the player staring at an empty map.
+     */
+    private void noteEmptyArena(CombatEngineAPI engine, long nowMillis) {
+        if (noSpawnWarned || firstSpawnLogged || !arenaInitialized) {
+            return;
+        }
+        if (nowMillis - arenaStartedAtMillis < 10_000L) {
+            return;
+        }
+        noSpawnWarned = true;
+        CoopLog.warn(CoopLiveCombatClient.class, "Coop puppet arena has received no streamed ships in "
+                + (nowMillis - arenaStartedAtMillis) + " ms; the authoritative side may not be streaming");
+    }
+
     private void spawnShipFromNet(CombatEngineAPI engine, ShipSpawn sp) {
         if (shipsByNetId.containsKey(sp.netId())) {
             return;
@@ -296,6 +320,12 @@ public final class CoopLiveCombatClient {
             }
             configurePuppetShip(spawned, sp);
             shipsByNetId.put(sp.netId(), spawned);
+            if (!firstSpawnLogged) {
+                firstSpawnLogged = true;
+                CoopLog.info(CoopLiveCombatClient.class, "Coop puppet arena: first streamed ship netId="
+                        + sp.netId() + " hull=" + sp.hullId() + " owner=" + sp.owner()
+                        + " (" + (System.currentTimeMillis() - arenaStartedAtMillis) + " ms after init)");
+            }
 
             ShipInterpTarget t = new ShipInterpTarget();
             t.x = sp.x();
