@@ -7643,8 +7643,14 @@ class CoopNetPumpTest {
 
     // ---- Phase 28 milestone 2: host policy options -----------------------------------------------
 
-    /** The core tab the fake UI reports as open; any non-null value is "a core tab is up". */
-    private static final Object CORE_TAB = com.fs.starfarer.api.campaign.CoreUITabId.MAP;
+    /**
+     * A core tab that still pauses. Deliberately not MAP: the campaign map is the one tab vanilla
+     * runs time behind, and it was excluded from the pause on 2026-11-28.
+     */
+    private static final Object CORE_TAB = com.fs.starfarer.api.campaign.CoreUITabId.FLEET;
+
+    /** The excluded tab: open, but not a reason to stop the shared world. */
+    private static final Object MAP_TAB = com.fs.starfarer.api.campaign.CoreUITabId.MAP;
 
     private static CoopMessages.Message lastPauseIntent(RecordingNetService service) {
         return lastOfType(service, CoopMessages.Type.PAUSE_INTENT);
@@ -7763,6 +7769,27 @@ class CoopNetPumpTest {
         assertEquals(1, countOfType(service, CoopMessages.Type.PAUSE_INTENT));
         assertEquals("true", CoopMessages.requiredPayloadString(lastPauseIntent(service), "paused"));
         assertEquals("SCREEN", CoopMessages.requiredPayloadString(lastPauseIntent(service), "source"));
+    }
+
+    @Test
+    void theCampaignMapDoesNotPauseTheSharedWorld() {
+        RecordingNetService service = new RecordingNetService(CoopConnectionRole.GUEST);
+        RecordingCampaignUi ui = new RecordingCampaignUi(null);
+        Global.setSector(new RecordingSector(false, ui).proxy());
+        CoopNetPump pump = livePump(service, activeGuestSession(), new AtomicLong(1000L)::get);
+        pump.advance(0f);
+
+        ui.coreTab = MAP_TAB;
+        pump.advance(0f);
+        pump.advance(0f);
+
+        assertEquals(0, countOfType(service, CoopMessages.Type.PAUSE_INTENT),
+                "a guest glancing at the map must not stop the partner's galaxy");
+
+        // And the same tab under an explicit open/close cycle stays silent.
+        ui.coreTab = null;
+        pump.advance(0f);
+        assertEquals(0, countOfType(service, CoopMessages.Type.PAUSE_INTENT));
     }
 
     @Test

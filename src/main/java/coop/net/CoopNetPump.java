@@ -7413,9 +7413,17 @@ public class CoopNetPump implements EveryFrameScript {
         try {
             SectorAPI sector = Global.getSector();
             CampaignUIAPI ui = sector == null ? null : sector.getCampaignUI();
-            boolean dialogOrMenu = ui != null && isBlockingDialogOrMenuOpen(ui);
-            boolean coreTab = ui != null && isCoreTabOpen(ui);
-            if (!coreTab) {
+            // The coop views the player opens to WATCH or TALK do not pause the shared world: the
+            // tactical map is a window onto a battle that is still running on the other side, and
+            // chat is a chat. Both are interaction dialogs, so they are subtracted from the menu
+            // term rather than added anywhere.
+            boolean coopViewOpen = tacticalMapDialogs.isShown() || chatDialogs.isShown();
+            boolean dialogOrMenu = ui != null && isBlockingDialogOrMenuOpen(ui) && !coopViewOpen;
+            // The campaign map is a core tab but not a pause: vanilla keeps time running behind it,
+            // and a guest glancing at the map should not stop the partner's galaxy.
+            boolean coreTab = ui != null && isPauseWorthyCoreTabOpen(ui);
+            boolean anyCoreTab = ui != null && isCoreTabOpen(ui);
+            if (!anyCoreTab) {
                 // Phase 28 M2, the NEXT_SCREEN_TOGGLE boundary. No core tab is open, so a flip that
                 // arrived while one WAS open takes effect now - before the next open, and never
                 // underneath one. This is the whole of "a flip does not yank the pause out from
@@ -7521,6 +7529,17 @@ public class CoopNetPump implements EveryFrameScript {
      */
     private static boolean isCoreTabOpen(CampaignUIAPI ui) {
         return ui.getCurrentCoreTab() != null;
+    }
+
+    /**
+     * The core tabs that pause when {@code coop.pauseOnGuestScreens} is on. The campaign map is
+     * excluded: vanilla runs time behind it, it is the one tab a player opens to look at the galaxy
+     * rather than to manage it, and pausing on it froze the partner's world every time somebody
+     * checked where they were.
+     */
+    private static boolean isPauseWorthyCoreTabOpen(CampaignUIAPI ui) {
+        com.fs.starfarer.api.campaign.CoreUITabId tab = ui.getCurrentCoreTab();
+        return tab != null && tab != com.fs.starfarer.api.campaign.CoreUITabId.MAP;
     }
 
     private void handlePauseIntent(CoopMessages.Message message) {

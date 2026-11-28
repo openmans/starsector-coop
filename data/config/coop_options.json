@@ -126,8 +126,9 @@
 	"coop.allowGuestPause":true,
 
 	# true (default) is the shipped behaviour: the world stops while a guest browses the vanilla
-	# auto-pause screens - map, fleet, character, refit, cargo, intel. Set false and the world keeps
-	# running while your partner reads.
+	# auto-pause screens - fleet, character, refit, cargo, intel, outposts. The campaign map is never a
+	# pause, and neither are the coop's own Tactical Map and chat dialogs. Set false and the world
+	# keeps running while your partner reads.
 	# This does NOT touch the two pauses that are correctness rather than comfort: an open
 	# interaction dialog (market trades are settled against the state at open time) and combat.
 	# true|false | applies: next screen open/close | Phase 28 | wired in milestone 2

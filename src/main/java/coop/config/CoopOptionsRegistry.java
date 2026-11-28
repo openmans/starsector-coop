@@ -358,7 +358,9 @@ public final class CoopOptionsRegistry {
         options.add(boolOption(PAUSE_ON_GUEST_SCREENS, Tier.POLICY, "true",
                 "Phase 28 (Phase 11 lever)", "next screen open/close", ApplyBoundary.NEXT_SCREEN_TOGGLE,
                 "true is exact Phase 11 behaviour: the world stops while a guest browses the vanilla"
-                        + " auto-pause screens (map/fleet/character/refit/cargo/intel). false lets"
+                        + " auto-pause screens (fleet/character/refit/cargo/intel/outposts). The"
+                        + " campaign map is never a pause, and neither are the coop's own Tactical Map"
+                        + " and chat dialogs - those are views onto a world that keeps running. false lets"
                         + " the world keep running - your partner reads while time passes. Does NOT"
                         + " touch the two hardwired pause intents: interaction dialogs (the market"
                         + " open-snapshot model trades against open-time state, so that pause is"

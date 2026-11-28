@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.27 (no auto-pause for the map)
+
+- **Opening the campaign map no longer stops the shared world.** The guest screen pause still covers
+  the tabs that vanilla itself pauses behind (fleet, character, refit, cargo, intel, outposts), but
+  `MAP` is excluded: it is the one tab you open to *look* at the galaxy, and pausing on it froze the
+  partner's world every time somebody checked where they were.
+- **The coop Tactical Map and the chat dialog never pause either.** They are interaction dialogs, so
+  they used to count as a menu; both are views onto a world that is still running - a tactical map
+  that stopped the battle it was displaying made no sense. `coop.pauseOnGuestScreens` still governs
+  the vanilla tabs, `false` still stops pausing anywhere.
+
 ## 0.2.26 (lobby defaults: port 7777, no password, name "User")
 
 - **No generated password.** The launcher used to fill the host password field with a random one on

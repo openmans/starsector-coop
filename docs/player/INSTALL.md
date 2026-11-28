@@ -567,7 +567,7 @@ campaign already in progress; use the options page for that.
 |---|---|---|
 | `coop.maxGuests` | `1` | Peer capacity, `1`..`3` (host + up to 3 guests). Values outside the range are clamped with a warning in the log. |
 | `coop.reconnectGraceSeconds` | `60` | How long a dropped link is held open before the session ends, 0 to 3600. `0` ends it on the first drop. Each side sets its own. |
-| `coop.pauseOnGuestScreens` | `true` | Whether the world stops while a guest browses the vanilla auto-pause screens. `false` lets the world keep running. Interaction dialogs and combat pause either way. |
+| `coop.pauseOnGuestScreens` | `true` | Whether the world stops while a guest browses the vanilla auto-pause screens (fleet, character, refit, cargo, intel, outposts). The campaign map, the coop Tactical Map and chat never pause. `false` lets the world keep running. Interaction dialogs and combat pause either way. |
 | `coop.allowGuestPause` | `true` | Whether the guest may pause and unpause the shared world. Never gates the pause an open screen forces. |
 | `coop.allowMidSessionJoin` | `true` | Whether an additional guest may join a multi-guest campaign after the lobby has released. |
 | `coop.lootSplit` | `equal` | `equal` pays the partner half the base value of every allied wreck you recover after a joint battle (through the ordinary credit ledger); `pilot-keeps` pays nothing. |
