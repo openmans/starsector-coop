@@ -277,7 +277,6 @@ public final class CoopLauncherApp {
      * it: a host who deliberately wants an open session should not have to fight the launcher about
      * it every time they touch the role switch.
      */
-    private boolean hostPasswordCleared;
     /** True while the code, not the player, is writing the host password field. */
     private boolean writingHostPassword;
     /** True while the code, not the player, is writing the guest invite field. */
@@ -735,7 +734,6 @@ public final class CoopLauncherApp {
         hostPortField.setText(String.valueOf(DEFAULT_PORT));
         hostPasswordField = CoopTheme.passwordField("No password");
         hostPasswordField.setToolTipText("Generated for you and included in the invite. Clear for an open session.");
-        hostPasswordField.getDocument().addDocumentListener(onAnyEdit(this::noticeHostPasswordCleared));
         publicAddressField = CoopTheme.textField("Public, LAN or VPN address");
         publicLookupButton = CoopTheme.secondary("Look up");
         CoopLauncherUi.stableWidth(publicLookupButton, "Looking up…", "Определить", "Поиск…");
@@ -1332,7 +1330,8 @@ public final class CoopLauncherApp {
         if (installMode) {
             refreshInstallModeView();
         } else if (host) {
-            maybeGenerateHostPassword();
+            // No generated password: the lobby ships with "No password" unless the player types
+            // one, which is what a two-friends-on-LAN session wants by default.
             maybeGenerateHostSeed();
             refreshInvitePreview();
         }
@@ -1893,38 +1892,6 @@ public final class CoopLauncherApp {
                 action.run();
             }
         };
-    }
-
-    /**
-     * Fills an empty host password field with a generated one. Does nothing once the player has
-     * emptied the field themselves, and nothing when they have already typed something.
-     */
-    private void maybeGenerateHostPassword() {
-        if (hostPasswordCleared || !password(hostPasswordField).isEmpty()) {
-            return;
-        }
-        writingHostPassword = true;
-        try {
-            hostPasswordField.setText(CoopPasswords.generate());
-        } finally {
-            writingHostPassword = false;
-        }
-        // The value never reaches the log. The whole point of it is that only the two players see it.
-        LOG.info("Generated a host password of " + CoopPasswords.LENGTH + " characters;"
-                + " the value is not logged");
-        append("Generated a password for you. The invite carries it. Clear the field if you would"
-                + " rather have no password.");
-    }
-
-    /** Notices the player emptying the host password field, so nothing refills it afterwards. */
-    private void noticeHostPasswordCleared() {
-        if (writingHostPassword || hostPasswordCleared) {
-            return;
-        }
-        if (password(hostPasswordField).isEmpty()) {
-            hostPasswordCleared = true;
-            LOG.info("The player emptied the host password field; it stays empty for this run");
-        }
     }
 
     /** Keeps the read-only invite line in step with the host fields. */

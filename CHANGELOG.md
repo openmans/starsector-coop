@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.26 (lobby defaults: port 7777, no password, name "User")
+
+- **No generated password.** The launcher used to fill the host password field with a random one on
+  every switch to Host. The lobby now ships with **no password**, and the invite says "Open session /
+  Без пароля"; type one if you want the gate (it is still a gate, not encryption).
+- **Default name is "User".** A player with no `coop.playerName` and no loaded character (the
+  title-screen lobby) is shown as `User` on both sides instead of `Host`/`Guest`/`Player`. A character
+  name still wins, and `coop.playerName` still overrides everything.
+- **Port stays 7777** on both host and guest screens and in invites.
+
 ## 0.2.25 (Wire the features that were only classes: chat, encryption, restore, wrecks, relay)
 
 - **Chat hotkey (`coop.chatKey`, default F8):** the chat service, dialog and `CHAT_MSG` existed but

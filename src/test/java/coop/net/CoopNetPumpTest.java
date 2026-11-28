@@ -5513,8 +5513,8 @@ class CoopNetPumpTest {
         pump.setCharacterNameSupplier(() -> "");
 
         withoutPlayerNameProperty(() -> {
-            assertEquals("Host", pump.localPlayerName(CoopConnectionRole.HOST));
-            assertEquals("Guest", pump.localPlayerName(CoopConnectionRole.GUEST));
+            assertEquals("User", pump.localPlayerName(CoopConnectionRole.HOST));
+            assertEquals("User", pump.localPlayerName(CoopConnectionRole.GUEST));
         });
     }
 
@@ -5548,7 +5548,7 @@ class CoopNetPumpTest {
         Global.setSector(null);
         CoopNetPump pump = new CoopNetPump(new RecordingNetService(CoopConnectionRole.HOST), () -> 1000L);
 
-        withoutPlayerNameProperty(() -> assertEquals("Host", pump.localPlayerName(CoopConnectionRole.HOST)));
+        withoutPlayerNameProperty(() -> assertEquals("User", pump.localPlayerName(CoopConnectionRole.HOST)));
     }
 
     @Test
@@ -5557,7 +5557,7 @@ class CoopNetPumpTest {
         Global.setSector(new RecordingSector(false).proxy());
         CoopNetPump pump = new CoopNetPump(new RecordingNetService(CoopConnectionRole.GUEST), () -> 1000L);
 
-        withoutPlayerNameProperty(() -> assertEquals("Guest", pump.localPlayerName(CoopConnectionRole.GUEST)));
+        withoutPlayerNameProperty(() -> assertEquals("User", pump.localPlayerName(CoopConnectionRole.GUEST)));
     }
 
     private static final String PLAYER_NAME_PROPERTY = CoopOptionsRegistry.PLAYER_NAME;

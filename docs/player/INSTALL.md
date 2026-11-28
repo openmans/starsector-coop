@@ -557,7 +557,7 @@ use it.
 | `coop.relayAddress` | unset | `host:port` of a `coop-launcher.jar --relay` server for CGNAT players who cannot forward ports. Needs `coop.relayRoom` and `coop.relayToken`; one bridged socket means one guest per room. |
 | `coop.relayRoom` | unset | Room code both players send to the relay. Blank leaves the relay off. |
 | `coop.relayToken` | unset | Shared token the relay checks. Same secret on both installs; never sent to the other player. |
-| `coop.playerName` | your character's name | The name your partner sees in the HUD and on the session page. |
+| `coop.playerName` | unset | The name your partner sees in the HUD and on the session page. Unset means your character's name, and `User` when no character is loaded yet (title-screen lobby). |
 
 **Session rules.** The host owns these. A new campaign takes them from the host's install at its
 first frame and stores them in its own save from then on, so editing them here does nothing to a

@@ -337,7 +337,8 @@ public final class CoopOptionsRegistry {
                         + " policy."));
         options.add(stringOption(PLAYER_NAME, Tier.LAUNCH, "", true, "Phase 20.4",
                 "next connection attempt", ApplyBoundary.NEXT_CONNECTION,
-                "Name shown to your partner. Empty falls back to the local character's own name."));
+                "Name shown to your partner. Empty falls back to the local character's own name,"
+                        + " and to \"User\" when there is no character yet (title-screen lobby)."));
 
         // -- Tier 2: host gameplay policy ------------------------------------------------------
         options.add(intOption(MAX_GUESTS, Tier.POLICY, "1", false, 1, 3, "Phase 20.5 / 27",

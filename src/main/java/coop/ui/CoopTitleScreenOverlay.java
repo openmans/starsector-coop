@@ -403,7 +403,7 @@ public final class CoopTitleScreenOverlay {
             launchLbl.getPosition().setSize(innerW, 56f);
             launchLbl.getPosition().inTL(10f, y + 10f);
         } else {
-            String nick = session.playerName().isEmpty() ? "Player" : session.playerName();
+            String nick = session.playerName().isEmpty() ? "User" : session.playerName();
             LabelAPI nickLbl = ui.addPara(session.tr("Player: ", "Ник: ") + nick, Color.WHITE, 0f);
             nickLbl.getPosition().setSize(innerW, 18f);
             nickLbl.getPosition().inTL(10f, y);

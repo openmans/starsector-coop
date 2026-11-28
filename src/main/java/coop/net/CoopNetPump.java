@@ -4507,7 +4507,10 @@ public class CoopNetPump implements EveryFrameScript {
         if (characterName != null && !characterName.trim().isEmpty()) {
             return characterName.trim();
         }
-        return role == CoopConnectionRole.HOST ? "Host" : "Guest";
+        // The lobby's default name. A player who has neither typed coop.playerName nor loaded a
+        // character yet (title-screen drop-in) shows up as "User" on both sides rather than as the
+        // role, which reads like a placeholder the mod forgot to fill in.
+        return "User";
     }
 
     /**
