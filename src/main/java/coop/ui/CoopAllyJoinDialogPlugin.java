@@ -53,14 +53,22 @@ public final class CoopAllyJoinDialogPlugin implements InteractionDialogPlugin, 
                         + " (дистанция: " + offer.distanceSu() + " su)."));
         text.addPara(CoopUiLang.tr("Choose how your fleet should participate in this battle:",
                 "Выберите, как ваш флот примет участие в этом бою:"), Misc.getGrayColor());
+        text.addPara(CoopUiLang.tr(
+                "Live piloting puts you in one ship: your other ships are flown by the AI on the"
+                        + " fighting side. To command your own ships, take the Tactical Map option.",
+                "Живое пилотирование — это один ваш корабль: остальными управляет ИИ на стороне"
+                        + " боя. Чтобы командовать своими кораблями, выберите вариант с Тактической"
+                        + " картой."), Misc.getGrayColor());
 
         opts.addOption(CoopUiLang.tr(
-                "Join battle directly — Real-Time Co-op Piloting (fly your own ship)",
-                "Войти в бой лично — управление кораблём в реальном времени"), JoinChoice.JOIN_LIVE_COMBAT);
-        opts.addOption(CoopUiLang.tr("Join battle + Tactical Map (command your ships)",
-                "Войти в бой + Тактическая карта (отдавать приказы кораблям)"), JoinChoice.JOIN_TACTICAL);
-        opts.addOption(CoopUiLang.tr("Join battle (AI officers only)",
-                "Войти в бой (управляет ИИ)"), JoinChoice.JOIN_AI);
+                "Fly one ship with your partner — live piloting (your fleet stays AI)",
+                "Летать одним кораблём вместе с напарником — живое пилотирование"
+                        + " (флотом управляет ИИ)"), JoinChoice.JOIN_LIVE_COMBAT);
+        opts.addOption(CoopUiLang.tr("Send your fleet and open the Tactical Map (command your ships)",
+                "Отправить флот и открыть Тактическую карту (командовать своими кораблями)"),
+                JoinChoice.JOIN_TACTICAL);
+        opts.addOption(CoopUiLang.tr("Send your fleet as an AI ally (no piloting)",
+                "Отправить флот как ИИ-союзника (без пилотирования)"), JoinChoice.JOIN_AI);
         opts.addOption(CoopUiLang.tr("Decline (stay out of this battle)",
                 "Отказаться (не участвовать в бою)"), JoinChoice.DECLINE);
     }
