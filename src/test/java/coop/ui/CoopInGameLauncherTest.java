@@ -35,6 +35,39 @@ class CoopInGameLauncherTest {
     }
 
     @Test
+    void aPortRememberedInTheSettingsFileDoesNotComeBackAsTheHostPort() {
+        // The settings file kept the port of the last session; the host screen used to adopt it, so
+        // the game listened on 7788 while the guest was told 7777.
+        org.json.JSONObject common = new org.json.JSONObject();
+        try {
+            common.put(CoopOptionsRegistry.HOST_PORT, "7788");
+        } catch (org.json.JSONException ex) {
+            throw new IllegalStateException(ex);
+        }
+        CoopOptionsStore.JsonSource source = new CoopOptionsStore.JsonSource() {
+            @Override public org.json.JSONObject shipped() { return null; }
+            @Override public org.json.JSONObject common() { return common; }
+        };
+        CoopOptionsStore store = new CoopOptionsStore(source, new Properties()::getProperty);
+
+        CoopInGameLauncherSession session = new CoopInGameLauncherSession();
+        session.syncFromStore(store);
+        assertEquals("7777", session.hostPort(),
+                "a remembered 7788 is not a launch port: the screen must open on 7777");
+
+        // A port passed by the launcher IS the launch and must be shown as-is.
+        System.setProperty(CoopOptionsRegistry.HOST_PORT, "7788");
+        try {
+            CoopInGameLauncherSession launched = new CoopInGameLauncherSession();
+            launched.syncFromStore(store);
+            assertEquals("7788", launched.hostPort(),
+                    "a port the launcher passed is the port this session runs on");
+        } finally {
+            System.clearProperty(CoopOptionsRegistry.HOST_PORT);
+        }
+    }
+
+    @Test
     void inGameLanguageToggleSwitchesSharedUiLangBetweenEnAndRu() {
         CoopUiLang.setRussian(false);
         assertFalse(CoopUiLang.isRussian());
