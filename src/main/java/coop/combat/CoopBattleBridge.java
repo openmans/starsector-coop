@@ -652,6 +652,17 @@ public final class CoopBattleBridge {
     }
 
     /** True while this client is piloting a coop battle (used by the threat watcher's gate). */
+    /**
+     * True while this client is inside (or about to enter) its live-combat puppet arena. Read by
+     * {@link CoopBattleStatusCombatPlugin#init} to suppress vanilla's deployment dialog: the arena's
+     * synthetic fleets exist only to give the engine something to start with, so the screen it would
+     * otherwise show lists one marker frigate and zero command points.
+     */
+    public boolean clientArenaActive() {
+        LiveCombatHook hook = liveCombatHook;
+        return hook != null && hook.isClientArenaActive();
+    }
+
     public boolean isAnyCoopBattleActive() {
         return localBattleActive || remoteBattleActive;
     }

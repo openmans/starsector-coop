@@ -12251,6 +12251,17 @@ public class CoopNetPump implements EveryFrameScript {
             ctx.enemyDeployAll = false;
             ctx.fightToTheLast = true;
             ui.startBattle(ctx);
+            // Belt and braces: the plugin's init normally runs first and suppresses the deployment
+            // dialog there; if this build hands the engine over synchronously, do it again here.
+            try {
+                com.fs.starfarer.api.combat.CombatEngineAPI started = Global.getCombatEngine();
+                if (started != null) {
+                    started.getClass().getMethod("setShowDeploymentDialog", boolean.class)
+                            .invoke(started, false);
+                }
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+                // The plugin init path is the one that matters; this is only a second chance.
+            }
             CoopLog.info(CoopNetPump.class, "Coop launched native live combat puppet arena for battleId="
                     + init.battleId());
         } catch (RuntimeException | LinkageError ex) {

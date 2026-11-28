@@ -72,6 +72,11 @@ dialog for one.
 fought, as vanilla does for a battle with allies. Kills your ships make count for your partner's
 officers, not yours.
 
+**Joining a partner's battle in real time makes you a pilot, not a commander.** You fly your own
+ship inside their battle; the arena has no deployment screen and no command points, because the
+fight is theirs to command. Your other ships are flown by the AI on the fighting side, and deploying
+reinforcements is the fighting player's call.
+
 **You can direct your joined ships from the Tactical Map.** While your partner fights, open
 **Intel → Coop Session** and click **Open Tactical Map** to see the fighting side's fog-filtered
 battlefield at 5 Hz, select your own contributed allied ships, and issue ENGAGE, ESCORT, DEFEND,

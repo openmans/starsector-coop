@@ -251,16 +251,22 @@ public final class CoopLiveCombatClient {
         }
         // Remove the temporary starter dummy ships created only to enter CombatEngineAPI
         List<ShipAPI> initialShips = engine.getShips();
+        int removedMarkers = 0;
         if (initialShips != null) {
             for (ShipAPI dummy : List.copyOf(initialShips)) {
                 if (dummy != null && !shipsByNetId.containsValue(dummy)) {
                     try {
                         engine.removeEntity(dummy);
+                        removedMarkers++;
                     } catch (RuntimeException | LinkageError ignored) {
+                        // A marker the engine refuses to remove is cosmetic; the streamed ships still
+                        // arrive and the camera follows the piloted one.
                     }
                 }
             }
         }
+        CoopLog.info(CoopLiveCombatClient.class, "Coop puppet arena initialised: removed "
+                + removedMarkers + " marker ship(s); awaiting streamed spawns");
         engine.addLayeredRenderingPlugin(beamRenderer);
     }
 

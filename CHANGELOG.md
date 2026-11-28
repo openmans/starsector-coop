@@ -32,6 +32,11 @@
   the relay that `coop-launcher.jar --relay` serves - the host registers, the guest joins, and the
   bridged socket becomes the peer channel. UDP cannot traverse the relay, so relay sessions ride the
   existing TCP state-stream fallback. One bridged socket means one guest per room.
+- **Live-combat join no longer opens the deployment screen.** The puppet arena starts from two
+  synthetic marker fleets, so vanilla offered the joining pilot a deployment dialog listing one
+  marker frigate and no command points; the streamed battle only appeared after confirming a screen
+  that meant nothing. `CoopBattleStatusCombatPlugin.init` now clears the engine's deployment-dialog
+  flag for the arena only, and the arena logs how many marker ships it removed.
 - **Removed, not wired:** `AMBIENT_CALL`, `COLONY_CONSENT_*`, `CONTACT_SET` and `NEX_EVENT` had no
   senders at all, and `CoopCommissionRewardSync` would have paid guests a share of a commission
   amount vanilla never exposes - four classes, their message types and the
