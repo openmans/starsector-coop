@@ -137,6 +137,16 @@ public final class CoopBattleBridge {
      * dead, for as long as the process ran.
      */
     static final long REMOTE_BATTLE_SILENCE_TIMEOUT_MILLIS = 30_000L;
+
+    /**
+     * The same limit while the TCP link is still up. A paused game sends nothing at all — the
+     * combat plugin does not tick behind the escape menu, and the campaign pump does not run in the
+     * combat state — so a partner who alt-tabs or opens the menu for a couple of minutes looks
+     * exactly like a dead peer to a status-only watchdog. With the socket alive the honest reading
+     * is "their game is stopped, not gone", and the failure the short timeout exists for (a link
+     * that died mid-battle) is the case where {@code isConnected()} is false.
+     */
+    static final long REMOTE_BATTLE_SILENCE_TIMEOUT_CONNECTED_MILLIS = 600_000L;
     /** Kill-feed depth carried in every snapshot (it is stateless — the newest snapshot must stand alone). */
     static final int KILL_FEED_DEPTH = 12;
     /**
@@ -181,6 +191,13 @@ public final class CoopBattleBridge {
     private long localBattleBeganAtMillis;
     private long localStatusSeq;
     private long nextStatusAtMillis;
+    /** First BATTLE_STATUS written for the current battle, and the last one written at all. */
+    private boolean statusSendLogged;
+    private long lastStatusSentAtMillis;
+    /** First BATTLE_STATUS received for the current battle, for the joiner's side of the story. */
+    private boolean statusReceiveLogged;
+    /** One warning when a live battle has produced no status stream within a few seconds. */
+    private boolean statusStallWarned;
     private String pendingOutcome = "";
     /** Ships seen in the previous capture, so a vanished ship becomes a kill-feed entry. */
     private final Map<String, String> lastSeenShips = new LinkedHashMap<>();
@@ -558,6 +575,7 @@ public final class CoopBattleBridge {
             }
             nextStatusAtMillis = nowMillis + STATUS_INTERVAL_MILLIS;
             sendStatus(engine);
+            maybeWarnStatusStall(engine, nowMillis);
             // Keep the guest's mirror freeze alive for the whole fight. Its timeout is wall-clock and
             // the campaign pump is not running to refresh it, so a battle longer than the timeout
             // would come back to an already-thawed mirror and the inbound set backlog would resurrect
@@ -621,18 +639,60 @@ public final class CoopBattleBridge {
         }
     }
 
+    /** {@link #REMOTE_BATTLE_SILENCE_TIMEOUT_MILLIS}, widened while the socket is still alive. */
+    private long remoteBattleSilenceLimitMillis() {
+        try {
+            if (service.isConnected()) {
+                return REMOTE_BATTLE_SILENCE_TIMEOUT_CONNECTED_MILLIS;
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A transport that cannot answer is treated as down: the short limit applies.
+        }
+        return REMOTE_BATTLE_SILENCE_TIMEOUT_MILLIS;
+    }
+
     /**
      * Red-team B3: drops a remote battle nobody has said anything about for
      * {@link #REMOTE_BATTLE_SILENCE_TIMEOUT_MILLIS}. Clearing the flag clears both things it feeds —
      * the link-death exemption and (via the caller, one statement later) the shared combat pause
      * intent — so the link is free to be declared dead and the world free to run.
      */
+    /**
+     * One warning per battle when the fighting side has been in combat for five seconds without a
+     * single BATTLE_STATUS leaving it. The joiner's map is empty without that stream and the
+     * silence timeout will eventually release the shared pause under a fight that is still running,
+     * so this line is the difference between "the partner saw nothing" and a log that says why.
+     */
+    private void maybeWarnStatusStall(CombatEngineAPI engine, long nowMillis) {
+        if (statusStallWarned || statusSendLogged || !localBattleActive) {
+            return;
+        }
+        if (nowMillis - localBattleBeganAtMillis < 5_000L) {
+            return;
+        }
+        statusStallWarned = true;
+        int ships = 0;
+        boolean campaign = false;
+        try {
+            ships = engine == null || engine.getShips() == null ? 0 : engine.getShips().size();
+            campaign = isCampaignBattle(engine);
+        } catch (RuntimeException | LinkageError ignored) {
+            // The numbers are diagnostic only.
+        }
+        CoopLog.warn(CoopBattleBridge.class, "Coop battle " + localBattleId + " has sent no"
+                + " BATTLE_STATUS in " + (nowMillis - localBattleBeganAtMillis) + " ms"
+                + " (campaignBattle=" + campaign + " ships=" + ships
+                + " lastStatusSent=" + lastStatusSentAtMillis
+                + "); the partner's tactical map has nothing to draw");
+    }
+
     private void maybeExpireRemoteBattle(long nowMillis) {
         if (!remoteBattleActive) {
             return;
         }
         long silence = nowMillis - remoteBattleSignalAtMillis;
-        if (silence < REMOTE_BATTLE_SILENCE_TIMEOUT_MILLIS) {
+        long limit = remoteBattleSilenceLimitMillis();
+        if (silence < limit) {
             return;
         }
         String battleId = remoteBattleId;
@@ -646,6 +706,7 @@ public final class CoopBattleBridge {
         remoteBattleNpcFleetIds.clear();
         notifyBattleConcluded(concluded, false);
         CoopLog.warn(CoopBattleBridge.class, "Coop no BATTLE_STATUS for " + silence
+                + " ms (limit " + limit + " ms, link " + (service.isConnected() ? "up" : "down") + ")"
                 + " ms on battleId=" + battleId + "; treating the partner's battle as over."
                 + " The link-death exemption and the shared combat pause are released;"
                 + " the host's authoritative state reconciles the fight itself.");
@@ -731,6 +792,7 @@ public final class CoopBattleBridge {
         remoteBattleActive = true;
         remoteBattleSignalAtMillis = clock.getAsLong();
         remoteBattleId = battleId;
+        statusReceiveLogged = false;
         remoteBattleNpcFleetIds.clear();
         remoteBattleNpcFleetIds.addAll(
                 splitIds(payload.requiredString("npcFleetIds")));
@@ -749,6 +811,11 @@ public final class CoopBattleBridge {
             return;
         }
         remoteBattleSignalAtMillis = clock.getAsLong();
+        if (!statusReceiveLogged) {
+            statusReceiveLogged = true;
+            CoopLog.info(CoopBattleBridge.class, "Coop BATTLE_STATUS stream received battleId="
+                    + battleId + " seq=" + statusSeq);
+        }
         remoteStatus = CoopBattleStatus.decode(battleId, statusSeq,
                 payload.requiredLong("elapsedMillis"),
                 payload.requiredString("ships"));
@@ -818,6 +885,10 @@ public final class CoopBattleBridge {
     }
 
     private void handleBattleOrderAck(CoopMessages.Message message) {
+        // The partner's engine is demonstrably running its battle: an ack is only produced from
+        // inside a combat frame. Refresh the silence clock so a fight that is merely not streaming
+        // (a pause menu, a slow frame) is never mistaken for a dead one.
+        remoteBattleSignalAtMillis = clock.getAsLong();
         CoopMessages.Payload payload = CoopMessages.payload(message);
         CoopBattleOrder.Ack ack = new CoopBattleOrder.Ack(
                 payload.requiredString("orderId"),
@@ -826,6 +897,12 @@ public final class CoopBattleBridge {
                 Boolean.parseBoolean(payload.requiredString("accepted")),
                 payload.optionalString("activeAssignment", ""),
                 payload.optionalString("reason", ""));
+        if (!ack.accepted()) {
+            // The joiner's only feedback for an order that did not take was silence; the reason is
+            // already on the wire (the ship was not theirs, the battle moved on, the AI refused).
+            CoopLog.info(CoopBattleBridge.class, "Coop BATTLE_ORDER rejected ship=" + ack.shipId()
+                    + " reason=" + ack.reason() + " activeAssignment=" + ack.activeAssignment());
+        }
         Consumer<CoopBattleOrder.Ack> listener = orderAckListener;
         if (listener != null) {
             listener.accept(ack);
@@ -879,6 +956,9 @@ public final class CoopBattleBridge {
         localBattleBeganAtMillis = clock.getAsLong();
         localStatusSeq = 0L;
         nextStatusAtMillis = 0L;
+        statusSendLogged = false;
+        lastStatusSentAtMillis = 0L;
+        statusStallWarned = false;
         pendingOutcome = "";
         lastSeenShips.clear();
         killFeed.clear();
@@ -1169,6 +1249,12 @@ public final class CoopBattleBridge {
                 status.battleId(), status.statusSeq(), status.elapsedMillis(), status.encodeBody()));
         // The pump is frozen for the whole battle, so nothing else will push these bytes out.
         service.flushOutbound();
+        lastStatusSentAtMillis = clock.getAsLong();
+        if (!statusSendLogged) {
+            statusSendLogged = true;
+            CoopLog.info(CoopBattleBridge.class, "Coop BATTLE_STATUS stream started battleId="
+                    + localBattleId + " ships=" + ships.size() + " seq=" + status.statusSeq());
+        }
     }
 
     private static com.fs.starfarer.api.combat.FogOfWarAPI safeFogOfWar(CombatEngineAPI engine) {

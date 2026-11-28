@@ -1223,10 +1223,11 @@ class CoopBattleBridgeTest {
     }
 
     @Test
-    void b3_aRemoteBattleWithNoStatusForThirtySecondsIsAgedOut() {
+    void b3_aDeadLinkAgesTheRemoteBattleOutAfterThirtySeconds() {
         Fixture fixture = Fixture.host();
         fixture.bridge.handle(CoopMessages.battleBegin("session-a", 1L, 0L, "battle-1",
                 "guest-player", "Corvus", "a pirate armada", "", CoopMessages.BattleKind.PLAYER));
+        fixture.service.connected = false;
 
         assertTrue(fixture.bridge.isRemoteBattleActive());
         fixture.bridge.tickCampaign(null, true, CoopBattleBridge.STATUS_INTERVAL_MILLIS * 10L);
@@ -1241,6 +1242,27 @@ class CoopBattleBridgeTest {
 
         assertFalse(fixture.bridge.isRemoteBattleActive());
         assertFalse(fixture.pause.eitherInCombat(), "the combat pause intent goes with it");
+    }
+
+    @Test
+    void b3_aConnectedPeerThatIsPausedKeepsTheRemoteBattleAlive() {
+        Fixture fixture = Fixture.host();
+        fixture.bridge.handle(CoopMessages.battleBegin("session-a", 1L, 0L, "battle-1",
+                "guest-player", "Corvus", "a pirate armada", "", CoopMessages.BattleKind.PLAYER));
+
+        // A paused game sends nothing: the combat plugin does not tick behind the escape menu and
+        // the campaign pump does not run in the combat state. The socket is still up, so the honest
+        // reading is "their game is stopped", and dropping the battle here would unpause the host's
+        // world underneath a fight that is merely on hold.
+        fixture.bridge.tickCampaign(null, true, CoopBattleBridge.REMOTE_BATTLE_SILENCE_TIMEOUT_MILLIS);
+        assertTrue(fixture.bridge.isRemoteBattleActive(),
+                "30 s of silence from a live socket is a pause menu, not a dead peer");
+        assertTrue(fixture.pause.eitherInCombat());
+
+        fixture.bridge.tickCampaign(null, true,
+                CoopBattleBridge.REMOTE_BATTLE_SILENCE_TIMEOUT_CONNECTED_MILLIS);
+        assertFalse(fixture.bridge.isRemoteBattleActive(),
+                "the safety net still exists for a link that is up but silent for ten minutes");
     }
 
     @Test
