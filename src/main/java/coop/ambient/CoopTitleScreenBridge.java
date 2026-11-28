@@ -792,10 +792,6 @@ public final class CoopTitleScreenBridge {
 
     private static final String PREF_LAST_JOIN_HOST = "lastJoinHost";
     private static final String PREF_LAST_JOIN_PORT = "lastJoinPort";
-    private static final String PREF_LAST_JOIN_PW = "lastJoinPassword";
-    private static final String PREF_LAST_HOST_PORT = "lastHostPort";
-    private static final String PREF_LAST_HOST_PW = "lastHostPassword";
-    private static final String PREF_LAST_HOST_PW_SET = "lastHostPasswordSet";
 
     /** Saves the player's lobby nickname across sessions. */
     public static void savePlayerName(String name) {
@@ -804,46 +800,6 @@ public final class CoopTitleScreenBridge {
         }
         try {
             Preferences.userRoot().node(PREF_NODE).put(PREF_NAME_KEY, name.trim());
-        } catch (Throwable ignored) {
-        }
-    }
-
-    /** True if the host has already generated or entered a saved lobby password. */
-    public static boolean hasSavedHostPassword() {
-        try {
-            return Preferences.userRoot().node(PREF_NODE).getBoolean(PREF_LAST_HOST_PW_SET, false);
-        } catch (Throwable ignored) {
-            return false;
-        }
-    }
-
-    /** Loads the last saved Host lobby port, or {@code ""} if never saved. */
-    public static String loadLastHostPort() {
-        try {
-            return Preferences.userRoot().node(PREF_NODE).get(PREF_LAST_HOST_PORT, "").trim();
-        } catch (Throwable ignored) {
-            return "";
-        }
-    }
-
-    /** Loads the last saved Host lobby password, or {@code ""} if empty/unset. */
-    public static String loadLastHostPassword() {
-        try {
-            return Preferences.userRoot().node(PREF_NODE).get(PREF_LAST_HOST_PW, "").trim();
-        } catch (Throwable ignored) {
-            return "";
-        }
-    }
-
-    /** Persists Host lobby port & password across game restarts and menu returns. */
-    public static void saveLastHostSettings(String port, String password) {
-        try {
-            Preferences prefs = Preferences.userRoot().node(PREF_NODE);
-            if (port != null && !port.trim().isEmpty()) {
-                prefs.put(PREF_LAST_HOST_PORT, port.trim());
-            }
-            prefs.put(PREF_LAST_HOST_PW, password == null ? "" : password.trim());
-            prefs.putBoolean(PREF_LAST_HOST_PW_SET, true);
         } catch (Throwable ignored) {
         }
     }
@@ -866,17 +822,12 @@ public final class CoopTitleScreenBridge {
         }
     }
 
-    /** Loads the last used Guest password, or {@code ""} if never saved. */
-    public static String loadLastJoinPassword() {
-        try {
-            return Preferences.userRoot().node(PREF_NODE).get(PREF_LAST_JOIN_PW, "").trim();
-        } catch (Throwable ignored) {
-            return "";
-        }
-    }
-
-    /** Persists the last Guest connection parameters so one-click CONNECT works across restarts. */
-    public static void saveLastJoinSettings(String host, String port, String password) {
+    /**
+     * Persists the last Guest host/port so one-click CONNECT works across restarts. The password is
+     * deliberately not stored: a session password kept in the registry outlives the session, shows up
+     * as a "secret" the player never set, and there is no way to tell a stale one from a live one.
+     */
+    public static void saveLastJoinSettings(String host, String port) {
         if (host == null || host.trim().isEmpty()) {
             return;
         }
@@ -886,7 +837,6 @@ public final class CoopTitleScreenBridge {
             if (port != null && !port.trim().isEmpty()) {
                 prefs.put(PREF_LAST_JOIN_PORT, port.trim());
             }
-            prefs.put(PREF_LAST_JOIN_PW, password == null ? "" : password.trim());
         } catch (Throwable ignored) {
         }
     }

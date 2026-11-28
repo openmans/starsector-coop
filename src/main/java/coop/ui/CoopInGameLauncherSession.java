@@ -86,20 +86,10 @@ public final class CoopInGameLauncherSession {
         if (hostSeed.isEmpty()) {
             hostSeed = CoopInGameInvite.generateSeed();
         }
-        String savedHostPort = CoopTitleScreenBridge.loadLastHostPort();
-        if (!savedHostPort.isEmpty() && String.valueOf(DEFAULT_PORT).equals(hostPort)) {
-            hostPort = savedHostPort;
-        }
-        if (hostPassword.isEmpty()) {
-            if (CoopTitleScreenBridge.hasSavedHostPassword()) {
-                hostPassword = CoopTitleScreenBridge.loadLastHostPassword();
-            } else {
-                hostPassword = CoopInGameInvite.generatePassword();
-                if (isLiveGameRuntime()) {
-                    CoopTitleScreenBridge.saveLastHostSettings(hostPort, hostPassword);
-                }
-            }
-        }
+        // The host screen always starts at DEFAULT_PORT (7777) and with no password. A remembered
+        // port and a remembered "password is set" flag both surfaced as settings the player never
+        // chose, and a generated password nobody asked for is a secret waiting to leak into a log.
+        // A password is typed for that session only; Regenerate makes one on demand.
         if (hostAddress.isEmpty()) {
             hostAddress = CoopTitleScreenBridge.detectLocalLanAddress();
         }
@@ -113,9 +103,6 @@ public final class CoopInGameLauncherSession {
                 String savedPort = CoopTitleScreenBridge.loadLastJoinPort();
                 if (!savedPort.isEmpty()) {
                     guestPort = savedPort;
-                }
-                if (guestPassword.isEmpty()) {
-                    guestPassword = CoopTitleScreenBridge.loadLastJoinPassword();
                 }
             }
         }
@@ -216,13 +203,7 @@ public final class CoopInGameLauncherSession {
 
     public String hostPassword() { return hostPassword; }
     public void setHostPassword(String v) {
-        String next = v == null ? "" : v.trim();
-        if (!next.equals(hostPassword)) {
-            hostPassword = next;
-            if (isLiveGameRuntime()) {
-                CoopTitleScreenBridge.saveLastHostSettings(hostPort, hostPassword);
-            }
-        }
+        hostPassword = v == null ? "" : v.trim();
     }
 
     public String hostSeed() { return hostSeed; }
@@ -294,9 +275,6 @@ public final class CoopInGameLauncherSession {
 
     public void regeneratePassword() {
         hostPassword = CoopInGameInvite.generatePassword();
-        if (isLiveGameRuntime()) {
-            CoopTitleScreenBridge.saveLastHostSettings(hostPort, hostPassword);
-        }
         setStatus(tr("Generated new password.", "Сгенерирован новый пароль."),
                 new Color(110, 255, 165));
     }
@@ -393,9 +371,6 @@ public final class CoopInGameLauncherSession {
         }
         CoopModPlugin.applyRuntimeSeed(seed);
         CoopStormBridge.configureGuest(false);
-        if (store == CoopOptionsStore.system() && isLiveGameRuntime()) {
-            CoopTitleScreenBridge.saveLastHostSettings(String.valueOf(port), hostPassword);
-        }
         armedRole = CoopConnectionRole.HOST;
 
         String invite = buildHostInvite();
@@ -454,7 +429,7 @@ public final class CoopInGameLauncherSession {
         CoopModPlugin.applyRuntimeSeed(seed);
         CoopStormBridge.configureGuest(true);
         if (store == CoopOptionsStore.system() && isLiveGameRuntime()) {
-            CoopTitleScreenBridge.saveLastJoinSettings(host, String.valueOf(port), guestPassword);
+            CoopTitleScreenBridge.saveLastJoinSettings(host, String.valueOf(port));
         }
         armedRole = CoopConnectionRole.GUEST;
 

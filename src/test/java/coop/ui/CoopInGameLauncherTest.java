@@ -24,6 +24,17 @@ class CoopInGameLauncherTest {
     }
 
     @Test
+    void theHostScreenShipsPort7777AndNoPasswordNoMatterWhatEarlierSessionsDid() {
+        CoopInGameLauncherSession session = new CoopInGameLauncherSession();
+        // The field defaults, before init() has touched the settings store at all: this is what the
+        // host screen shows on a cold start. A remembered port or password must never appear here -
+        // that is how the lobby came up on 7788 behind a password nobody chose.
+        assertEquals("7777", session.hostPort());
+        assertEquals("", session.hostPassword());
+        assertEquals(CoopInGameLauncherSession.DEFAULT_PORT, 7777);
+    }
+
+    @Test
     void inGameLanguageToggleSwitchesSharedUiLangBetweenEnAndRu() {
         CoopUiLang.setRussian(false);
         assertFalse(CoopUiLang.isRussian());

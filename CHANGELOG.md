@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.28 (the lobby starts at 7777 with no password, every time)
+
+- **No preset secret.** The in-game Host screen still generated a password on start-up
+  (`CoopInGameInvite.generatePassword()`) and stored it in the Java preferences, so a lobby could
+  open behind a password the player never typed - and the stored flag said "password is set" even
+  when the stored password was blank. Generation is gone: the field ships empty, `Regenerate` is
+  still there when you want one, and **no host or guest password is ever written to the preferences**
+  (`lastJoinSettings` keeps only host/port).
+- **Port starts at 7777.** The host screen used to restore the last port it had seen, so an old
+  experiment (7788) came back on every launch. It now always opens on `DEFAULT_PORT`, and only that
+  session uses whatever you type.
+
 ## 0.2.27 (no auto-pause for the map)
 
 - **Opening the campaign map no longer stops the shared world.** The guest screen pause still covers
